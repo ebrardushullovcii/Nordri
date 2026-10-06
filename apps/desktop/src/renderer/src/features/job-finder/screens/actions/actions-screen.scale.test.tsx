@@ -168,9 +168,7 @@ describe("ActionsScreen workspace scale", () => {
     );
     expect(screen.getByText(`${ACTION_COUNT} results`)).toBeTruthy();
     expect(
-      screen.getByText(
-        `Showing 1–${COLLECTION_PAGE_SIZE} of ${ACTION_COUNT} actions`,
-      ),
+      screen.getByText(`1–${COLLECTION_PAGE_SIZE} of ${ACTION_COUNT}`),
     ).toBeTruthy();
     expect(
       screen.getByRole("navigation", { name: "actions pagination" }),
@@ -215,7 +213,7 @@ describe("ActionsScreen workspace scale", () => {
         fireEvent.click(screen.getByRole("button", { name: "Next page" }));
       }
 
-      expect(screen.getByText("Showing 161–200 of 210 actions")).toBeTruthy();
+      expect(screen.getByText("161–200 of 210")).toBeTruthy();
       expect(applications.querySelectorAll("article")).toHaveLength(0);
       expect(
         within(applications).getByText(
@@ -265,9 +263,7 @@ describe("ActionsScreen workspace scale", () => {
     fireEvent.change(input, { target: { value: "" } });
     await waitFor(() => {
       expect(
-        screen.getByText(
-          `Showing 1–${COLLECTION_PAGE_SIZE} of ${ACTION_COUNT} actions`,
-        ),
+        screen.getByText(`1–${COLLECTION_PAGE_SIZE} of ${ACTION_COUNT}`),
       ).toBeTruthy();
     });
     expect(findSpy).not.toHaveBeenCalled();
@@ -309,9 +305,7 @@ describe("ActionsScreen workspace scale", () => {
         COLLECTION_PAGE_SIZE,
       );
       expect(
-        screen.getByText(
-          `Showing 201–${ACTION_COUNT} of ${ACTION_COUNT} actions`,
-        ),
+        screen.getByText(`201–${ACTION_COUNT} of ${ACTION_COUNT}`),
       ).toBeTruthy();
       expect(
         screen.getByRole("button", { name: "Previous page" }),
@@ -342,7 +336,7 @@ describe("ActionsScreen workspace scale", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
 
-    expect(screen.getByText("Showing 41–80 of 210 actions")).toBeTruthy();
+    expect(screen.getByText("41–80 of 210")).toBeTruthy();
     expect(screen.queryByText("Scale action 0000")).toBeNull();
     expect(container.querySelectorAll("article")).toHaveLength(
       COLLECTION_PAGE_SIZE,

@@ -1,3 +1,4 @@
+import { useToast } from "@renderer/components/ui/toast";
 import {
   useCallback,
   useEffect,
@@ -298,11 +299,22 @@ export function ProfileDiscoveryTargetRow(
     moveTarget(1);
   }, [moveTarget]);
 
+  const { showToast } = useToast();
   const handleRemoveTarget = useCallback(() => {
     props.updateDiscoveryTargets(
       props.discoveryTargets.filter((entry) => entry.id !== props.target.id),
     );
-  }, [props.discoveryTargets, props.target.id, props.updateDiscoveryTargets]);
+    showToast({
+      title: "Source removed",
+      description:
+        "Its saved jobs stay in your plans with their original source name.",
+    });
+  }, [
+    props.discoveryTargets,
+    props.target.id,
+    props.updateDiscoveryTargets,
+    showToast,
+  ]);
 
   const handleToggleEnabled = useCallback(
     (checked: boolean) => {

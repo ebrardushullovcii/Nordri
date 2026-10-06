@@ -1,3 +1,13 @@
+import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
+import { withSavedJobSearchBehavior } from "./job-search-behavior";
+import {
+  personPickedJob,
+  readPlanAssessment,
+  withPlanAssessment,
+} from "./plan-assessment";
+import { createMatchAssessmentSession } from "./match-assessment-session";
+import { createMatchAssessment } from "./matching";
+import { jobNeedsFitJudgment } from "./fit-judgment";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -8,6 +18,7 @@ import {
   DeleteJobSearchCampaignInputSchema,
   describeDiscoveryRunFailureReason,
   DiscoveryRunReportSchema,
+  formatDiscoveryAccounting,
   DiscoveryRunRecordSchema,
   JobSearchCampaignCollectionSchema,
   JobSearchCampaignSchema,
@@ -47,6 +58,7 @@ import {
   type ToggleCampaignRuleInput,
 } from "@nordri/contracts";
 
+import { createMonotonicTimestamp } from "./resume-draft-commit-support";
 import { countDiscoveryStrongMatches } from "../discovery-result-bands";
 import { deriveDiscoverySourceOutcome } from "../source-health";
 import {
@@ -95,7 +107,6 @@ const IN_FLIGHT_JOB_STATUSES = new Set<ApplicationStatus>([
   "interview",
   "offer",
 ]);
-
 
 const LEGACY_PRECISION_RETAINED_JOBS = 15;
 const LIFTED_RETAINED_JOBS = 1_000;
@@ -175,10 +186,24 @@ export function describeCampaignRunSummary(
   // three zeros that read as "the search found nothing", which is a different
   // and wrong story; the reason replaces them.
   const failureReason = describeDiscoveryRunFailureReason(run);
+  if (run.runPhase === "interrupted") {
+    return `Interrupted: ${formatDiscoveryAccounting(report)}. Jobs saved before the interruption remain available.`;
+  }
   if (failureReason !== null) {
     return sources.planned === 0
       ? `Run failed: ${failureReason}`
       : `${sources.completed} of ${sources.planned} sources completed${failedLabel}. Run failed: ${failureReason}`;
+  }
+  if (report.unique != null) {
+    const outcome =
+      run.state === "cancelled"
+        ? "Stopped"
+        : run.state === "failed"
+          ? "Failed"
+          : run.state === "running"
+            ? "So far"
+            : "Found";
+    return `${sources.completed} of ${sources.planned} sources completed${failedLabel}. ${outcome}: ${formatDiscoveryAccounting(report)}.`;
   }
   return `${sources.completed} of ${sources.planned} sources completed${failedLabel}. Discovery ${run.state}: ${count(report.found)} found · ${count(
     report.new,
@@ -205,7 +230,7 @@ export function describeScheduledRunCompletion(
   if (kept === 0) {
     return "Your scheduled search finished and kept nothing new this time.";
   }
-  const newCount = report.new;
+  const newCount = report.new === null ? null : Math.min(report.new, kept);
   const newClause =
     newCount === null || newCount === 0
       ? ""
@@ -362,13 +387,6 @@ export async function commitCampaignRunTerminal(input: {
     // and must participate in retention; otherwise the renderer's campaign
     // filter hides the entire completed run.
     const availableJobs = [...savedJobs, ...discovery.pendingDiscoveryJobs];
-    const encounteredSourceJobIds = new Set(
-      latestRun.targetExecutions.flatMap((execution) =>
-        (execution.agentCheckpoint?.collectedJobs ?? []).map(
-          (posting) => `${posting.source}:${posting.sourceJobId}`,
-        ),
-      ),
-    );
     const encounteredCanonicalUrls = new Set(
       latestRun.targetExecutions.flatMap((execution) =>
         (execution.agentCheckpoint?.collectedJobs ?? []).map(
@@ -394,7 +412,6 @@ export async function commitCampaignRunTerminal(input: {
           // a compact run actually encountered.
           return (
             encounteredRecordedJobIds.has(job.id) ||
-            encounteredSourceJobIds.has(`${job.source}:${job.sourceJobId}`) ||
             encounteredCanonicalUrls.has(job.canonicalUrl)
           );
         })
@@ -415,10 +432,48 @@ export async function commitCampaignRunTerminal(input: {
     const alreadyInPlanJobIds = new Set(
       [...encounteredJobIds].filter((jobId) => priorCampaignJobIds.has(jobId)),
     );
-    const candidateJobIds = new Set([...campaign.jobIds, ...encounteredJobIds]);
-    const candidateJobs = availableJobs.filter((job) =>
-      candidateJobIds.has(job.id),
+    // Live membership may be published while a search is collecting. It is
+    // not proof that an older workspace job belongs to this run. Start with
+    // the plan before the search, then add only this run's actual encounters
+    // and jobs the person selected here while it was running.
+    const candidateJobIds = new Set([
+      ...priorCampaignJobIds,
+      ...encounteredJobIds,
+      ...availableJobs
+        .filter(
+          (job) => campaign.jobIds.includes(job.id) && personPickedJob(job),
+        )
+        .map((job) => job.id),
+    ]);
+    const candidates = availableJobs
+      .filter((job) => candidateJobIds.has(job.id) && job.status !== "archived")
+      .map((job) => readPlanAssessment(job, campaign.id));
+    const profile = await input.ctx.repository.getProfile();
+    const preferences = withSavedJobSearchBehavior(
+      enrichSearchPreferencesFromProfile(
+        searchPreferencesForCampaignRun(campaign),
+        profile,
+      ),
+      await input.ctx.repository.getSettings(),
     );
+    const session = createMatchAssessmentSession({
+      profile,
+      searchPreferences: preferences,
+      calculate: createMatchAssessment,
+    });
+    // Discovery judges all eligible jobs before taking this commit lock.
+    // Do not make another model request while plan edits are waiting for it.
+    const candidateJobs = candidates.map((job) => {
+      // A verdict from another plan cannot say this job fits the current one.
+      const assessment = !jobNeedsFitJudgment(job, session.contextFingerprint)
+        ? job.matchAssessment
+        : session.assess({ ...job, matchAssessment: null });
+      return readPlanAssessment(
+        withPlanAssessment(job, campaign.id, assessment),
+        campaign.id,
+      );
+    });
+    const assessedById = new Map(candidateJobs.map((job) => [job.id, job]));
     const measuredAt = latestRun.completedAt ?? latestRun.startedAt;
     const evaluatedRules = evaluateCampaignRules({
       rules: campaign.rules,
@@ -435,7 +490,12 @@ export async function commitCampaignRunTerminal(input: {
       .filter(
         (job) =>
           allowedByRules.has(job.id) &&
+          job.matchAssessment.judgment?.role !== "conflict" &&
+          job.matchAssessment.judgment?.locationReach !== "outside_area" &&
+          // A job the model has not judged yet was not measured, so the
+          // plan's minimum fit does not drop it (ADR 0041).
           (campaign.minimumFitScore === null ||
+            !job.matchAssessment.judgment ||
             job.matchAssessment.score >= campaign.minimumFitScore),
       )
       .sort(compareRetentionPriority)
@@ -478,7 +538,6 @@ export async function commitCampaignRunTerminal(input: {
     // stood.
     const retentionCounts = {
       measuredAt,
-      new: newToPlanJobIds.size,
       alreadyHere: alreadyInPlanJobIds.size,
       retained: retainedRunJobs.length,
       worthOpening: countDiscoveryStrongMatches(retainedRunJobs),
@@ -486,7 +545,6 @@ export async function commitCampaignRunTerminal(input: {
     const runReport = DiscoveryRunReportSchema.parse({
       ...(latestRun.summary.report ??
         buildDiscoveryRunReport(latestRun, measuredAt)),
-      new: retentionCounts.new,
       alreadyHere: retentionCounts.alreadyHere,
       retained: retentionCounts.retained,
       worthOpening: retentionCounts.worthOpening,
@@ -640,6 +698,14 @@ export async function commitCampaignRunTerminal(input: {
       return SavedJobSchema.parse({
         ...job,
         campaignIds: [...campaignIds].sort(),
+        ...(assessedById.get(job.id)?.planAssessments
+          ? {
+              planAssessments: {
+                ...job.planAssessments,
+                [campaign.id]: assessedById.get(job.id)!.matchAssessment,
+              },
+            }
+          : {}),
       });
     };
     await input.ctx.repository.commitSavedJobDelta({
@@ -818,6 +884,7 @@ async function claimDueScheduledSlot(input: {
   now: string;
 }): Promise<JobSearchCampaign | null> {
   return input.ctx.withCampaignTransition(async () => {
+    if ((await input.ctx.repository.getActivityControl()).paused) return null;
     const state = await input.ctx.repository.getCampaignState();
     if (!state) return null;
     const campaign = state.campaigns.find(
@@ -1008,7 +1075,8 @@ export function createWorkspaceCampaignMethods(input: {
     async saveCampaign(
       rawCampaign: SaveJobSearchCampaignInput,
     ): Promise<JobFinderWorkspaceSnapshot> {
-      const campaignInput = SaveJobSearchCampaignInputSchema.parse(rawCampaign);
+      const { expectedUpdatedAt, ...campaignInput } =
+        SaveJobSearchCampaignInputSchema.parse(rawCampaign);
       // The whole collection is rewritten from the state read here, so the
       // read-modify-write must hold the campaign transition or a concurrent
       // scheduled-run commit (run facts, rule effects, notifications, active
@@ -1040,6 +1108,14 @@ export function createWorkspaceCampaignMethods(input: {
               );
             }
             if (
+              expectedUpdatedAt &&
+              existing?.updatedAt !== expectedUpdatedAt
+            ) {
+              throw new Error(
+                "This search plan changed while it was being edited. Read it again before saving.",
+              );
+            }
+            if (
               !existing &&
               !["active", "paused"].includes(campaignInput.status)
             ) {
@@ -1054,14 +1130,35 @@ export function createWorkspaceCampaignMethods(input: {
               );
             }
 
+            const existingSourceIds = new Set(existing?.sourceTargetIds ?? []);
+            const sourceChoicesUnchanged =
+              normalizedSourceTargetIds.length === existingSourceIds.size &&
+              normalizedSourceTargetIds.every((id) =>
+                existingSourceIds.has(id),
+              );
             const campaign = existing
               ? {
                   ...existing,
                   ...campaignInput,
+                  sourceSelectionMode:
+                    campaignInput.sourceSelectionMode ??
+                    (sourceChoicesUnchanged
+                      ? existing.sourceSelectionMode
+                      : undefined) ??
+                    (normalizedSourceTargetIds.length === 0
+                      ? "profile"
+                      : "selected"),
+                  searchPreferences: {
+                    ...campaignInput.searchPreferences,
+                    discovery: {
+                      ...campaignInput.searchPreferences.discovery,
+                      targets: current.searchPreferences.discovery.targets,
+                    },
+                  },
                   sourceTargetIds: normalizedSourceTargetIds,
                   id: existing.id,
                   createdAt: existing.createdAt,
-                  updatedAt: now,
+                  updatedAt: createMonotonicTimestamp(existing.updatedAt),
                   progress: existing.progress,
                   history: [
                     {
@@ -1094,6 +1191,18 @@ export function createWorkspaceCampaignMethods(input: {
                     now,
                   }),
                   ...campaignInput,
+                  sourceSelectionMode:
+                    campaignInput.sourceSelectionMode ??
+                    (normalizedSourceTargetIds.length === 0
+                      ? "profile"
+                      : "selected"),
+                  searchPreferences: {
+                    ...campaignInput.searchPreferences,
+                    discovery: {
+                      ...campaignInput.searchPreferences.discovery,
+                      targets: current.searchPreferences.discovery.targets,
+                    },
+                  },
                   sourceTargetIds: normalizedSourceTargetIds,
                   id: newCampaignId,
                   createdAt: now,
@@ -1140,7 +1249,13 @@ export function createWorkspaceCampaignMethods(input: {
               campaignState: nextState,
               searchPreferences:
                 nextState.activeCampaignId === scheduledCampaign.id
-                  ? scheduledCampaign.searchPreferences
+                  ? {
+                      ...scheduledCampaign.searchPreferences,
+                      discovery: {
+                        ...scheduledCampaign.searchPreferences.discovery,
+                        targets: current.searchPreferences.discovery.targets,
+                      },
+                    }
                   : current.searchPreferences,
             };
           },
@@ -1183,7 +1298,7 @@ export function createWorkspaceCampaignMethods(input: {
                           campaignId: campaign.id,
                           kind: "activated",
                           occurredAt: now,
-                          summary: `${campaign.name} selected as the active campaign.`,
+                          summary: `${campaign.name} made current.`,
                           discoveryRunId: null,
                         },
                         ...campaign.history,
@@ -1195,7 +1310,13 @@ export function createWorkspaceCampaignMethods(input: {
             return {
               result: null,
               campaignState: nextState,
-              searchPreferences: selected.searchPreferences,
+              searchPreferences: {
+                ...selected.searchPreferences,
+                discovery: {
+                  ...selected.searchPreferences.discovery,
+                  targets: current.searchPreferences.discovery.targets,
+                },
+              },
             };
           },
         );
@@ -1223,6 +1344,11 @@ export function createWorkspaceCampaignMethods(input: {
           (candidate) => candidate.id === request.campaignId,
         );
         if (!campaign) return false;
+        if (
+          request.expectedUpdatedAt &&
+          campaign.updatedAt !== request.expectedUpdatedAt
+        )
+          return false;
         const remaining = state.campaigns.filter(
           (candidate) => candidate.id !== campaign.id,
         );
@@ -1356,6 +1482,14 @@ export function createWorkspaceCampaignMethods(input: {
         });
         if (!claimed) continue;
 
+        if ((await input.ctx.repository.getActivityControl()).paused) {
+          await restoreClaimedScheduledSlot({
+            ctx: input.ctx,
+            campaignId: claimed.id,
+            dueNextRunAt,
+          });
+          break;
+        }
         let ranScheduledCampaign = false;
         await executeCampaignRun({
           ctx: input.ctx,

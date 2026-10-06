@@ -20,7 +20,7 @@ import { Button } from "./button";
  * around this shell.
  */
 export const DIALOG_SCRIM_CLASS =
-  "fixed inset-0 z-[80] grid place-items-center overflow-y-auto bg-(--modal-scrim) px-4 py-6 backdrop-blur-sm";
+  "fixed inset-0 z-[140] grid place-items-center overflow-y-auto bg-(--modal-scrim) px-4 py-6 backdrop-blur-sm";
 
 const DIALOG_WIDTH_CLASS = {
   sm: "max-w-md",

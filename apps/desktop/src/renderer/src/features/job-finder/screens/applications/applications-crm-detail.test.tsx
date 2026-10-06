@@ -703,6 +703,42 @@ describe("ApplicationsCrmDetail", () => {
     });
   });
 
+  test("saves an interview entered in the recruiter's zone", async () => {
+    stubCandidateAssets();
+    const onMutate = vi.fn<
+      (command: ApplicationCrmMutationInput) => Promise<void>
+    >(() => Promise.resolve());
+    const record = buildCrmRecord({ id: "application_zoned" });
+    renderDetail(record, onMutate);
+    openSection("Interviews and contacts");
+    fireEvent.change(screen.getByLabelText("Interview"), {
+      target: { value: "Recruiter call" },
+    });
+    fireEvent.change(screen.getByLabelText(/Starts/), {
+      target: { value: "2026-10-05T09:00" },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    fireEvent.keyDown(
+      screen.getByRole("combobox", { name: "Interview time zone" }),
+      { key: "ArrowDown" },
+    );
+    fireEvent.click(
+      await screen.findByRole("option", { name: /America\/New_York/ }),
+    );
+    fireEvent.submit(screen.getByLabelText(/Starts/).closest("form")!);
+    await waitFor(() => expect(onMutate).toHaveBeenCalled());
+    const mutation = onMutate.mock.calls[0]?.[0];
+    expect(mutation?.mutation).toMatchObject({
+      type: "upsert_interview",
+      interview: {
+        startsAt: "2026-10-05T13:00:00.000Z",
+        timeZone: "America/New_York",
+      },
+    });
+  });
   test("marks a first-time offer active without inventing a deadline", () => {
     stubCandidateAssets();
     const onMutate = vi.fn(() => Promise.resolve());
@@ -983,18 +1019,14 @@ describe("ApplicationsCrmDetail", () => {
     fireEvent.change(note, {
       target: { value: "Recruiter requested a portfolio." },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add note" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toContain(
         "changed elsewhere",
       ),
     );
     expect(note.value).toBe("Recruiter requested a portfolio.");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add note" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
     await waitFor(() => expect(note.value).toBe(""));
     expect(onMutate).toHaveBeenCalledTimes(2);
     expect(onMutate.mock.calls[1]?.[0].mutation).toMatchObject({
@@ -1002,4 +1034,205 @@ describe("ApplicationsCrmDetail", () => {
       note: { body: "Recruiter requested a portfolio." },
     });
   });
+  test("keeps a note typed during a tag save and refresh", async () => {
+    stubCandidateAssets();
+    let finish!: () => void;
+    const onMutate = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const initial = buildCrmRecord({
+      id: "race",
+      revision: 1,
+      crm: { tags: ["old"] },
+    });
+    const view = renderDetail(initial, onMutate);
+    const tags = screen.getByLabelText("Tags");
+    fireEvent.change(tags, { target: { value: "new" } });
+    fireEvent.blur(tags);
+    const note = screen.getByLabelText<HTMLTextAreaElement>("Add a note");
+    expect(note.disabled).toBe(false);
+    fireEvent.change(note, { target: { value: "Exact text while tags save" } });
+    finish();
+    await waitFor(() => expect(onMutate).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <ApplicationsCrmDetail
+        key={initial.id}
+        record={{
+          ...initial,
+          crm: { ...initial.crm!, revision: 2, tags: ["new"] },
+        }}
+        settings={ApplicationCrmSettingsSchema.parse({})}
+        onMutate={onMutate}
+        onExport={vi.fn()}
+      />,
+    );
+    expect(note.value).toBe("Exact text while tags save");
+  });
+
+  test("offers a saved custom stage and records a manual receipt without claiming a verified send", async () => {
+    stubCandidateAssets();
+    const onMutate = vi.fn(() => Promise.resolve());
+    const prepared = {
+      ...buildCrmRecord({ id: "manual" }),
+      status: "approved" as const,
+      lastAttemptState: "ready" as const,
+      crm: null,
+    };
+    render(
+      <ApplicationsCrmDetail
+        record={prepared}
+        settings={ApplicationCrmSettingsSchema.parse({
+          customStages: [
+            {
+              id: "screen",
+              label: "Recruiter screen",
+              baseStage: "recruiter_contact",
+              color: "cyan",
+              position: 0,
+            },
+          ],
+        })}
+        onMutate={onMutate}
+        onExport={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("option", { name: "Recruiter screen" }),
+    ).toBeTruthy();
+    const receipt = screen.getByLabelText("Receipt reference (optional)");
+    expect(receipt.getAttribute("data-slot")).toBe("input");
+    expect(
+      screen.getByLabelText("Stage").closest("div")?.contains(receipt),
+    ).toBe(true);
+    expect(screen.queryByRole("option", { name: "Preparing" })).toBeNull();
+    expect(
+      screen.queryByRole("option", { name: "Could not apply" }),
+    ).toBeNull();
+    fireEvent.change(screen.getByLabelText("Receipt reference (optional)"), {
+      target: { value: "LOCAL-SYNTHETIC-44" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "I sent it" }));
+    await waitFor(() =>
+      expect(onMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mutation: {
+            type: "set_stage",
+            stage: "applied",
+            customStageId: null,
+            note: "You recorded a send. Receipt: LOCAL-SYNTHETIC-44",
+          },
+        }),
+      ),
+    );
+  });
+
+  test("uses the home zone for reminders and defaults interviews to it", () => {
+    stubCandidateAssets();
+    render(
+      <ApplicationsCrmDetail
+        record={buildCrmRecord({ id: "lisbon" })}
+        homeTimeZone="Europe/Lisbon"
+        settings={ApplicationCrmSettingsSchema.parse({})}
+        onMutate={vi.fn()}
+        onExport={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/Due.*Europe\/Lisbon/)).toBeTruthy();
+    openSection("Interviews and contacts");
+    expect(screen.getByLabelText(/Starts.*Europe\/Lisbon/)).toBeTruthy();
+  });
+
+  test("searches interview zones inside one combobox without hiding the page", () => {
+    stubCandidateAssets();
+    renderDetail(buildCrmRecord({ id: "zone-search" }), vi.fn());
+    openSection("Interviews and contacts");
+    const zone = screen.getByRole("combobox", { name: "Interview time zone" });
+    fireEvent.focus(zone);
+    fireEvent.change(zone, { target: { value: "London" } });
+    const option = screen.getByRole("option", { name: /Europe\/London/ });
+    expect(screen.queryByLabelText("Find interview time zone")).toBeNull();
+    expect(
+      screen.getByLabelText("Interview").closest('[aria-hidden="true"]'),
+    ).toBeNull();
+    const form = zone.closest("form")!;
+    expect(form.querySelectorAll("label")).toHaveLength(3);
+    fireEvent.click(option);
+    expect((zone as HTMLInputElement).value).toContain("Europe/London");
+    expect(screen.queryByRole("listbox", { name: "Time zones" })).toBeNull();
+    fireEvent.change(zone, { target: { value: "Denver" } });
+    fireEvent.keyDown(zone, { key: "ArrowDown" });
+    const keyboardOption = screen.getByRole("option", {
+      name: /America\/Denver/,
+    });
+    expect(document.activeElement).toBe(keyboardOption);
+    fireEvent.keyDown(keyboardOption, { key: "Escape" });
+    expect(document.activeElement).toBe(zone);
+    expect(screen.queryByRole("listbox", { name: "Time zones" })).toBeNull();
+  });
+});
+
+test("Tracker activity sorts by event time rather than stored position", () => {
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: {
+      jobFinder: {
+        listCandidateAssets: vi.fn(() => Promise.resolve({ assets: [] })),
+      },
+    },
+  });
+  const record = ApplicationRecordSchema.parse({
+    id: "synthetic",
+    jobId: "job_synthetic",
+    title: "Engineer",
+    company: "Synthetic",
+    status: "approved",
+    lastActionLabel: "Prepared",
+    nextActionLabel: null,
+    lastUpdatedAt: "2026-10-05T12:00:00Z",
+    crm: {
+      stage: "applied",
+      stageChangedAt: "2026-10-05T12:00:00Z",
+      events: [
+        {
+          id: "older",
+          at: "2026-10-03T10:00:00Z",
+          kind: "stage_changed",
+          title: "Old stage",
+          source: "user",
+        },
+        {
+          id: "newer",
+          at: "2026-10-05T12:00:00Z",
+          kind: "stage_changed",
+          title: "You sent this application",
+          source: "user",
+        },
+        {
+          id: "middle",
+          at: "2026-10-04T10:00:00Z",
+          kind: "stage_changed",
+          title: "Prepared earlier",
+          source: "user",
+        },
+      ],
+    },
+  });
+  render(
+    <ApplicationsCrmDetail
+      onExport={vi.fn(() => Promise.resolve())}
+      onMutate={vi.fn(() => Promise.resolve())}
+      record={record}
+      settings={ApplicationCrmSettingsSchema.parse({})}
+    />,
+    { container: appRoot },
+  );
+  const timeline = screen.getByText("Timeline (3)").parentElement!;
+  expect(
+    Array.from(timeline.querySelectorAll("li strong")).map(
+      (entry) => entry.textContent,
+    ),
+  ).toEqual(["You sent this application", "Prepared earlier", "Old stage"]);
 });

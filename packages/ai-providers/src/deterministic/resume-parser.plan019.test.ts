@@ -61,16 +61,16 @@ describe("plan 019 deterministic resume parser regressions", () => {
         existingSearchPreferences: createPreferences(),
         resumeText: [
           "Tampa, FL",
-          "Aaron Murphy +1 615-378-5538",
-          "murphyaron12@gmail.com",
-          "Senior Software Engineer linkedin.com/in/amurp",
+          "Owen Mercer +1 555-010-5538",
+          "owen.mercer@example.test",
+          "Senior Software Engineer linkedin.com/in/owen-mercer-example",
         ].join("\n"),
       },
       "deterministic",
       "Test provider",
     );
 
-    expect(extraction.fullName).toBe("Aaron Murphy");
+    expect(extraction.fullName).toBe("Owen Mercer");
     expect(extraction.currentLocation).toBe("Tampa, FL");
     expect(extraction.headline).toBe("Senior Software Engineer");
   });
@@ -81,17 +81,17 @@ describe("plan 019 deterministic resume parser regressions", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "+1 650-353-7911",
-          "Ryan Holstien Cedar Park, TX 78613",
-          "linkedin.com/in/ryan-holstien-7954b665",
-          "Senior Software Engineer ryanholstien993@outlook.com",
+          "+1 555-010-7911",
+          "Noah Brenner Cedar Park, TX 78613",
+          "linkedin.com/in/noah-brenner-example",
+          "Senior Software Engineer noah.brenner@example.test",
         ].join("\n"),
       },
       "deterministic",
       "Test provider",
     );
 
-    expect(extraction.fullName).toBe("Ryan Holstien");
+    expect(extraction.fullName).toBe("Noah Brenner");
     expect(extraction.currentLocation).toBe("Cedar Park, TX 78613");
     expect(extraction.headline).toBe("Senior Software Engineer");
   });
@@ -102,10 +102,10 @@ describe("plan 019 deterministic resume parser regressions", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "+1 650-353-7911",
-          "Ryan Holstien Cedar Park, TX 78613",
-          "linkedin.com/in/ryan-holstien-7954b665",
-          "Senior Software Engineer ryanholstien993@outlook.com",
+          "+1 555-010-7911",
+          "Noah Brenner Cedar Park, TX 78613",
+          "linkedin.com/in/noah-brenner-example",
+          "Senior Software Engineer noah.brenner@example.test",
           "Senior Software Engineer with 10+ years of experience building secure, scalable healthcare and SaaS platforms.",
           "Technical Mentorship",
         ].join("\n"),
@@ -115,9 +115,9 @@ describe("plan 019 deterministic resume parser regressions", () => {
       { preserveExistingValues: false },
     );
 
-    expect(extraction.fullName).toBe("Ryan Holstien");
-    expect(extraction.firstName).toBe("Ryan");
-    expect(extraction.lastName).toBe("Holstien");
+    expect(extraction.fullName).toBe("Noah Brenner");
+    expect(extraction.firstName).toBe("Noah");
+    expect(extraction.lastName).toBe("Brenner");
   });
 
   test("prefers header location lines before summary prose", () => {
@@ -126,10 +126,10 @@ describe("plan 019 deterministic resume parser regressions", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Philadelphia, PA · (530) 213-3550",
-          "paul.asselin454@outlook.com",
-          "Paul Asselin",
-          "linkedin.com/in/paul-asselin",
+          "Philadelphia, PA · (555) 010-3550",
+          "theo.lindqvist@example.test",
+          "Theo Lindqvist",
+          "linkedin.com/in/theo-lindqvist",
           "Summary",
           "Senior Software Engineer with 7+ years building scalable web platforms across fintech and education financing.",
         ].join("\n"),
@@ -138,7 +138,7 @@ describe("plan 019 deterministic resume parser regressions", () => {
       "Test provider",
     );
 
-    expect(extraction.fullName).toBe("Paul Asselin");
+    expect(extraction.fullName).toBe("Theo Lindqvist");
     expect(extraction.currentLocation).toBe("Philadelphia, PA");
   });
 
@@ -167,7 +167,7 @@ describe("plan 019 deterministic resume parser regressions", () => {
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         resumeText: [
-          "Aaron Murphy",
+          "Owen Mercer",
           "Tampa, FL",
           "EXPERIENCE",
           "EdSights, Remote, NY — Staff/Senior Software Engineer",

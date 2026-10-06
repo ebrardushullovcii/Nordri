@@ -255,7 +255,10 @@ export type CandidateAssetImportResult = z.infer<
 >;
 
 export const CandidateAssetListInputSchema = z
-  .object({ includeDeleted: z.boolean().default(false) })
+  .object({
+    includeDeleted: z.boolean().default(false),
+    resumeSourceId: NonEmptyStringSchema.optional(),
+  })
   .default({});
 export type CandidateAssetListInput = z.infer<
   typeof CandidateAssetListInputSchema
@@ -263,6 +266,16 @@ export type CandidateAssetListInput = z.infer<
 
 export const CandidateAssetListResultSchema = z.object({
   assets: z.array(CandidateAssetSchema),
+  originalResumeFile: z
+    .object({
+      id: NonEmptyStringSchema,
+      fileName: NonEmptyStringSchema,
+      fileType: NonEmptyStringSchema,
+      byteSize: z.number().int().nonnegative(),
+      importedAt: IsoDateTimeSchema,
+    })
+    .nullable()
+    .optional(),
 });
 export type CandidateAssetListResult = z.infer<
   typeof CandidateAssetListResultSchema

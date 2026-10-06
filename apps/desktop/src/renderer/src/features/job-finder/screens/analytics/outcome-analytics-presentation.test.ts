@@ -1,3 +1,5 @@
+import { ApplyJobResultSchema } from "@nordri/contracts";
+import { deriveVerifiedApplicationFunnel } from "./outcome-analytics-presentation";
 import { describe, expect, it } from "vitest";
 import {
   type OutcomeAnalyticsOverview,
@@ -350,5 +352,46 @@ describe("deriveCampaignScopedOutcomeAnalytics", () => {
     expect(outcomeDimensionLabels.job_title).toBe("Job title");
     expect(outcomeDimensionLabels.company).toBe("Company");
     expect(outcomeDimensionLabels.resume_strategy).toBe("Resume approach");
+  });
+});
+
+it("counts two verified sends and one recorded response as a small-sample 50% funnel", () => {
+  const results = ["a", "b"].map((jobId) =>
+    ApplyJobResultSchema.parse({
+      id: jobId,
+      runId: "run",
+      jobId,
+      applicationRecordId: `application-${jobId}`,
+      state: "submitted",
+      summary: "Sent",
+      detail: "Local receipt",
+      startedAt: now,
+      updatedAt: now,
+      privacyReceipt: {
+        generatedAt: now,
+        lineage: { runId: "run", jobId, resultId: jobId },
+        destination: { origin: "https://local.invalid", safePath: "/apply" },
+        resume: { source: "original_upload", fileName: "synthetic.pdf" },
+        finalSubmitAuthorized: true,
+        finalSubmitOccurred: true,
+      },
+    }),
+  );
+  const funnel = deriveVerifiedApplicationFunnel({
+    results,
+    runs: [],
+    events: [
+      event({
+        outcome: "employer_response",
+        applicationRecordId: "application-a",
+        jobId: "a",
+      }),
+    ],
+  });
+  expect(funnel).toEqual({
+    sent: 2,
+    responses: 1,
+    responseRate: 0.5,
+    smallSample: true,
   });
 });

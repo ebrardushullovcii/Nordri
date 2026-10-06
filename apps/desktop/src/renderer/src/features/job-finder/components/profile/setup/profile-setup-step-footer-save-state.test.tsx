@@ -43,6 +43,6 @@ describe("ProfileSetupStepFooter save state", () => {
   it("still names the person's own edits as unsaved changes", () => {
     renderFooter({ hasUnsavedChanges: true, hasUserEdits: true });
 
-    expect(screen.getByText("Unsaved changes on this step.")).toBeTruthy();
+    expect(screen.getByText("Unsaved setup changes.")).toBeTruthy();
   });
 });

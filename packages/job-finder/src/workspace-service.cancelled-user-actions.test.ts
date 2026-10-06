@@ -6,7 +6,11 @@ import {
   UserActionRequestSchema,
 } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
-import { retireCancelledApplicationUserActions } from "./internal/workspace-application-user-action";
+import { getApplicationCrmData } from "./internal/application-crm";
+import {
+  restoreWithdrawnApplicationPreparation,
+  retireCancelledApplicationUserActions,
+} from "./internal/workspace-application-user-action";
 import {
   createSeed,
   createWorkspaceServiceHarness,
@@ -410,4 +414,147 @@ test("marking an application withdrawn closes its step without calling it sent",
     state: "skipped",
     summary: "You marked this application withdrawn.",
   });
+});
+
+test("recording a send preserves a completed preparation run", async () => {
+  const { repository, workspaceService } = harness();
+  const original = (await repository.listApplyJobResults()).find(
+    (result) => result.id === "result_a",
+  )!;
+  await repository.upsertApplyJobResult({
+    ...original,
+    completedAt: original.updatedAt,
+  });
+  await workspaceService.mutateApplicationCrm({
+    applicationRecordId: "application_a",
+    expectedRevision: 0,
+    mutation: {
+      type: "set_stage",
+      stage: "applied",
+      customStageId: null,
+      note: null,
+    },
+  });
+  const current = (await repository.listApplyJobResults()).find(
+    (result) => result.id === "result_a",
+  )!;
+  expect(current.state).toBe("awaiting_review");
+  expect(current.completedAt).toBe(original.updatedAt);
+  expect(current.summary).toBe(original.summary);
+  expect((await repository.getUserActionRequest("request_a"))?.state).toBe(
+    "skipped",
+  );
+});
+
+test("Undo of withdrawal replaces the preparation summary without reopening the closed step", async () => {
+  const { repository, workspaceService } = harness();
+  const before = getApplicationCrmData(
+    (await workspaceService.getWorkspaceSnapshot()).applicationRecords.find(
+      (record) => record.id === "application_a",
+    )!,
+  );
+  const moved = await workspaceService.mutateApplicationCrmBulkStage({
+    note: null,
+    customStageId: null,
+    stage: "withdrawn",
+    items: [
+      {
+        applicationRecordId: "application_a",
+        expectedRevision: before.revision,
+      },
+    ],
+    actor: "user",
+  });
+  const record = moved.applicationRecords.find(
+    (entry) => entry.id === "application_a",
+  )!;
+  const undone = await workspaceService.mutateApplicationCrmBulkStage({
+    note: null,
+    customStageId: null,
+    action: "undo",
+    stage: before.stage,
+    items: [
+      {
+        applicationRecordId: record.id,
+        expectedRevision: record.crm!.revision,
+        previousStage: {
+          stage: before.stage,
+          customStageId: before.customStageId,
+          stageChangedAt: before.stageChangedAt,
+          appliedAt: before.appliedAt,
+          lastEmployerActivityAt: before.lastEmployerActivityAt,
+        },
+      },
+    ],
+    actor: "user",
+  });
+  expect(
+    undone.applyJobResults.find((entry) => entry.id === "result_a"),
+  ).toMatchObject({ summary: "Withdrawal undone. Prepare again." });
+  expect(
+    undone.applicationRecords.find((entry) => entry.id === record.id)
+      ?.nextActionLabel,
+  ).toBe("Prepare again");
+  expect(await repository.getUserActionRequest("request_a")).toMatchObject({
+    state: "skipped",
+  });
+});
+
+test("withdrawal recovery updates a sent tracker stage and preserves a later result", async () => {
+  const { repository, workspaceService } = harness();
+  await workspaceService.mutateApplicationCrm({
+    applicationRecordId: "application_a",
+    expectedRevision: 0,
+    mutation: {
+      type: "set_stage",
+      stage: "withdrawn",
+      customStageId: null,
+      note: null,
+    },
+    actor: "user",
+  });
+  const record = (await repository.listApplicationRecords()).find(
+    (entry) => entry.id === "application_a",
+  )!;
+  await repository.upsertApplicationRecord({
+    ...record,
+    crm: { ...record.crm!, stage: "applied" },
+  });
+  await restoreWithdrawnApplicationPreparation(repository, [record.id]);
+  expect(
+    (await repository.listApplyJobResults()).find(
+      (entry) => entry.id === "result_a",
+    )?.summary,
+  ).toBe("Withdrawal undone. Tracked as sent.");
+  expect(
+    (await repository.listApplicationRecords()).find(
+      (entry) => entry.id === record.id,
+    )?.nextActionLabel,
+  ).toBeNull();
+  await repository.upsertApplicationRecord({
+    ...record,
+    crm: { ...record.crm!, stage: "reviewing" },
+  });
+  const old = (await repository.listApplyJobResults()).find(
+    (entry) => entry.id === "result_a",
+  )!;
+  await repository.upsertApplyJobResult({
+    ...old,
+    id: "later_result",
+    runId: "later_run",
+    updatedAt: "2099-10-05T12:00:00Z",
+    state: "awaiting_review",
+    summary: "Prepared again",
+  });
+  await restoreWithdrawnApplicationPreparation(repository, [record.id]);
+  expect(
+    (await repository.listApplyJobResults()).find(
+      (entry) => entry.id === "result_a",
+    )?.summary,
+  ).toBe("Withdrawal undone. Tracked as sent.");
+  expect(
+    (await repository.listApplyJobResults()).find(
+      (entry) => entry.id === "later_result",
+    )?.summary,
+  ).toBe("Prepared again");
 });

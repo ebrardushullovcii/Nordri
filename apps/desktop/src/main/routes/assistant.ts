@@ -1,6 +1,8 @@
+import { getJobFinderWorkspaceService } from "../services/job-finder/workspace-service";
 import { BrowserWindow, dialog } from "electron";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import {
+  AssistantNavigationAcknowledgmentSchema,
   AssistantAnswerQuestionInputSchema,
   AssistantAttachFileInputSchema,
   AssistantAttachFileResultSchema,
@@ -18,10 +20,17 @@ import {
   AssistantSendMessageInputSchema,
   AssistantSendMessageResultSchema,
   AssistantStatusSchema,
+  AssistantResumeBatchStateSchema,
   AssistantUndoChangeInputSchema,
   AssistantUndoChangeResultSchema,
   type CandidateAssetKind,
 } from "@nordri/contracts";
+
+import {
+  clearUiResumeBatch,
+  readUiResumeBatch,
+  syncUiResumeBatch,
+} from "../services/assistant/ui-resume-batch";
 
 import { getAssistantHost } from "../services/assistant/assistant-service";
 import { getCandidateAssetLibrary } from "../services/job-finder/candidate-asset-library-instance";
@@ -52,6 +61,63 @@ export function inferAssetKind(fileName: string): CandidateAssetKind {
 }
 
 export function registerAssistantRouteHandlers(ipcMain: IpcMain): void {
+  ipcMain.handle(
+    "job-finder:assistant:acknowledge-navigation",
+    async (event, payload: unknown) => {
+      assertAppWindow(event);
+      const input = AssistantNavigationAcknowledgmentSchema.parse(payload);
+      (await getAssistantHost()).acknowledgeNavigation(input);
+    },
+  );
+  const queueOwners = new WeakSet<object>();
+  let queueOwnerId: number | null = null;
+  ipcMain.handle(
+    "job-finder:assistant:sync-resume-batch",
+    async (event, payload: unknown) => {
+      assertAppWindow(event);
+      queueOwnerId = event.sender.id;
+      if (!queueOwners.has(event.sender)) {
+        queueOwners.add(event.sender);
+        const clearOwnedQueue = () => {
+          if (queueOwnerId === event.sender.id) {
+            const interrupted = readUiResumeBatch();
+            clearUiResumeBatch();
+            queueOwnerId = null;
+            if (interrupted) {
+              void getJobFinderWorkspaceService()
+                .then((service) =>
+                  service.saveResumeBatchCheckpoint({
+                    ...interrupted,
+                    running: false,
+                    activeJobIds: [],
+                  }),
+                )
+                .catch((error: unknown) =>
+                  console.warn(
+                    "Resume batch interruption could not be saved.",
+                    error,
+                  ),
+                );
+            }
+          }
+        };
+        event.sender.on("destroyed", clearOwnedQueue);
+        event.sender.on("render-process-gone", clearOwnedQueue);
+        event.sender.on("did-finish-load", clearOwnedQueue);
+      }
+      const batch = AssistantResumeBatchStateSchema.parse(
+        syncUiResumeBatch(AssistantResumeBatchStateSchema.parse(payload)),
+      );
+      await (
+        await getJobFinderWorkspaceService()
+      ).saveResumeBatchCheckpoint(batch);
+      return batch;
+    },
+  );
+  ipcMain.handle("job-finder:assistant:stop-resume-batch", async (event) => {
+    assertAppWindow(event);
+    await (await getAssistantHost()).stopResumeBatches();
+  });
   ipcMain.handle("job-finder:assistant:get-status", async () => {
     const host = await getAssistantHost();
     return AssistantStatusSchema.parse(host.getStatus());

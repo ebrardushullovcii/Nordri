@@ -12,15 +12,7 @@ export {
   createApplyUserPrompt,
   describeObservation,
 } from "./apply-prompts";
-export {
-  acceptsWrittenAnswer,
-  matchOption,
-  resolveApplyAnswer,
-  resolveExactProfileAnswer,
-  resolveResumeAnswer,
-  resolveReusableAnswer,
-  type ApplyAnswerResolution,
-} from "./answer-sourcing";
+export { matchOption } from "./option-match";
 export {
   inferActionKind,
   inferAttestationKind,
@@ -42,14 +34,6 @@ export {
   requiredLetterFileType,
   type CoverLetterRequest,
 } from "./cover-letter";
-export {
-  explicitCallingCode,
-  isPhoneCountryControl,
-  matchPhoneCountryOption,
-  resolveCallingCode,
-  resolvePhoneCountryHint,
-  stripSelectedCallingCode,
-} from "./phone-country";
 export {
   buildApplyFormObservation,
   createApplyPageHands,
@@ -105,3 +89,12 @@ export type {
   ApplySafetyHooks,
   ApplyStepPosition,
 } from "./types";
+
+export {
+  checkWrittenApplicationAnswer,
+  checkWrittenApplicationAnswers,
+} from "./written-answer-grounding";
+
+export { applicationFacts } from "./application-facts";
+export { createQuestionClassifier } from "./question-classification";
+export { replaceApprovedApplicationLetter } from "./approved-letter";

@@ -1,3 +1,5 @@
+import { readAssistantWorkState } from "../work-state";
+import { stopResumeWork } from "./resume-tools";
 import {
   AiBehaviorPreferenceSchema,
   ApplicationAttestationKindSchema,
@@ -175,7 +177,7 @@ export const updateApplySettingsTool = defineTool({
       summary: recorded.receiptId
         ? "Saved the applying settings."
         : "Nothing changed.",
-      data: { receiptId: recorded.receiptId },
+      data: { receiptId: recorded.receiptId, savedSettings: after.settings },
       parts: recorded.parts,
     };
   },
@@ -185,7 +187,7 @@ export const updateAiBehaviorTool = defineTool({
   name: "update_ai_behavior",
   group: "settings",
   description:
-    "Changes Settings › AI behavior: how much the assistant volunteers and how long it talks (aiBehavior.profileAssistant), How picky a search is (aiBehavior.jobSearch.selectivity: best_matches, balanced, wide_net), Count remote jobs as any location (aiBehavior.jobSearch.remoteCountsAsAnyLocation: true or false), how applications are written (aiBehavior.applying), cover letters, and the resume approach (original_resume, conservative, balanced, aggressive). Cast a wide net is selectivity wide_net. Send the whole aiBehavior object as read_settings returned it, with your change.",
+    "Changes Settings › AI behavior: how much the assistant volunteers and how long it talks (aiBehavior.profileAssistant), How picky a search is (aiBehavior.jobSearch.selectivity: best_matches, balanced, wide_net), Count remote jobs as any location (aiBehavior.jobSearch.remoteCountsAsAnyLocation: true or false), how applications are written (aiBehavior.applying), cover letters, and the resume approach (original_resume, conservative, balanced, aggressive). Cast a wide net is selectivity wide_net. Send only the fields to change; omitted fields and declaration approvals stay saved.",
   parameters: json.object({
     aiBehavior: json.object({
       profileAssistant: json.object({
@@ -235,6 +237,11 @@ export const updateAiBehaviorTool = defineTool({
         aiBehavior: AiBehaviorPreferenceSchema.parse(
           after.settings.aiBehavior ?? {},
         ),
+        resumeApplicationMode: after.settings.resumeApplicationMode,
+        resumeApproach:
+          after.settings.resumeApplicationMode === "original_resume"
+            ? "original_resume"
+            : after.searchPreferences.tailoringMode,
       },
       parts: recorded.parts,
     };
@@ -318,7 +325,7 @@ export const pauseActivityTool = defineTool({
   name: "pause_activity",
   group: "settings",
   description:
-    "Pauses or resumes all background Job Finder work (searches, applications), like Home's Pause. finishCurrent lets running work finish first. The pause is the person's brake: resume only when they ask to resume, or when they answer yes after you asked, never just because another request needs it.",
+    "Pauses or resumes all background Job Finder work (searches, applications, resume queues), like Home's Pause. finishCurrent lets running work finish first. The pause is the person's brake: resume only when they ask to resume, or when they answer yes after you asked, never just because another request needs it.",
   parameters: json.object(
     {
       paused: json.boolean(),
@@ -344,8 +351,27 @@ export const pauseActivityTool = defineTool({
         ? { pauseBehavior: "finish_current" as const }
         : {}),
     });
+    const resumes = input.paused ? stopResumeWork(ports) : null;
+    const after = await service.getWorkspaceSnapshot();
+    const work = readAssistantWorkState(ports, after);
     ports.publishWorkspaceUpdate();
-    return { summary: input.paused ? "Paused." : "Resumed." };
+    return {
+      summary: input.paused
+        ? `Background work is paused. ${resumes?.summary}${work.resumeImport.active ? " Resume import is still running; it was not stopped." : ""}${after.activeDiscoveryRun?.state === "running" ? " The current search is still finishing." : ""}${after.applyRuns.some((run) => run.state === "running") ? " Current applications are still finishing." : ""}${after.activeSourceDebugRun?.state === "running" ? " The source check is still running; it was not stopped." : ""}`
+        : "Resumed.",
+      data: {
+        activityPaused: after.activityControl.paused,
+        resumes: resumes?.data ?? null,
+        finishingSearch:
+          after.activeDiscoveryRun?.state === "running"
+            ? after.activeDiscoveryRun.id
+            : null,
+        finishingApplications: after.applyRuns
+          .filter((run) => run.state === "running")
+          .map((run) => ({ id: run.id, jobIds: run.jobIds })),
+        resumeImport: work.resumeImport,
+      },
+    };
   },
 });
 
@@ -398,7 +424,58 @@ export const setCompanyPreferenceTool = defineTool({
   },
 });
 
+export const setDefaultResumeLevelTool = defineTool({
+  name: "set_default_resume_level",
+  group: "settings",
+  description:
+    "Sets Settings > AI behavior > Default resume approach for newly shortlisted jobs. Existing jobs keep their overrides. Use for default requests; set_resume_level changes only named jobs.",
+  parameters: json.object(
+    { level: json.enumOf(["original", "light", "tailored", "aggressive"]) },
+    ["level"],
+  ),
+  input: z.object({
+    level: z.enum(["original", "light", "tailored", "aggressive"]),
+  }),
+  label: () => "Changing the default resume approach",
+  effect: "local_write",
+  async execute(input, context) {
+    const approach = {
+      original: "original_resume",
+      light: "conservative",
+      tailored: "balanced",
+      aggressive: "aggressive",
+    } as const;
+    const result = await updateAiBehaviorTool.execute(
+      { resumeApproach: approach[input.level] },
+      context,
+    );
+    const saved = await context.service.getWorkspaceSnapshot();
+    const actual =
+      saved.settings.resumeApplicationMode === "original_resume"
+        ? "original"
+        : saved.searchPreferences.tailoringMode === "conservative"
+          ? "light"
+          : saved.searchPreferences.tailoringMode === "aggressive"
+            ? "aggressive"
+            : "tailored";
+    if (actual !== input.level)
+      throw new AssistantToolError(
+        "conflict",
+        "The saved default does not match the requested resume approach. Read Settings before reporting success.",
+      );
+    return {
+      ...result,
+      summary: `The saved default resume approach is ${actual}. Existing job choices are preserved.`,
+      data: {
+        ...(result.data as Record<string, unknown>),
+        defaultResumeLevel: actual,
+      },
+    };
+  },
+});
+
 export const settingsTools = [
+  setDefaultResumeLevelTool,
   setAppearanceTool,
   readSettingsTool,
   updateApplySettingsTool,

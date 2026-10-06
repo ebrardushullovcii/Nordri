@@ -17,6 +17,7 @@ import type {
   SourceDebugRunDetails,
   SourceDebugRunRecord,
 } from "@nordri/contracts";
+import { ToastProvider } from "@renderer/components/ui/toast";
 import { ProfileDiscoveryTargetRow } from "./profile-discovery-target-row";
 
 describe("ProfileDiscoveryTargetRow", () => {
@@ -53,7 +54,8 @@ describe("ProfileDiscoveryTargetRow", () => {
     vi.clearAllMocks();
   });
 
-  it("renders a source sign-in prompt and CTA near source actions", () => {
+  it("renders sign-in actions and explains retained jobs when removing the source", () => {
+    const updateDiscoveryTargets = vi.fn();
     const onOpenBrowserSessionForTarget = vi.fn();
     const target = {
       id: "target_linkedin_default",
@@ -87,33 +89,35 @@ describe("ProfileDiscoveryTargetRow", () => {
 
     act(() => {
       root?.render(
-        <ProfileDiscoveryTargetRow
-          discoveryTargets={[target]}
-          index={0}
-          instructionArtifact={null}
-          isBrowserSessionPending={() => false}
-          isSourceDebugPending={() => false}
-          isSourceInstructionPending={() => false}
-          isSourceInstructionVerifyPending={() => false}
-          isTargetDiscoveryPending={() => false}
-          onGetSourceDebugRunDetails={vi.fn(() =>
-            Promise.resolve(undefined as unknown as SourceDebugRunDetails),
-          )}
-          onOpenBrowserSessionForTarget={onOpenBrowserSessionForTarget}
-          onRunDiscoveryForTarget={vi.fn()}
-          onRunSourceDebug={vi.fn()}
-          onSaveSourceInstructionArtifact={vi.fn<
-            (
-              targetId: string,
-              artifact: EditableSourceInstructionArtifact,
-            ) => void
-          >()}
-          onVerifySourceInstructions={vi.fn()}
-          recentSourceDebugRuns={[] as readonly SourceDebugRunRecord[]}
-          sourceAccessPrompt={sourceAccessPrompt}
-          target={target}
-          updateDiscoveryTargets={vi.fn()}
-        />,
+        <ToastProvider>
+          <ProfileDiscoveryTargetRow
+            discoveryTargets={[target]}
+            index={0}
+            instructionArtifact={null}
+            isBrowserSessionPending={() => false}
+            isSourceDebugPending={() => false}
+            isSourceInstructionPending={() => false}
+            isSourceInstructionVerifyPending={() => false}
+            isTargetDiscoveryPending={() => false}
+            onGetSourceDebugRunDetails={vi.fn(() =>
+              Promise.resolve(undefined as unknown as SourceDebugRunDetails),
+            )}
+            onOpenBrowserSessionForTarget={onOpenBrowserSessionForTarget}
+            onRunDiscoveryForTarget={vi.fn()}
+            onRunSourceDebug={vi.fn()}
+            onSaveSourceInstructionArtifact={vi.fn<
+              (
+                targetId: string,
+                artifact: EditableSourceInstructionArtifact,
+              ) => void
+            >()}
+            onVerifySourceInstructions={vi.fn()}
+            recentSourceDebugRuns={[] as readonly SourceDebugRunRecord[]}
+            sourceAccessPrompt={sourceAccessPrompt}
+            target={target}
+            updateDiscoveryTargets={updateDiscoveryTargets}
+          />
+        </ToastProvider>,
       );
     });
 
@@ -136,6 +140,17 @@ describe("ProfileDiscoveryTargetRow", () => {
 
     expect(onOpenBrowserSessionForTarget).toHaveBeenCalledWith(
       "target_linkedin_default",
+    );
+    const remove = [...(container?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent?.trim() === "Remove",
+    );
+    expect(remove?.title).toContain("Saved jobs stay");
+    act(() => {
+      remove?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(updateDiscoveryTargets).toHaveBeenCalledWith([]);
+    expect(document.body.textContent).toContain(
+      "Its saved jobs stay in your plans with their original source name.",
     );
   });
 });

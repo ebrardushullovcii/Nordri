@@ -71,9 +71,9 @@ describe("createJobFinderWorkspaceService", () => {
       baseResume: {
         ...seed.profile.baseResume,
         id: "resume_review_only_education",
-        fileName: "Aaron Murphy Resume.pdf",
+        fileName: "Owen Mercer Resume.pdf",
         textContent: [
-          "Aaron Murphy",
+          "Owen Mercer",
           "EDUCATION",
           "Florida State University — Bachelor’s Degree in Computer Science and Physics",
           "May 2011 - Sept 2015",
@@ -81,7 +81,7 @@ describe("createJobFinderWorkspaceService", () => {
       },
       documentBundle: createTestBundle({
         fullText: [
-          "Aaron Murphy",
+          "Owen Mercer",
           "EDUCATION",
           "Florida State University — Bachelor’s Degree in Computer Science and Physics",
           "May 2011 - Sept 2015",
@@ -109,12 +109,19 @@ describe("createJobFinderWorkspaceService", () => {
     );
   });
 
-  test("keeps LinkedIn separate from personal website and auto-applies grounded shared-memory candidates", async () => {
+  test("keeps LinkedIn separate and leaves imported proof points available for review", async () => {
     const seed = createSeed();
     // No LinkedIn saved yet: a saved one that differs from the resume now
     // waits for review instead of being replaced (see the re-import test in
     // resume-import-work-eligibility.test.ts).
-    seed.profile = { ...seed.profile, linkedinUrl: null };
+    // The resume below is this person's own (Robin Example).
+    seed.profile = {
+      ...seed.profile,
+      fullName: "Robin Example",
+      firstName: "Robin",
+      lastName: "Example",
+      linkedinUrl: null,
+    };
     const baseClient = createAiClient();
     const { workspaceService } = createWorkspaceServiceHarness({
       seed,
@@ -154,12 +161,12 @@ describe("createJobFinderWorkspaceService", () => {
                   },
                   label: "LinkedIn URL",
                   value:
-                    "https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+                    "https://www.linkedin.com/in/robin-example-example0/",
                   normalizedValue: null,
                   valuePreview:
-                    "https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+                    "https://www.linkedin.com/in/robin-example-example0/",
                   evidenceText:
-                    "Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+                    "Website: https://www.linkedin.com/in/robin-example-example0/",
                   sourceBlockIds: ["page_1_block_3"],
                   confidence: 0.96,
                   notes: [],
@@ -185,13 +192,13 @@ describe("createJobFinderWorkspaceService", () => {
                   label: "LinkedIn",
                   value: {
                     label: "LinkedIn",
-                    url: "https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+                    url: "https://www.linkedin.com/in/robin-example-example0/",
                     kind: "linkedin",
                   },
                   normalizedValue: null,
                   valuePreview: "LinkedIn",
                   evidenceText:
-                    "Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+                    "Website: https://www.linkedin.com/in/robin-example-example0/",
                   sourceBlockIds: ["page_1_block_3"],
                   confidence: 0.94,
                   notes: [],
@@ -216,12 +223,12 @@ describe("createJobFinderWorkspaceService", () => {
                   },
                   label: "LinkedIn URL",
                   value:
-                    "https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+                    "https://www.linkedin.com/in/robin-example-example0/",
                   normalizedValue: null,
                   valuePreview:
-                    "https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+                    "https://www.linkedin.com/in/robin-example-example0/",
                   evidenceText:
-                    "Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+                    "Website: https://www.linkedin.com/in/robin-example-example0/",
                   sourceBlockIds: ["page_1_block_3"],
                   confidence: 0.99,
                   notes: [],
@@ -308,9 +315,9 @@ describe("createJobFinderWorkspaceService", () => {
         id: "resume_shared_memory",
         fileName: "CV.pdf",
         textContent: [
-          "Ebrar Dushullovci",
+          "Robin Example",
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
-          "Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+          "Website: https://www.linkedin.com/in/robin-example-example0/",
           "Provide on-call architecture and performance triage, cutting query response times by up to 60% in critical workflows.",
           "After deciding to return to my passion for development, I transitioned back into a hands-on developer role.",
         ].join("\n"),
@@ -331,7 +338,7 @@ describe("createJobFinderWorkspaceService", () => {
             id: "page_1_block_1",
             pageNumber: 1,
             readingOrder: 0,
-            text: "Ebrar Dushullovci",
+            text: "Robin Example",
             kind: "paragraph",
             sectionHint: "identity",
             bbox: null,
@@ -353,7 +360,7 @@ describe("createJobFinderWorkspaceService", () => {
             id: "page_1_block_3",
             pageNumber: 1,
             readingOrder: 2,
-            text: "Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+            text: "Website: https://www.linkedin.com/in/robin-example-example0/",
             kind: "contact",
             sectionHint: "contact",
             bbox: null,
@@ -384,9 +391,9 @@ describe("createJobFinderWorkspaceService", () => {
           },
         ],
         fullText: [
-          "Ebrar Dushullovci",
+          "Robin Example",
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
-          "Website: https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+          "Website: https://www.linkedin.com/in/robin-example-example0/",
           "Provide on-call architecture and performance triage, cutting query response times by up to 60% in critical workflows.",
           "After deciding to return to my passion for development, I transitioned back into a hands-on developer role.",
         ].join("\n"),
@@ -394,7 +401,7 @@ describe("createJobFinderWorkspaceService", () => {
     });
 
     expect(snapshot.profile.linkedinUrl).toBe(
-      "https://www.linkedin.com/in/ebrar-dushullovci-5b98b420b/",
+      "https://www.linkedin.com/in/robin-example-example0/",
     );
     expect(snapshot.profile.personalWebsiteUrl).toBeNull();
     expect(
@@ -409,10 +416,17 @@ describe("createJobFinderWorkspaceService", () => {
     expect(snapshot.profile.narrative.careerTransitionSummary).toContain(
       "Returned to hands-on development",
     );
-    expect(snapshot.profile.proofBank).toEqual(
+    expect(
+      snapshot.profile.proofBank.some(
+        (proof) =>
+          proof.title === "Technical achievement - Performance optimization",
+      ),
+    ).toBe(false);
+    expect(snapshot.latestResumeImportReviewCandidates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          title: "Technical achievement - Performance optimization",
+          target: expect.objectContaining({ section: "proof_point" }),
+          resolution: "needs_review",
         }),
       ]),
     );

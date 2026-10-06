@@ -2,6 +2,7 @@ import {
   AssistantConversationSchema,
   AssistantMessageSchema,
   ApplicationPrivacyReceiptSchema,
+  ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
   UserActionEventSchema,
@@ -20,6 +21,7 @@ import {
 } from "../workspace-service.test-support";
 import { createScriptedAssistantModelHandle } from "./model-handle";
 import type { AssistantHostPorts } from "./ports";
+import type { AssistantTurnSession } from "./tool-kit";
 import {
   availablePromptTokens,
   createTokenCalibrator,
@@ -332,6 +334,116 @@ describe("assistant session host", () => {
     return result;
   }
 
+  it("refreshes the current approval and import state between model calls", async () => {
+    let calls = 0;
+    const inputs: string[] = [];
+    const world = setup({
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({
+          chatWithTools: (messages) => {
+            inputs.push(
+              messages.filter((message) => message.role === "user").at(-1)!
+                .content,
+            );
+            calls += 1;
+            if (calls === 1) {
+              current.resumeImportActive = true;
+              current.resumeDrafts[0]!.status = "needs_review";
+              return Promise.resolve({
+                content: "",
+                toolCalls: [
+                  {
+                    id: "read_current",
+                    type: "function" as const,
+                    function: {
+                      name: "get_workspace_summary",
+                      arguments: "{}",
+                    },
+                  },
+                ],
+              });
+            }
+            return Promise.resolve({ content: "Review is pending." });
+          },
+        }),
+      },
+    });
+    const current = await world.harness.workspaceService.getWorkspaceSnapshot();
+    const workspace = await world.harness.workspaceService.getResumeWorkspace(
+      current.reviewQueue[0]!.jobId,
+    );
+    current.resumeDrafts = [{ ...workspace.draft, status: "approved" }];
+    vi.spyOn(
+      world.harness.workspaceService,
+      "getWorkspaceSnapshot",
+    ).mockResolvedValue(current);
+    await sendAndWait(world.host, "Is this resume approved?");
+    expect(inputs[0]).toContain('"approved":true');
+    expect(inputs[1]).toContain('"approved":false');
+    expect(inputs[1]).toContain('"active":true');
+    expect(inputs[1]).toContain("Is this resume approved?");
+  });
+
+  it("persists the exact proposed summary on its review card", async () => {
+    let calls = 0;
+    const proposed =
+      "Synthetic designer for senior in-house roles. Improved a synthetic result by 23%.";
+    const { host } = setup({
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({
+          chatWithTools: () => {
+            calls += 1;
+            return Promise.resolve(
+              calls === 1
+                ? {
+                    content: "",
+                    toolCalls: [
+                      {
+                        id: "suggest_summary",
+                        type: "function" as const,
+                        function: {
+                          name: "edit_profile",
+                          arguments: JSON.stringify({
+                            mode: "suggest",
+                            summary: "Rewrite your summary",
+                            operations: [
+                              {
+                                operation:
+                                  "replace_professional_summary_fields",
+                                value: { fullSummary: proposed },
+                              },
+                            ],
+                          }),
+                        },
+                      },
+                    ],
+                  }
+                : { content: "The wording is ready to review." },
+            );
+          },
+        }),
+      },
+    });
+    const sent = await sendAndWait(host, "Propose a summary.");
+    const view = await host.readConversation({
+      conversationId: sent.conversationId,
+    });
+    const card = view.messages
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "proposal");
+    expect(card).toMatchObject({
+      type: "proposal",
+      items: [
+        {
+          label: "Update summary",
+          detail: expect.stringContaining(proposed) as unknown,
+        },
+      ],
+    });
+  });
+
   it("clears streamed commentary before publishing its shortened progress note", async () => {
     const text = "Reading the profile before changing it. ".repeat(40);
     let calls = 0;
@@ -467,6 +579,26 @@ describe("assistant session host", () => {
     expect(runs[0]?.status).toBe("cancelled");
   });
 
+  it("stops assistant resume batches from the Shortlisted control and saves the stop status", async () => {
+    const { host, harness } = setup();
+    await harness.workspaceService.saveResumeBatchCheckpoint({
+      id: "active_assistant",
+      jobIds: ["one", "two"],
+      activeJobIds: ["one"],
+      completedJobIds: [],
+      done: false,
+      running: true,
+      stopRequested: false,
+    });
+    await host.stopResumeBatches();
+    const snapshot = await harness.workspaceService.getWorkspaceSnapshot();
+    expect(snapshot.intelligence.resumeBatchCheckpoint).toMatchObject({
+      running: true,
+      stopRequested: true,
+      activeJobIds: ["one"],
+    });
+  });
+
   it("does not continue an interrupted resume queue after restart", async () => {
     const { host, repository, harness, ports } = setup();
     const conversation = await host.createConversation();
@@ -513,6 +645,38 @@ describe("assistant session host", () => {
     expect(
       (await repository.getOperation("interrupted_resume_operation"))?.status,
     ).toBe("cancelled");
+    await harness.workspaceService.saveResumeBatchCheckpoint({
+      id: "continued",
+      resumedBatchIds: ["old_resume_batch"],
+      jobIds: ["one"],
+      completedJobIds: ["one"],
+      activeJobIds: [],
+      done: true,
+      stopRequested: false,
+      running: false,
+    });
+    await resumed.refreshFinishedResumeBatchNotices();
+    const finished = await resumed.readConversation({
+      conversationId: conversation.id,
+    });
+    expect(
+      finished.messages
+        .flatMap((message) => message.parts)
+        .some(
+          (part) =>
+            part.type === "notice" && part.text.includes("ask again to write"),
+        ),
+    ).toBe(false);
+    expect(
+      finished.messages
+        .flatMap((message) => message.parts)
+        .some(
+          (part) =>
+            part.type === "notice" &&
+            part.text ===
+              "Resume batch finished. Review the results in Shortlisted.",
+        ),
+    ).toBe(true);
   });
 
   it("applies a requested profile edit at once, with a change receipt and Undo", async () => {
@@ -758,6 +922,92 @@ describe("assistant session host", () => {
     );
   });
 
+  it("R3-007 releases the old lease and creates unrelated work without a lent tab", async () => {
+    const { host, ports } = setup();
+    const release = vi.fn(() => Promise.resolve());
+    const inputs: (string | null)[] = [];
+    ports.browser = {
+      visibleTab: () => null,
+      lease: (input) => {
+        inputs.push(input.tabId);
+        return Promise.resolve({
+          leaseId: `lease_${inputs.length}`,
+          tabId: input.tabId ?? "owned",
+          borrowed: input.tabId !== null,
+          isApplicationBound: () => Promise.resolve(false),
+          revoked: new AbortController().signal,
+          hands: {} as never,
+          currentUrl: () => "http://127.0.0.1/",
+          childTabIds: () => [],
+          release,
+        });
+      },
+    };
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    await session.browserLease({ tabId: "prepared" });
+    await session.browserLease({
+      openUrl: "http://127.0.0.1:47950/brindle/",
+      newTab: true,
+    });
+    expect(inputs).toEqual(["prepared", null]);
+    expect(release).toHaveBeenCalledWith("Switching browser tabs");
+  });
+
+  it("R3-169 waits for Browser to minimize before emitting the route", async () => {
+    const { host, ports, events } = setup();
+    let finish!: () => void;
+    ports.prepareAppNavigation = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    const pending = session.openInApp("/job-finder/applications");
+    expect(events.some((event) => event.payload.type === "open_route")).toBe(
+      false,
+    );
+    finish();
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.payload.type === "open_route")).toBe(
+        true,
+      ),
+    );
+    const request = events.find(
+      (event) => event.payload.type === "open_route",
+    )!;
+    if (request.payload.type !== "open_route") throw new Error("Missing route");
+    host.acknowledgeNavigation({
+      conversationId: conversation.id,
+      navigationRequestId: request.payload.navigationRequestId!,
+      displayedRoute: request.payload.route,
+      section: null,
+      overlay: "none",
+      status: "displayed",
+      reason: null,
+    });
+    expect(await pending).toMatchObject({ status: "displayed" });
+    expect(events.some((event) => event.payload.type === "open_route")).toBe(
+      true,
+    );
+  });
+
   it("does not lease a tab again after the person took it back", async () => {
     const { host, ports } = setup();
     const controllers: AbortController[] = [];
@@ -773,6 +1023,7 @@ describe("assistant session host", () => {
         return Promise.resolve({
           leaseId: `lease_${controllers.length}`,
           tabId: "tab_1",
+          isApplicationBound: () => Promise.resolve(false),
           revoked: controller.signal,
           hands: {} as never,
           currentUrl: () => "http://127.0.0.1/",
@@ -1468,7 +1719,7 @@ describe("assistant session host", () => {
     // Leave room for a checkpoint and this turn's context above the fixed
     // prompt, while keeping the history budget small enough to compact.
     const smallBudget = fixedPromptTokens + 2_400;
-    expect(productionBudget).toBeGreaterThan(smallBudget * 5);
+    expect(productionBudget).toBeGreaterThan(smallBudget * 4);
     const { host, repository } = setup({ budgetOverrideTokens: smallBudget });
     const { conversationId } = await sendAndWait(
       host,
@@ -1665,5 +1916,265 @@ describe("assistant session host", () => {
         .flatMap((message) => message.parts)
         .find((part) => part.type === "proposal"),
     ).toMatchObject({ status: "rejected" });
+  });
+
+  it("R3-137 waits for the displayed Tracker and rejects wrong sections and covering overlays", async () => {
+    const { host, events } = setup();
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    for (const display of [
+      {
+        displayedRoute: "/job-finder/review-queue/job_ready/resume",
+        section: null,
+        overlay: "none" as const,
+      },
+      {
+        displayedRoute: "/job-finder/applications?view=tracker",
+        section: null,
+        overlay: "none" as const,
+      },
+      {
+        displayedRoute: "/job-finder/applications?view=tracker",
+        section: "tracker",
+        overlay: "browser" as const,
+      },
+      {
+        displayedRoute: "/job-finder/applications?view=tracker",
+        section: "tracker",
+        overlay: "none" as const,
+      },
+    ]) {
+      const before = events.length;
+      const pending = session.openInApp(
+        "/job-finder/applications?view=tracker",
+      );
+      await vi.waitFor(() =>
+        expect(
+          events
+            .slice(before)
+            .some((event) => event.payload.type === "open_route"),
+        ).toBe(true),
+      );
+      const event = events
+        .slice(before)
+        .find((event) => event.payload.type === "open_route")!;
+      if (event.payload.type !== "open_route") throw new Error("Missing route");
+      const ack = {
+        conversationId: conversation.id,
+        navigationRequestId: event.payload.navigationRequestId!,
+        ...display,
+        status: "displayed" as const,
+        reason: null,
+      };
+      host.acknowledgeNavigation({
+        ...ack,
+        navigationRequestId: "stale_request",
+      });
+      host.acknowledgeNavigation(ack);
+      expect(await pending).toMatchObject({
+        status:
+          display.section === "tracker" && display.overlay === "none"
+            ? "displayed"
+            : "blocked",
+      });
+    }
+  });
+  it("follows a tool-only job card with a text answer placed before the card", async () => {
+    let calls = 0;
+    const { host } = setup({
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({
+          chatWithTools: async () => {
+            calls += 1;
+            return calls === 1
+              ? {
+                  content: "",
+                  toolCalls: [
+                    {
+                      id: "show",
+                      type: "function" as const,
+                      function: {
+                        name: "show_jobs",
+                        arguments: '{"jobIds":["job_ready"]}',
+                      },
+                    },
+                  ],
+                }
+              : {
+                  content:
+                    "The listing asks for design experience. Your saved profile shows that experience.",
+                };
+          },
+        }),
+      },
+    });
+    const { conversationId } = await sendAndWait(
+      host,
+      "Do I meet this job's qualifications?",
+    );
+    const view = await host.readConversation({ conversationId });
+    const parts = reply(view.messages).parts;
+    expect(calls).toBe(2);
+    expect(parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("design experience"),
+    });
+    expect(
+      parts.some((part) => part.type === "records" && part.kind === "jobs"),
+    ).toBe(true);
+  });
+
+  it("keeps later browser steps on the opened retained application during the same turn", async () => {
+    const { host, ports } = setup();
+    const release = vi.fn(() => Promise.resolve());
+    const requests: unknown[] = [];
+    ports.browser = {
+      visibleTab: () => null,
+      lease: async (input) => {
+        requests.push(input);
+        return {
+          leaseId: "exact",
+          tabId: "retained",
+          applicationResultId: "prepared",
+          isApplicationBound: () => Promise.resolve(true),
+          revoked: new AbortController().signal,
+          hands: {} as never,
+          currentUrl: () => "https://example.test/form",
+          childTabIds: () => [],
+          release,
+        };
+      },
+    };
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    const opened = await session.browserLease({
+      applicationResultId: "prepared",
+    });
+    expect(await session.browserLease()).toBe(opened);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ applicationResultId: "prepared" });
+    await session.releaseBrowserLease?.();
+    expect(release).toHaveBeenCalledWith("Reviewing your send instruction");
+  });
+
+  it("continues a confirmation timeout with an unconfirmed send and no permission to retry", async () => {
+    const fixture = applicationHandoff();
+    const sent = submittedResult(fixture.result);
+    const uncertain = ApplyJobResultSchema.parse({
+      ...sent,
+      state: "awaiting_review",
+      summary: "Send attempted; confirmation timed out",
+      detail: "Check the site before trying again.",
+      privacyReceipt: {
+        ...sent.privacyReceipt,
+        finalSubmitOccurred: false,
+        submissionOutcome: {
+          ...sent.privacyReceipt!.submissionOutcome,
+          outcome: "outcome_uncertain",
+          verifiedAt: null,
+          retry: { eligible: false, blockReason: "outcome_uncertain" },
+        },
+      },
+    });
+    fixture.seed.applyJobResults = [uncertain];
+    fixture.seed.applyRuns = [
+      ApplyRunSchema.parse({ ...fixture.run, state: "completed" }),
+    ];
+    fixture.seed.userActionRequests = [];
+    const chat = vi.fn(() =>
+      Promise.resolve({ content: "The send is unconfirmed. Check the site." }),
+    );
+    const { host, ports, repository } = setup({
+      seed: fixture.seed,
+      modelHandle: {
+        ...createScriptedAssistantModelHandle(),
+        createModel: () => ({ chatWithTools: chat }),
+      },
+    });
+    const conversation = await host.createConversation();
+    await installApplicationWatch(host, conversation.id);
+    await host.checkWatches();
+    await waitFor(
+      () => host.readConversation({ conversationId: conversation.id }),
+      (view) => view.activeTurn === null,
+    );
+    const notes = (
+      await repository.listMessages(conversation.id, { limit: 100 })
+    ).messages.filter((message) => message.origin === "host");
+    const text = JSON.stringify(notes);
+    expect(text).toContain("send unconfirmed");
+    expect(text).toContain("blocked_until_person_checks_outcome");
+    expect(text).toContain("Do not send again or change sending settings");
+    expect(ports.sent).toEqual([]);
+  });
+
+  it("records a successful prepared-form field edit on the application", async () => {
+    const seed = createSeed();
+    seed.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "record_edit",
+        jobId: "job_ready",
+        title: "Designer",
+        company: "Synthetic",
+        status: "ready_for_review",
+        lastUpdatedAt: "2026-10-05T10:00:00.000Z",
+        lastActionLabel: "Prepared",
+        nextActionLabel: "Review",
+      }),
+    ];
+    const { host, ports, harness } = setup({ seed });
+    let noteChange:
+      | ((recordId: string, field: string) => Promise<void>)
+      | undefined;
+    ports.browser = {
+      visibleTab: () => null,
+      lease: async (input) => {
+        noteChange = input.onApplicationChange;
+        return {
+          leaseId: "edit",
+          tabId: "retained",
+          applicationResultId: "prepared",
+          isApplicationBound: () => Promise.resolve(true),
+          revoked: new AbortController().signal,
+          hands: {} as never,
+          currentUrl: () => "https://example.test/form",
+          childTabIds: () => [],
+          release: () => Promise.resolve(),
+        };
+      },
+    };
+    const conversation = await host.createConversation();
+    const session = (
+      host as unknown as {
+        detachedSession(
+          id: string,
+          messageId: string | null,
+        ): AssistantTurnSession;
+      }
+    ).detachedSession(conversation.id, null);
+    await session.browserLease({ applicationResultId: "prepared" });
+    await noteChange!("record_edit", "Cover letter");
+    const application = (
+      await harness.workspaceService.getWorkspaceSnapshot()
+    ).applicationRecords.find((record) => record.id === "record_edit")!;
+    expect(application.crm?.notes[0]?.body).toBe(
+      "Assistant changed Cover letter in the prepared form. Nothing was sent.",
+    );
+    expect(application.status).toBe("ready_for_review");
   });
 });

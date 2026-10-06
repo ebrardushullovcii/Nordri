@@ -163,3 +163,21 @@ describe("CampaignNotificationCenter", () => {
     );
   });
 });
+
+it("explains a failed source without rendering a browser stack", () => {
+  renderCenter({
+    notifications: [
+      notification("failed", {
+        kind: "blocked_work",
+        sourceTargetId: "midnite",
+        title: "Midnite could not be opened",
+        body: "page.goto: Timeout 30000ms exceeded\nCall log: \u001b",
+      }),
+    ],
+  });
+  expect(
+    screen.getByText(/Your saved jobs and other sources are still available/),
+  ).toBeTruthy();
+  expect(document.body.textContent).not.toContain("page.goto");
+  expect(screen.getByText("Unread").className).toContain("text-foreground");
+});

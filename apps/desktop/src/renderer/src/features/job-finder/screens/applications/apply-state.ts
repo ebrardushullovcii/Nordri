@@ -1,5 +1,6 @@
 import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  PREPARED_PAGE_CLOSED_SUMMARY,
   isApplicationTrackedAsSentByPerson,
   isApplicationWithdrawnByPerson,
   type ApplicationRecord,
@@ -126,6 +127,7 @@ export function resolveApplyStatePresentation(input: {
   recordLastActionLabel?: string | null;
   /** The record's tracker, where the person may have recorded the send. */
   recordCrm?: ApplicationRecord["crm"] | undefined;
+  recordLatestBlocker?: ApplicationRecord["latestBlocker"];
 }): ApplyStatePresentation {
   const { mode, now = Date.now(), pendingQuestionCount = 0, result } = input;
   const questionsLeftLabel = formatQuestionsLeft(pendingQuestionCount);
@@ -180,7 +182,29 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
+  if (result?.blockerReason === "application_closed") {
+    return {
+      kind: "could_not_apply",
+      title: "Listing closed",
+      sentence: reason,
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+    };
+  }
+
   const plannedStanding = resolvePlannedApplyStanding(result, input.run);
+  if (plannedStanding === "waiting_tab") {
+    return {
+      kind: "filling_in",
+      title: "Waiting for a browser tab",
+      sentence: result?.detail ?? null,
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+      plannedStanding,
+    };
+  }
   if (plannedStanding === "not_started") {
     return {
       kind: "could_not_apply",
@@ -207,7 +231,7 @@ export function resolveApplyStatePresentation(input: {
     return {
       kind: "filling_in",
       title: "Waiting its turn",
-      sentence: null,
+      sentence: formatElapsedMinutes(result?.startedAt, now),
       action: "none",
       actionLabel: null,
       questionsLeftLabel: null,
@@ -215,12 +239,12 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
-  if (applyResultIsStillRunning(result, input.run)) {
+  if (applyResultIsStillRunning(result)) {
     // The browser is full: say that it waits, and what frees a tab.
     if (result?.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) {
       return {
         kind: "filling_in",
-        title: "Waiting for a browser tab",
+        title: `Waiting for a browser tab${formatElapsedMinutes(result?.startedAt, now) ? ` (${formatElapsedMinutes(result?.startedAt, now)})` : ""}`,
         sentence: result.detail ?? null,
         action: "none",
         actionLabel: null,
@@ -230,8 +254,8 @@ export function resolveApplyStatePresentation(input: {
     const elapsed = formatElapsedMinutes(result?.startedAt, now);
     return {
       kind: "filling_in",
-      title: elapsed ? `Filling in (${elapsed})` : "Filling in",
-      sentence: null,
+      title: elapsed ? `Preparing (${elapsed})` : "Preparing",
+      sentence: result?.detail ?? null,
       action: "none",
       actionLabel: null,
       questionsLeftLabel: null,
@@ -242,7 +266,11 @@ export function resolveApplyStatePresentation(input: {
   // is never dressed up as a submission (ADR 0012).
   const submissionOutcome =
     result?.privacyReceipt?.submissionOutcome?.outcome ?? null;
-  if (submissionOutcome === "submitted" || result?.state === "submitted") {
+  if (
+    submissionOutcome === "submitted" ||
+    (result?.state === "submitted" &&
+      result.privacyReceipt?.finalSubmitOccurred !== false)
+  ) {
     return {
       kind: "applied",
       title: "Applied",
@@ -264,6 +292,36 @@ export function resolveApplyStatePresentation(input: {
         "Job Finder could not confirm whether this application was sent. Check the employer site before trying to send it again.",
       action: "open_browser",
       actionLabel: OPEN_THE_BROWSER_ACTION,
+      questionsLeftLabel: null,
+    };
+  }
+
+  if (
+    result?.state === "submitted" &&
+    result.privacyReceipt?.finalSubmitOccurred === false
+  ) {
+    return {
+      kind: "needs_you",
+      title: "Send not confirmed",
+      sentence:
+        "The saved receipt does not confirm a send. Review this application's outcome before trying again.",
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+    };
+  }
+
+  if (
+    result?.state === "failed" &&
+    result.summary === PREPARED_PAGE_CLOSED_SUMMARY
+  ) {
+    return {
+      kind: "could_not_apply",
+      title: "Could not apply",
+      sentence:
+        "The prepared form is no longer open. Prepare it again using your saved answers and files.",
+      action: "try_again",
+      actionLabel: "Prepare again",
       questionsLeftLabel: null,
     };
   }
@@ -298,6 +356,8 @@ export function resolveApplyStatePresentation(input: {
   }
 
   const needsPerson =
+    (result?.state === "awaiting_review" &&
+      Boolean(result.blockerReason || input.recordLatestBlocker)) ||
     applyResultNeedsSecurityCheck(result) ||
     looksLikeSignInWall({
       blockerCode: result?.blockerReason ?? null,
@@ -337,6 +397,37 @@ export function resolveApplyStatePresentation(input: {
     };
   }
 
+  if (
+    result?.state === "awaiting_review" &&
+    result.automaticSendPending === true &&
+    !result.privacyReceipt?.submissionOutcome
+  ) {
+    return {
+      kind: "filling_in",
+      title: "Waiting to send",
+      sentence: result.detail,
+      action: "none",
+      actionLabel: null,
+      questionsLeftLabel: null,
+    };
+  }
+
+  if (
+    result?.privacyReceipt?.submissionOutcome?.outcome === "not_submitted" &&
+    result.privacyReceipt.submissionOutcome.browserAction?.reason ===
+      "form_validation_failed"
+  ) {
+    return {
+      kind: "ready_to_send",
+      title: "Not sent",
+      sentence:
+        result.privacyReceipt.submissionOutcome.browserAction?.detail ??
+        result.detail,
+      action: "open_browser",
+      actionLabel: "Correct the fields in the browser",
+      questionsLeftLabel: null,
+    };
+  }
   if (result?.state === "awaiting_review") {
     // A send that was asked for and refused says why (the service writes
     // "Not sent: ..." on the result); the old row said nothing at all.

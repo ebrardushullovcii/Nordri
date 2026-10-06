@@ -259,6 +259,10 @@
   --modal-scrim: rgba(0, 0, 0, 0.7);
   --modal-shadow: 0 32px 120px rgba(0, 0, 0, 0.55);
   --select-shadow: 0 14px 40px rgba(0, 0, 0, 0.34);
+  /* The native <select> chevron: lucide ChevronDown stroked in
+     --muted-foreground (#9aa3ad here, #4c545d in light), the glyph and colour
+     the Radix Select trigger draws. Base64 so the stylesheet holds no URL. */
+  --select-chevron: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCcgZmlsbD0nbm9uZScgc3Ryb2tlPScjOWFhM2FkJyBzdHJva2Utd2lkdGg9JzInIHN0cm9rZS1saW5lY2FwPSdyb3VuZCcgc3Ryb2tlLWxpbmVqb2luPSdyb3VuZCc+PHBhdGggZD0nbTYgOSA2IDYgNi02Jy8+PC9zdmc+");
   --progress-active-glow: none;
   --selection-background: rgba(127, 156, 204, 0.3);
   --scrollbar-thumb: rgba(255, 255, 255, 0.4);
@@ -524,6 +528,7 @@
   --modal-scrim: rgba(31, 33, 36, 0.2);
   --modal-shadow: 0 24px 72px rgba(31, 33, 36, 0.16);
   --select-shadow: 0 12px 34px rgba(31, 33, 36, 0.12);
+  --select-chevron: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCcgZmlsbD0nbm9uZScgc3Ryb2tlPScjNGM1NDVkJyBzdHJva2Utd2lkdGg9JzInIHN0cm9rZS1saW5lY2FwPSdyb3VuZCcgc3Ryb2tlLWxpbmVqb2luPSdyb3VuZCc+PHBhdGggZD0nbTYgOSA2IDYgNi02Jy8+PC9zdmc+");
   --progress-active-glow: none;
   --selection-background: rgba(95, 120, 153, 0.24);
   --scrollbar-thumb: rgba(24, 24, 22, 0.52);
@@ -694,6 +699,26 @@
  */
 :where([class*="ring-ring"]):is(:focus-visible, :focus-within) {
   --tw-ring-color: var(--ring);
+}
+
+/*
+ * Native dropdowns draw the platform arrow: on macOS a double chevron pressed
+ * against the right edge, unlike the single inset chevron of the Radix Select
+ * trigger. Every single-value <select> draws that same chevron instead, 12px
+ * in from the edge, with room kept so long option text never runs under it.
+ * It sits in the utilities layer on purpose: there its element-plus-attribute
+ * specificity beats the per-screen px-* utilities that would otherwise put
+ * text under the arrow, while `className` overrides of anything else win.
+ */
+@layer utilities {
+  select:not([multiple]):not([size]) {
+    appearance: none;
+    background-image: var(--select-chevron);
+    background-position: right 0.75rem center;
+    background-repeat: no-repeat;
+    background-size: 1rem 1rem;
+    padding-inline-end: 2.25rem;
+  }
 }
 
 /*

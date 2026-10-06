@@ -1,4 +1,16 @@
-import { writeFile } from "node:fs/promises";
+import { getEmbeddedBrowser } from "../services/browser/embedded-browser";
+import { resetJobFinderBrowser } from "../services/job-finder/reset-workspace";
+import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  parsePersonalWorkspaceExport,
+  restorePersonalWorkspace,
+} from "../services/job-finder/personal-workspace-restore";
+import {
+  getJobFinderDocumentsDirectory,
+  getCandidateAssetsDirectory,
+  getApplicationDocumentsDirectory,
+} from "../services/job-finder/paths";
 import path from "node:path";
 import { access } from "node:fs/promises";
 import { app, BrowserWindow, clipboard, dialog, shell } from "electron";
@@ -9,6 +21,10 @@ import type {
   SaveDialogOptions,
 } from "electron";
 import {
+  type PersonalWorkspaceExport,
+  PersonalWorkspaceRestorePreviewSchema,
+  ConfirmPersonalWorkspaceRestoreSchema,
+  PersonalWorkspaceRestoreResultSchema,
   ApplicationCrmExportInputSchema,
   ApplicationCrmFileExportResultSchema,
   ApplicationCrmBulkStageMutationInputSchema,
@@ -101,6 +117,7 @@ import {
   ResumeDocumentBundleSchema,
   ResumeImportFieldCandidateSchema,
   ImportResumeRequestSchema,
+  CancelResumeImportRequestSchema,
   ResumeImportProgressEventSchema,
   ResumeImportRunSchema,
   ResumeQualityBenchmarkReportSchema,
@@ -119,6 +136,7 @@ import {
   UpdateAiBehaviorInputSchema,
   UpdateApplicationDefaultsInputSchema,
   UpdateWorkspaceBehaviorInputSchema,
+  SaveUserActionAnswerDraftInputSchema,
   UserActionCommandSchema,
   WriteClipboardTextInputSchema,
   WriteClipboardTextResultSchema,
@@ -133,11 +151,16 @@ import {
   resolveTailoredAssetLabel,
   withApplicationAuthorityGate,
 } from "@nordri/job-finder";
-import { buildJobFinderDiagnosticExport } from "../services/job-finder/build-diagnostic-export";
+import {
+  buildJobFinderDiagnosticExport,
+  buildPersonalWorkspaceExport,
+  personalWorkspaceExportFileName,
+} from "../services/job-finder/build-diagnostic-export";
 import { collectJobFinderPerformanceSnapshot } from "../services/job-finder/collect-performance-snapshot";
 import { createJobFinderWorkspaceDeltaTracker } from "../services/job-finder/workspace-delta";
 import {
   publishJobFinderWorkspaceUpdate,
+  scheduleAnswerDraftWorkspaceUpdate,
   withJobFinderWorkspaceUpdates,
 } from "../services/job-finder/workspace-updates";
 import { runBoundedNewSourceReadabilityCheck } from "../services/job-finder/new-source-readability-check";
@@ -215,11 +238,25 @@ export async function syncApplicationAuthorityForSavedMode(
   const active = (await authorityService.list({ status: "active" }))[0] ?? null;
 
   if (mode === "prepare_only") {
-    if (active) {
-      await authorityService.revoke({
-        id: active.id,
-        expectedRevision: active.revision,
-      });
+    if (active && active.mode !== "prepare_only") {
+      let current = active;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const revoked = await authorityService.revoke({
+          id: current.id,
+          expectedRevision: current.revision,
+        });
+        if (
+          revoked.status === "applied" ||
+          revoked.status === "missing" ||
+          revoked.current?.status === "revoked"
+        )
+          return;
+        current =
+          (await authorityService.list({ status: "active" }))[0] ?? current;
+      }
+      throw new Error(
+        "Job Finder could not turn off sending. Try Fill-in only again.",
+      );
     }
     return;
   }
@@ -347,7 +384,7 @@ export async function syncApplicationAuthorityForSavedMode(
         sameMode?.decisionPolicy?.answerPolicy.preApprovedAttestationKinds ??
         [],
       salaryDisclosure:
-        sameMode?.decisionPolicy?.answerPolicy.salaryDisclosure ??
+        current?.decisionPolicy?.answerPolicy.salaryDisclosure ??
         "pause_for_user",
       allowedResumeSha256: [
         ...new Set([
@@ -813,6 +850,11 @@ export function registerJobFinderRouteHandlers(
   if (options.includeBootstrapRoutes !== false) {
     registerJobFinderBootstrapDesktopRoutes(ipcMain);
   }
+  const pendingWorkspaceRestores = new Map<
+    number,
+    { token: string; backup: PersonalWorkspaceExport }
+  >();
+  let workspaceRestorePending = false;
   const workspaceDeltaTracker = createJobFinderWorkspaceDeltaTracker();
   const activeResumePreviewRequests = new WeakMap<
     object,
@@ -867,6 +909,10 @@ export function registerJobFinderRouteHandlers(
       const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
       const snapshot = await (async () => {
         switch (input.mutation.type) {
+          case "assess_job_listing":
+            return jobFinderWorkspaceService.assessJobListing(
+              input.mutation.jobId,
+            );
           case "queue_job_for_review":
             return jobFinderWorkspaceService.queueJobForReview(
               input.mutation.jobId,
@@ -1386,6 +1432,7 @@ export function registerJobFinderRouteHandlers(
     async (event, payload: unknown) => {
       const importRequest = ImportResumeRequestSchema.parse(payload ?? {});
       const requestId = importRequest.requestId ?? null;
+      const abortController = new AbortController();
       const request: {
         requestId: string;
         cancelled: boolean;
@@ -1399,19 +1446,23 @@ export function registerJobFinderRouteHandlers(
 
       const cancelHandler = request
         ? (cancelEvent: Electron.IpcMainEvent, cancelPayload: unknown) => {
+            const cancelRequest =
+              CancelResumeImportRequestSchema.safeParse(cancelPayload);
             const activeRequest = activeResumeImportRequests.get(
               cancelEvent.sender,
             );
             if (
               activeRequest === request &&
-              parseOptionalRequestId(cancelPayload) === request.requestId &&
-              activeRequest.phase === "picking"
+              cancelRequest.success &&
+              cancelRequest.data.requestId === request.requestId &&
+              (request.phase === "picking" ||
+                cancelRequest.data.stopProcessing === true)
             ) {
-              // The native picker cannot be force-closed safely from the main
-              // process. Marking the request is enough to discard a late file
-              // choice, so a manual fallback never imports behind the user's
-              // back after they stopped waiting.
+              // Ignore a late picker choice, or stop processing before it can
+              // apply results. The listener stays installed until this request
+              // settles, so manual setup can stop an in-flight model read.
               request.cancelled = true;
+              abortController.abort();
             }
           }
         : null;
@@ -1471,9 +1522,12 @@ export function registerJobFinderRouteHandlers(
             await getJobFinderWorkspaceService();
           const snapshot =
             await jobFinderWorkspaceService.getWorkspaceSnapshot();
-          return retryInterruptedResumeImport(
+          return await retryInterruptedResumeImport(
             snapshot.latestResumeImportRun ?? null,
-            reportProgress ? { onProgress: reportProgress } : {},
+            {
+              ...(reportProgress ? { onProgress: reportProgress } : {}),
+              signal: abortController.signal,
+            },
           );
         }
         const usableParentWindow =
@@ -1517,7 +1571,8 @@ export function registerJobFinderRouteHandlers(
           // route-change cancellation race discard real processing.
           request.phase = "processing";
         }
-        return importResumeFromSourcePath(sourcePath, {
+        return await importResumeFromSourcePath(sourcePath, {
+          signal: abortController.signal,
           ...(reportProgress ? { onProgress: reportProgress } : {}),
         });
       } finally {
@@ -1691,6 +1746,7 @@ export function registerJobFinderRouteHandlers(
     const service = await getJobFinderWorkspaceService();
     const { performance } = await collectJobFinderPerformanceSnapshot({
       service,
+      waitingFormMemory: () => getEmbeddedBrowser().reduceWaitingFormMemory(),
     });
 
     return JobFinderPerformanceSnapshotSchema.parse(performance);
@@ -1705,6 +1761,7 @@ export function registerJobFinderRouteHandlers(
     const service = await getJobFinderWorkspaceService();
     const { performance } = await collectJobFinderPerformanceSnapshot({
       service,
+      waitingFormMemory: () => getEmbeddedBrowser().reduceWaitingFormMemory(),
     });
 
     return JobFinderPerformanceSnapshotSchema.parse(performance);
@@ -1827,6 +1884,17 @@ export function registerJobFinderRouteHandlers(
         sourcePath,
         useVision !== undefined ? { useVision } : {},
       );
+    },
+  );
+
+  ipcMain.handle(
+    "job-finder:save-user-action-answer-draft",
+    async (_event, payload: unknown) => {
+      const service = await getJobFinderWorkspaceService();
+      await service.saveUserActionAnswerDraft(
+        SaveUserActionAnswerDraftInputSchema.parse(payload),
+      );
+      scheduleAnswerDraftWorkspaceUpdate();
     },
   );
 
@@ -2075,11 +2143,11 @@ export function registerJobFinderRouteHandlers(
 
   ipcMain.handle(
     "job-finder:queue-job-for-review",
-    async (_event, payload: unknown) => {
+    async (event, payload: unknown) => {
       const { jobId } = JobFinderJobActionInputSchema.parse(payload);
       const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
       const snapshot = await jobFinderWorkspaceService.queueJobForReview(jobId);
-
+      publishJobFinderWorkspaceUpdate(event.sender);
       return workspaceMutationResponse(snapshot);
     },
   );
@@ -2385,10 +2453,166 @@ export function registerJobFinderRouteHandlers(
       });
     },
   );
+  ipcMain.handle(
+    "job-finder:preview-personal-workspace-restore",
+    async (event) => {
+      const browserWindow = BrowserWindow.fromWebContents(event.sender);
+      const picker: OpenDialogOptions = {
+        title: "Restore from a workspace export",
+        properties: ["openFile"],
+        filters: [{ name: "Nordri workspace export", extensions: ["json"] }],
+      };
+      const picked = browserWindow
+        ? await dialog.showOpenDialog(browserWindow, picker)
+        : await dialog.showOpenDialog(picker);
+      pendingWorkspaceRestores.delete(event.sender.id);
+      if (picked.canceled || !picked.filePaths[0]) return null;
+      const backup = parsePersonalWorkspaceExport(
+        await readFile(picked.filePaths[0], "utf8"),
+      );
+      const token = randomUUID();
+      pendingWorkspaceRestores.set(event.sender.id, { token, backup });
+      return PersonalWorkspaceRestorePreviewSchema.parse({
+        token,
+        profileName: backup.repositoryState.profile.fullName ?? "Your profile",
+        exportedAt: backup.exportedAt,
+        jobs: backup.repositoryState.savedJobs.length,
+        applications: backup.repositoryState.applicationRecords.length,
+        answers:
+          backup.repositoryState.applicationAnswerRecords.length +
+          backup.repositoryState.profile.answerBank.customAnswers.length,
+        documents: backup.files.length,
+        chats: backup.assistantHistory.length,
+      });
+    },
+  );
+  ipcMain.handle(
+    "job-finder:confirm-personal-workspace-restore",
+    async (event, payload: unknown) => {
+      const { token } = ConfirmPersonalWorkspaceRestoreSchema.parse(payload);
+      const prepared = pendingWorkspaceRestores.get(event.sender.id);
+      if (!prepared || prepared.token !== token)
+        throw new Error("Choose the export again before restoring.");
+      if (workspaceRestorePending)
+        throw new Error(
+          "A workspace restore is already running. Wait for it to finish.",
+        );
+      workspaceRestorePending = true;
+      const safetyExportPath = path.join(
+        app.getPath("documents"),
+        `nordri-before-restore-${Date.now()}-${randomUUID()}.json`,
+      );
+      try {
+        const service = await getJobFinderWorkspaceService();
+        const repository = getJobFinderRepositoryForWorkspaceService(service);
+        if (!repository)
+          throw new Error(
+            "Your workspace could not be restored. Nothing was changed.",
+          );
+        const {
+          exportAssistantHistory,
+          restoreAssistantHistory,
+          stopAssistantForWorkspaceRestore,
+        } = await import("../services/assistant/assistant-service");
+        await service.withWorkspaceRestore(async () => {
+          await stopAssistantForWorkspaceRestore();
+          await restorePersonalWorkspace({
+            backup: prepared.backup,
+            repository,
+            roots: new Map([
+              ["resumes", getJobFinderDocumentsDirectory()],
+              ["attachments", getCandidateAssetsDirectory()],
+              ["application-documents", getApplicationDocumentsDirectory()],
+            ]),
+            safetyExportPath,
+            buildSafetyExport: async () =>
+              buildPersonalWorkspaceExport({
+                workspace: await service.getWorkspaceSnapshot(),
+                repositoryState: await repository.exportState(),
+                assistantHistory: await exportAssistantHistory(),
+                applicationQuestions:
+                  await repository.listApplicationQuestionRecords(),
+                applicationAnswers:
+                  await repository.listApplicationAnswerRecords(),
+              }),
+            beforeReplace: async () => {
+              await resetJobFinderBrowser();
+            },
+            readChats: exportAssistantHistory,
+            restoreChats: restoreAssistantHistory,
+          });
+        });
+        pendingWorkspaceRestores.delete(event.sender.id);
+        await service.setActivityControl({
+          paused: true,
+          reason: "Workspace restored. Resume activity when you are ready.",
+        });
+        publishJobFinderWorkspaceUpdate();
+        return PersonalWorkspaceRestoreResultSchema.parse({ safetyExportPath });
+      } finally {
+        workspaceRestorePending = false;
+      }
+    },
+  );
+
+  ipcMain.handle("job-finder:export-personal-workspace", async (event) => {
+    const service = await getJobFinderWorkspaceService();
+    const browserWindow = BrowserWindow.fromWebContents(event.sender);
+    const options: SaveDialogOptions = {
+      title: "Export personal workspace",
+      defaultPath: path.join(
+        app.getPath("documents"),
+        personalWorkspaceExportFileName(),
+      ),
+      filters: [{ name: "JSON", extensions: ["json"] }],
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    };
+    const result = browserWindow
+      ? await dialog.showSaveDialog(browserWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath)
+      return ApplicationCrmFileExportResultSchema.parse({
+        status: "cancelled",
+        exportedCount: 0,
+        filePath: null,
+      });
+    const workspace = await service.getWorkspaceSnapshot();
+    const { exportAssistantHistory } =
+      await import("../services/assistant/assistant-service");
+    const assistantHistory = await exportAssistantHistory();
+    const repository = getJobFinderRepositoryForWorkspaceService(service);
+    if (!repository)
+      throw new Error(
+        "Your workspace could not be exported. Nothing was deleted. Try again.",
+      );
+    const [applicationQuestions, applicationAnswers] = await Promise.all([
+      repository.listApplicationQuestionRecords(),
+      repository.listApplicationAnswerRecords(),
+    ]);
+    const content = await buildPersonalWorkspaceExport({
+      workspace,
+      repositoryState: await repository.exportState(),
+      assistantHistory,
+      applicationQuestions,
+      applicationAnswers,
+    });
+    const filePath = result.filePath.toLowerCase().endsWith(".json")
+      ? result.filePath
+      : `${result.filePath}.json`;
+    await writeFile(filePath, content, { encoding: "utf8", mode: 0o600 });
+    return ApplicationCrmFileExportResultSchema.parse({
+      status: "saved",
+      exportedCount: workspace.applicationRecords.length,
+      filePath,
+    });
+  });
   ipcMain.handle("job-finder:export-diagnostics", async (event) => {
     const service = await getJobFinderWorkspaceService();
     const { performance, workspace } =
-      await collectJobFinderPerformanceSnapshot({ service });
+      await collectJobFinderPerformanceSnapshot({
+        service,
+        waitingFormMemory: () => getEmbeddedBrowser().reduceWaitingFormMemory(),
+      });
     const diagnostic = buildJobFinderDiagnosticExport({
       workspace,
       performance,
@@ -3098,6 +3322,9 @@ export function registerJobFinderRouteHandlers(
     },
   );
 
+  ipcMain.handle("job-finder:reset-browser", async () =>
+    workspaceMutationResponse(await resetJobFinderBrowser()),
+  );
   ipcMain.handle("job-finder:reset-workspace", async () => {
     return resetJobFinderWorkspace();
   });

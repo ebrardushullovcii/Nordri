@@ -8,6 +8,7 @@ import type {
 } from "@nordri/contracts";
 import {
   evaluateProfileSetupReadiness,
+  resolveCampaignSourceTargetIds,
   getProfileSetupReadinessBlockers,
   PREPARED_PAGE_CLOSED_SUMMARY,
 } from "@nordri/contracts";
@@ -53,6 +54,7 @@ import {
   countResumeLinesToDecide,
   countTailoredDraftPreparationEligible,
   isQueueStageReady,
+  type TailoredDraftPreparationViewState,
   needsPersonResumeReview,
 } from "../review-queue/review-queue-status";
 import { buildResumeWorkspaceRoute } from "../../lib/resume-workspace-route";
@@ -165,6 +167,7 @@ interface JobSearchHomeModel {
 export interface BuildJobSearchHomeModelInput {
   workspace: JobFinderWorkspaceSnapshot;
   tasks: JobFinderTaskCenterModel;
+  tailoredDraftPreparation?: TailoredDraftPreparationViewState | null | undefined;
   /** A search request is in flight but the run has not been recorded yet. */
   discoveryRunPending: boolean;
   /** Whether Home may start a search itself. */
@@ -539,7 +542,10 @@ function countApplications(
     switch (presentation.kind) {
       case "filling_in":
         if (presentation.plannedStanding === "paused") counts.paused += 1;
-        else if (presentation.plannedStanding === "waiting_turn")
+        else if (
+          presentation.plannedStanding === "waiting_turn" ||
+          presentation.plannedStanding === "waiting_tab"
+        )
           counts.waiting += 1;
         else counts.fillingIn += 1;
         break;
@@ -767,7 +773,7 @@ function buildNowItem(
           ? `Waiting to apply: ${item.sourceLabel}`
           : `${item.status === "paused" ? "Paused before" : "Applying:"} ${item.sourceLabel}`,
         detail: waitingForTab
-          ? "Waiting for a free browser tab. It starts as soon as one frees up; close a tab you no longer need to start it now."
+          ? "Browser tab limit reached. Close finished tabs in the Job Finder browser; prepared, unsent forms stay open."
           : item.stageLabel,
         stop: item.canCancel
           ? { label: "Stop", action: { kind: "stop_apply", runId: item.id } }
@@ -812,13 +818,27 @@ export function buildJobSearchHomeModel(
   const now = input.now ?? Date.now();
   const trackerDue = (() => {
     let overdue = 0;
+    let firstDue: { recordId: string; title: string; at: number } | null = null;
     let interviewsSoon = 0;
     const soon = now + 2 * 86_400_000;
     for (const record of input.workspace.applicationRecords) {
+      if (record.crm?.archivedAt) continue;
       for (const reminder of record.crm?.reminders ?? []) {
         const due = Date.parse(reminder.dueAt);
-        if (reminder.status === "pending" && Number.isFinite(due) && due < now)
+        if (
+          reminder.status === "pending" &&
+          Number.isFinite(due) &&
+          due <= now
+        ) {
           overdue += 1;
+          if (!firstDue || due < firstDue.at) {
+            firstDue = {
+              recordId: record.id,
+              title: `${reminder.title} · ${record.title} at ${record.company}`,
+              at: due,
+            };
+          }
+        }
       }
       for (const interview of record.crm?.interviews ?? []) {
         const starts = Date.parse(interview.startsAt);
@@ -831,7 +851,7 @@ export function buildJobSearchHomeModel(
           interviewsSoon += 1;
       }
     }
-    return { overdue, interviewsSoon };
+    return { overdue, interviewsSoon, firstDue };
   })();
   const jobIds = selectCampaignJobIds(workspace);
   const queue = (workspace.reviewQueue ?? []).filter((item) =>
@@ -867,8 +887,18 @@ export function buildJobSearchHomeModel(
       ready_check: "your job targets",
     }[setupStep] ?? "where you left off";
 
-  const targets = workspace.searchPreferences.discovery.targets;
-  const enabledTargets = targets.filter((target) => target.enabled);
+  const selectedPlan = workspace.campaigns.find(
+    (plan) => plan.id === workspace.activeCampaignId,
+  );
+  const targets =
+    selectedPlan?.searchPreferences?.discovery.targets ??
+    workspace.searchPreferences.discovery.targets;
+  const selectedSourceIds = selectedPlan?.searchPreferences
+    ? new Set(resolveCampaignSourceTargetIds(selectedPlan))
+    : null;
+  const enabledTargets = targets.filter((target) =>
+    selectedSourceIds ? selectedSourceIds.has(target.id) : target.enabled,
+  );
   const savedSourceCount = targets.length;
   const enabledSourceCount = enabledTargets.length;
   const failingSources = enabledTargets.filter((target) =>
@@ -922,6 +952,34 @@ export function buildJobSearchHomeModel(
   ).length;
   const shortlisted = countShortlistedJobs(workspace, jobIds);
   const shortlist = countShortlist(queue, workspace);
+  const resumeBatch =
+    input.tailoredDraftPreparation?.status === "running"
+      ? input.tailoredDraftPreparation
+      : null;
+  const resumeBatchJobIds = new Set(
+    resumeBatch && !workspace.intelligence.resumeBatchCheckpoint?.done
+      ? workspace.intelligence.resumeBatchCheckpoint?.jobIds
+      : [],
+  );
+  const untouchedResumes =
+    resumeBatchJobIds.size > 0
+      ? countTailoredDraftPreparationEligible(
+          queue.filter((item) => !resumeBatchJobIds.has(item.jobId)),
+          collectPreparedApplicationJobIds(workspace.applicationRecords),
+        )
+      : shortlist.missingResumes;
+  const activeResumes = resumeBatch
+    ? Math.max(
+        0,
+        resumeBatch.attemptedCount -
+          resumeBatch.completedCount -
+          resumeBatch.failedCount,
+      )
+    : shortlist.writing;
+  const queuedResumes =
+    resumeBatch && !resumeBatch.stopRequested
+      ? Math.max(0, resumeBatch.totalCount - resumeBatch.attemptedCount)
+      : 0;
   const applicationCount = countApplicationRecords(workspace, jobIds);
   const applications = countApplications(
     workspace,
@@ -1084,7 +1142,7 @@ export function buildJobSearchHomeModel(
   };
   const dailyLimitNext: HomeNextStep = {
     id: "daily_limit",
-    title: "Today's application limit is reached",
+    title: "Today's preparation limit is reached",
     detail:
       "Application preparation can continue after the daily limit resets, or you can change the limit in Applying settings.",
     primary: {
@@ -1439,6 +1497,20 @@ export function buildJobSearchHomeModel(
       // The rest of the pipeline does not wait on this one item.
       secondary: nextInPlaceAction ? [nextInPlaceAction] : [],
     };
+  } else if (trackerDue.firstDue) {
+    next = {
+      id: "tracker_due",
+      title: trackerDue.firstDue.title,
+      detail: `${plural(trackerDue.overdue, "follow-up is due", "follow-ups are due")}. You can follow up while other work runs.`,
+      primary: {
+        label: "Open application",
+        action: {
+          kind: "navigate",
+          route: `${trackerRoute}&applicationRecordId=${encodeURIComponent(trackerDue.firstDue.recordId)}`,
+        },
+      },
+      secondary: [],
+    };
   } else if (enabledSourceCount === 0) {
     next =
       savedSourceCount > 0
@@ -1510,8 +1582,8 @@ export function buildJobSearchHomeModel(
       title: `Check ${plural(n, "application")} whose page closed`,
       detail:
         n === 1
-          ? "Job Finder filled this one in, but its page closed before Job Finder saw it sent. If you sent it yourself, set its tracker stage to Applied. If not, choose Try again on it in Applications."
-          : "Job Finder filled these in, but their pages closed before Job Finder saw them sent. If you sent any yourself, set its tracker stage to Applied. Choose Try again on the others in Applications.",
+          ? "Job Finder filled this one in, but its page closed before Job Finder saw it sent. If you sent it yourself, set its tracker stage to Applied. If not, choose Prepare again on it in Applications."
+          : "Job Finder filled these in, but their pages closed before Job Finder saw them sent. If you sent any yourself, set its tracker stage to Applied. Choose Prepare again on the others in Applications.",
       primary: {
         label: "Open Applications",
         action: { kind: "navigate", route: applicationsRoute },
@@ -1843,6 +1915,22 @@ export function buildJobSearchHomeModel(
   }
 
   // What is going on, in one sentence.
+  if (trackerDue.firstDue && next.id !== "tracker_due") {
+    next = {
+      ...next,
+      detail: `${next.detail} Follow-up due: ${trackerDue.firstDue.title}.`,
+      secondary: [
+        ...next.secondary,
+        {
+          label: "Open due follow-up",
+          action: {
+            kind: "navigate",
+            route: `${trackerRoute}&applicationRecordId=${encodeURIComponent(trackerDue.firstDue.recordId)}`,
+          },
+        },
+      ],
+    };
+  }
   const paused = workspace.activityControl.paused;
   let statusLine: string;
   if (paused) {
@@ -1916,15 +2004,12 @@ export function buildJobSearchHomeModel(
             label: "Shortlisted",
             count: shortlisted,
             detail: joinParts([
-              // A running batch writes the missing ones; they are not
-              // waiting on the person while it does.
-              shortlist.missingResumes > 0 && !resumesWriting
-                ? `${shortlist.missingResumes} need a resume`
+              untouchedResumes > 0
+                ? `${untouchedResumes} need a resume`
                 : null,
-              shortlist.writing +
-                (resumesWriting ? shortlist.missingResumes : 0) >
-              0
-                ? `${shortlist.writing + (resumesWriting ? shortlist.missingResumes : 0)} being written`
+              queuedResumes > 0 ? `${queuedResumes} queued` : null,
+              activeResumes > 0
+                ? `${activeResumes} being written`
                 : null,
               shortlist.reviewResumes > 0
                 ? `${shortlist.reviewResumes} to review`
@@ -1962,8 +2047,14 @@ export function buildJobSearchHomeModel(
               applications.applied > 0
                 ? `${applications.applied} applied`
                 : null,
-              applications.couldNotApply - applications.notStarted > 0
-                ? `${applications.couldNotApply - applications.notStarted} could not apply`
+              applications.pageClosedJobIds.length > 0
+                ? `${applications.pageClosedJobIds.length} ${applications.pageClosedJobIds.length === 1 ? "needs" : "need"} Prepare again`
+                : null,
+              applications.couldNotApply -
+                applications.notStarted -
+                applications.pageClosedJobIds.length >
+              0
+                ? `${applications.couldNotApply - applications.notStarted - applications.pageClosedJobIds.length} could not apply`
                 : null,
               applications.notStarted > 0
                 ? `${applications.notStarted} not started`

@@ -1,3 +1,6 @@
+/** A full read cannot omit supplied evidence to fit the model budget. */
+export class FullFitEvidenceBudgetError extends Error {}
+
 const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS = 196_000;
 const APPROX_CHARS_PER_TOKEN = 3;
 const INPUT_BUDGET_RATIO = 0.72;
@@ -49,6 +52,8 @@ export type OpenAiCompatibleJsonOperation =
   | "reviseCandidateProfile"
   | "tailorResume"
   | "assessJobFit"
+  | "judgeJobFits"
+  | "checkResumeClaims"
   | "extractJobsFromPage";
 
 // Declared as a type alias (not an interface) so the shape carries an
@@ -541,6 +546,8 @@ function responseHeadroomTokensForOperation(
     case "adjudicateResumeImportCandidates":
     case "createResumeDraft":
     case "tailorResume":
+    case "judgeJobFits":
+    case "checkResumeClaims":
       return 4_096;
     case "reviseResumeDraft":
     case "reviseCandidateProfile":
@@ -608,6 +615,13 @@ function withGroundingEvidenceCompactionMetadata(
   };
 }
 
+const PRESIZED_OPERATIONS: ReadonlySet<OpenAiCompatibleJsonOperation> = new Set([
+  "extractJobsFromPage",
+  "judgeJobFits",
+  "checkResumeClaims",
+  "assessJobFit",
+]);
+
 export function compactOpenAiCompatibleUserPayload(input: {
   operation: OpenAiCompatibleJsonOperation;
   modelContextWindowTokens: number | null;
@@ -625,18 +639,25 @@ export function compactOpenAiCompatibleUserPayload(input: {
   const charBudget = computeUserPayloadCharBudget(input);
   const originalSize = estimateSerializedLength(parsedPayload.data);
 
-  // Only extractJobsFromPage skips normalization entirely while within
-  // budget. Grounded resume generation requests always normalize through
-  // the level-one field bounds so oversized individual fields (for example
-  // a long targetJob description) stay lean even when the total payload
-  // fits; candidate-safe evidence anchoring engages only under omission
-  // pressure, and payloads already within every level-one bound pass
-  // through unchanged.
-  if (
-    input.operation === "extractJobsFromPage" &&
-    originalSize <= charBudget
-  ) {
+  // Operations whose payload builders already size every list skip
+  // normalization while within budget: the level-one array bounds would
+  // otherwise drop the jobs, claims or evidence entries past the twelfth
+  // that the call was built to send. Grounded resume generation requests
+  // always normalize through the level-one field bounds so oversized
+  // individual fields (for example a long targetJob description) stay lean
+  // even when the total payload fits; candidate-safe evidence anchoring
+  // engages only under omission pressure, and payloads already within every
+  // level-one bound pass through unchanged.
+  if (PRESIZED_OPERATIONS.has(input.operation) && originalSize <= charBudget) {
     return parsedPayload.data;
+  }
+
+  // A full assessment must read all supplied evidence. Report an oversized
+  // request rather than silently removing requirements from its middle.
+  if (input.operation === "assessJobFit") {
+    throw new FullFitEvidenceBudgetError(
+      "The full listing and profile exceed the model's input limit. The assessment could not be completed; your previous assessment was kept. Choose a model with a larger context window and try again.",
+    );
   }
 
   for (const level of [1, 2, 3]) {

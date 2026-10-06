@@ -111,6 +111,7 @@ interface ResumeWorkspaceStudioShellProps {
    */
   originalResume?: {
     levelLabel: string;
+    filePanel?: ReactNode;
     /** The one-press route is running: the job is being moved and written. */
     writing?: boolean;
     onWriteEditableResume: () => void;
@@ -119,6 +120,7 @@ interface ResumeWorkspaceStudioShellProps {
   selectedTemplateApprovalEligible: boolean;
   supportingDetailsPanel?: ReactNode;
   studioStatusMessage: string;
+  rewriteFailed?: boolean;
   templatePanel: ReactNode;
   validationIssues?: readonly ResumeValidationIssue[];
 }
@@ -696,7 +698,7 @@ export function ResumeWorkspaceStudioShell(
     : props.isWorkspacePending
       ? "Working on your resume…"
       : props.originalResume
-        ? "Nothing here is sent: this job attaches your original file."
+        ? "The file below is what this job attaches."
         : props.studioStatusMessage;
   const blockingIssueCount = validationIssues.filter(
     isBlockingResumeValidationIssue,
@@ -854,47 +856,51 @@ export function ResumeWorkspaceStudioShell(
             >
               {props.originalResume.writing
                 ? `Writing an editable ${props.originalResume.levelLabel} resume for this job. This takes a few minutes.`
-                : "This job sends your original file unchanged, so edits here are not used."}
+                : "This job sends your original file, shown below, unchanged."}
             </strong>
           </div>
         ) : (
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <Badge variant="outline">
-              {props.canClearApproval && props.hasUnsavedChanges
-                ? "Unsaved changes"
-                : props.canClearApproval
-                  ? "Approved"
-                  : approvalBlockedByValidation
-                    ? "Needs fixes"
-                    : approvalBlockedByDecisions
-                      ? "Needs decisions"
-                      : props.exportBlockedReason
-                        ? "Lines to confirm"
-                        : canApproveResume
-                          ? props.hasUnsavedChanges
-                            ? "Unsaved changes"
-                            : "Ready to approve"
-                          : "Choose template"}
+              {props.rewriteFailed
+                ? "Rewrite failed"
+                : props.canClearApproval && props.hasUnsavedChanges
+                  ? "Unsaved changes"
+                  : props.canClearApproval
+                    ? "Approved"
+                    : approvalBlockedByValidation
+                      ? "Needs fixes"
+                      : approvalBlockedByDecisions
+                        ? "Needs decisions"
+                        : props.exportBlockedReason
+                          ? "Lines to confirm"
+                          : canApproveResume
+                            ? props.hasUnsavedChanges
+                              ? "Unsaved changes"
+                              : "Ready to approve"
+                            : "Choose template"}
             </Badge>
             <strong
               className="min-w-0 text-(length:--text-body) leading-5 text-(--text-headline)"
               id="resume-next-step-title"
             >
-              {props.canClearApproval && props.hasUnsavedChanges
-                ? "Saving reopens approval for this resume."
-                : props.canClearApproval
-                  ? "Resume approved. Continue when you’re ready."
-                  : canApproveResume
-                    ? props.hasUnsavedChanges
-                      ? "Approve when ready — your edits will be saved first."
-                      : "Approve the resume shown in the preview."
-                    : approvalBlockedByValidation
-                      ? "Fix the first validation error before approval."
-                      : approvalBlockedByDecisions
-                        ? "Choose whether to leave each hidden role off this resume before approving."
-                        : props.exportBlockedReason
-                          ? "Keep or remove the flagged lines, then approve."
-                          : "Choose an apply-safe template before approval."}
+              {props.rewriteFailed
+                ? "Your previous resume was kept. Try the rewrite again."
+                : props.canClearApproval && props.hasUnsavedChanges
+                  ? "Saving reopens approval for this resume."
+                  : props.canClearApproval
+                    ? "Resume approved. Continue when you’re ready."
+                    : canApproveResume
+                      ? props.hasUnsavedChanges
+                        ? "Approve when ready — your edits will be saved first."
+                        : "Approve the resume shown in the preview."
+                      : approvalBlockedByValidation
+                        ? "Fix the first validation error before approval."
+                        : approvalBlockedByDecisions
+                          ? "Choose whether to leave each hidden role off this resume before approving."
+                          : props.exportBlockedReason
+                            ? "Keep or remove the flagged lines, then approve."
+                            : "Choose an apply-safe template before approval."}
             </strong>
             {/* Compact widths used to carry a second, contiguous approval band
               directly under this row — 53px of state plus 63px repeating the
@@ -987,7 +993,9 @@ export function ResumeWorkspaceStudioShell(
               to offer, and then it points back. */}
           {/* Unsaved edits to an approved resume: the next step is saving
               them, which reopens approval (N-048). */}
-          {props.canClearApproval && props.hasUnsavedChanges ? (
+          {!props.originalResume &&
+          props.canClearApproval &&
+          props.hasUnsavedChanges ? (
             <Button
               disabled={props.isWorkspacePending || isExportPending}
               onClick={props.onSaveDraft}
@@ -1112,63 +1120,69 @@ export function ResumeWorkspaceStudioShell(
                 onValueChange={(value) =>
                   props.onSetMobileStudioTab(value as ResumeStudioMobileTab)
                 }
-                value={props.mobileStudioTab}
+                value={props.originalResume ? "preview" : props.mobileStudioTab}
               >
-                <TabsList
-                  className="grid w-full grid-cols-2 border-b border-(--surface-panel-border) bg-transparent"
-                  /* Below xl this strip is the only route to the editor, the
+                {props.originalResume ? null : (
+                  <TabsList
+                    className="grid w-full grid-cols-2 border-b border-(--surface-panel-border) bg-transparent"
+                    /* Below xl this strip is the only route to the editor, the
                  template chooser and the approval controls, so the floating
                  Assistant treats it as a no-cover zone and anchors under it.
                  The marker exists so that placement can measure it. */
-                  data-resume-studio-compact-tabs
-                  variant="line"
-                >
-                  <TabsTrigger value="preview">Preview</TabsTrigger>
-                  <TabsTrigger value="editor">Tools</TabsTrigger>
-                </TabsList>
+                    data-resume-studio-compact-tabs
+                    variant="line"
+                  >
+                    <TabsTrigger value="preview">Preview</TabsTrigger>
+                    <TabsTrigger value="editor">Tools</TabsTrigger>
+                  </TabsList>
+                )}
                 <div className="min-h-0 flex-1 overflow-hidden p-4">
                   <TabsContent
                     className="min-h-0 h-full overflow-hidden"
                     value="preview"
                   >
-                    {props.previewPane}
+                    {props.originalResume
+                      ? props.originalResume.filePanel
+                      : props.previewPane}
                   </TabsContent>
                   {/* Compact widths sit below the locked-pane breakpoint, so this is
                 an ordinary scroll region rather than a wheel-chain owner. */}
-                  <TabsContent
-                    className="min-h-0 h-full overflow-y-auto overflow-x-hidden"
-                    value="editor"
-                  >
-                    <div className="grid min-h-0 min-w-0 grid-cols-1 gap-4">
-                      <div className="grid gap-2.5">
-                        <StudioToolbar
-                          canDownloadPdf={canDownloadPdf}
-                          isApproved={props.canClearApproval}
-                          isExportPending={isExportPending}
-                          isWorkspacePending={props.isWorkspacePending}
-                          onDownloadPdf={props.onExportPdf}
-                          onSaveDraft={props.onSaveDraft}
-                        />
+                  {props.originalResume ? null : (
+                    <TabsContent
+                      className="min-h-0 h-full overflow-y-auto overflow-x-hidden"
+                      value="editor"
+                    >
+                      <div className="grid min-h-0 min-w-0 grid-cols-1 gap-4">
+                        <div className="grid gap-2.5">
+                          <StudioToolbar
+                            canDownloadPdf={canDownloadPdf}
+                            isApproved={props.canClearApproval}
+                            isExportPending={isExportPending}
+                            isWorkspacePending={props.isWorkspacePending}
+                            onDownloadPdf={props.onExportPdf}
+                            onSaveDraft={props.onSaveDraft}
+                          />
+                        </div>
+                        {isDesktopStudio ? null : attentionPanel}
+                        <div
+                          aria-label="Apply-safe template choices"
+                          className="min-h-(--size-resume-workspace-panel) scroll-mt-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          data-resume-template-chooser
+                          ref={mobileTemplatePanelRef}
+                          tabIndex={-1}
+                        >
+                          {props.templatePanel}
+                        </div>
+                        <div className="min-h-(--size-resume-workspace-panel)">
+                          {props.editorPanel}
+                        </div>
+                        <StudioHistoryDisclosure>
+                          {props.historyPanel}
+                        </StudioHistoryDisclosure>
+                        {props.supportingDetailsPanel}
                       </div>
-                      {isDesktopStudio ? null : attentionPanel}
-                      <div
-                        aria-label="Apply-safe template choices"
-                        className="min-h-(--size-resume-workspace-panel) scroll-mt-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        data-resume-template-chooser
-                        ref={mobileTemplatePanelRef}
-                        tabIndex={-1}
-                      >
-                        {props.templatePanel}
-                      </div>
-                      <div className="min-h-(--size-resume-workspace-panel)">
-                        {props.editorPanel}
-                      </div>
-                      <StudioHistoryDisclosure>
-                        {props.historyPanel}
-                      </StudioHistoryDisclosure>
-                      {props.supportingDetailsPanel}
-                    </div>
-                  </TabsContent>
+                    </TabsContent>
+                  )}
                 </div>
               </Tabs>
             </div>
@@ -1199,11 +1213,14 @@ export function ResumeWorkspaceStudioShell(
                   className="h-full min-h-[18rem] min-w-0 overflow-hidden xl:min-h-0"
                   data-resume-studio-preview-pane="true"
                 >
-                  {props.previewPane}
+                  {props.originalResume
+                    ? props.originalResume.filePanel
+                    : props.previewPane}
                 </div>
-                <div
-                  aria-label="Resume studio tools"
-                  /* This column runs the FULL studio height, exactly like the
+                {props.originalResume ? null : (
+                  <div
+                    aria-label="Resume studio tools"
+                    /* This column runs the FULL studio height, exactly like the
                preview column beside it, and reserves nothing at its end.
 
                It carried two failed reservations before. Shortening it by the
@@ -1214,53 +1231,54 @@ export function ResumeWorkspaceStudioShell(
                the fixed pill. No reservation can hold for a scrolling column,
                so the collapsed launcher stopped floating over this column at
                all — it is an ordinary button in the sticky header above. */
-                  className="flex h-full min-h-[18rem] min-w-0 flex-col gap-2.5 overflow-y-auto overflow-x-hidden pr-1 xl:min-h-0"
-                  data-locked-pane-scroll-region
-                  data-resume-studio-tools-pane="true"
-                  data-resume-workspace-scroll-region
-                  role="region"
-                  tabIndex={0}
-                >
-                  <div className="grid shrink-0 gap-2.5 rounded-(--radius-field) border border-(--surface-panel-border) px-4 py-2.5">
-                    {/* No eyebrow or heading here: the job title above names the
+                    className="flex h-full min-h-[18rem] min-w-0 flex-col gap-2.5 overflow-y-auto overflow-x-hidden pr-1 xl:min-h-0"
+                    data-locked-pane-scroll-region
+                    data-resume-studio-tools-pane="true"
+                    data-resume-workspace-scroll-region
+                    role="region"
+                    tabIndex={0}
+                  >
+                    <div className="grid shrink-0 gap-2.5 rounded-(--radius-field) border border-(--surface-panel-border) px-4 py-2.5">
+                      {/* No eyebrow or heading here: the job title above names the
                     screen and the status banner names the step. The column
                     opens on its controls. */}
-                    <StudioToolbar
-                      canDownloadPdf={canDownloadPdf}
-                      isApproved={props.canClearApproval}
-                      isExportPending={isExportPending}
-                      isWorkspacePending={props.isWorkspacePending}
-                      onDownloadPdf={props.onExportPdf}
-                      onSaveDraft={props.onSaveDraft}
-                    />
+                      <StudioToolbar
+                        canDownloadPdf={canDownloadPdf}
+                        isApproved={props.canClearApproval}
+                        isExportPending={isExportPending}
+                        isWorkspacePending={props.isWorkspacePending}
+                        onDownloadPdf={props.onExportPdf}
+                        onSaveDraft={props.onSaveDraft}
+                      />
 
-                    <StudioStatusRow
-                      approvalStateLabel={props.approvalStateLabel}
-                      clearApprovalSlot={
-                        isDesktopStudio ? clearApprovalSlot : null
-                      }
-                      live={isDesktopStudio}
-                      message={studioStatusText}
-                    />
+                      <StudioStatusRow
+                        approvalStateLabel={props.approvalStateLabel}
+                        clearApprovalSlot={
+                          isDesktopStudio ? clearApprovalSlot : null
+                        }
+                        live={isDesktopStudio}
+                        message={studioStatusText}
+                      />
+                    </div>
+                    {isDesktopStudio ? attentionPanel : null}
+                    <div
+                      aria-label="Apply-safe template choices"
+                      className="min-h-0 min-w-0 shrink-0 scroll-mt-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      data-resume-template-chooser
+                      ref={desktopTemplatePanelRef}
+                      tabIndex={-1}
+                    >
+                      {props.templatePanel}
+                    </div>
+                    <div className="min-h-0 min-w-0 shrink-0">
+                      {props.editorPanel}
+                    </div>
+                    <StudioHistoryDisclosure>
+                      {props.historyPanel}
+                    </StudioHistoryDisclosure>
+                    {props.supportingDetailsPanel}
                   </div>
-                  {isDesktopStudio ? attentionPanel : null}
-                  <div
-                    aria-label="Apply-safe template choices"
-                    className="min-h-0 min-w-0 shrink-0 scroll-mt-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    data-resume-template-chooser
-                    ref={desktopTemplatePanelRef}
-                    tabIndex={-1}
-                  >
-                    {props.templatePanel}
-                  </div>
-                  <div className="min-h-0 min-w-0 shrink-0">
-                    {props.editorPanel}
-                  </div>
-                  <StudioHistoryDisclosure>
-                    {props.historyPanel}
-                  </StudioHistoryDisclosure>
-                  {props.supportingDetailsPanel}
-                </div>
+                )}
               </div>
             </div>
           ) : null}

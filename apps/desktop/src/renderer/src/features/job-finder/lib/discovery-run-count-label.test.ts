@@ -324,7 +324,7 @@ describe("formatDiscoveryResultBandLabel", () => {
         titleMatches: 13,
         alsoFound: 2,
       }),
-    ).toBe("13 matched your role, not scored yet · 2 also found");
+    ).toBe("13 awaiting assessment · 2 also found");
   });
 
   it("keeps the recommended count in front once a row has earned one", () => {
@@ -334,7 +334,7 @@ describe("formatDiscoveryResultBandLabel", () => {
         titleMatches: 14,
         alsoFound: 0,
       }),
-    ).toBe("1 worth opening · 14 title matches · 0 also found");
+    ).toBe("1 worth opening · 14 awaiting assessment · 0 also found");
   });
 
   it("is unchanged when no row was left unscored", () => {

@@ -1,3 +1,5 @@
+import { releaseFinishedApplicationPages } from "./application-page-lifecycle";
+import { mergeApplyReviewCards } from "./agent-application-preparation";
 import type { ExecuteApplicationFlowInput } from "@nordri/browser-runtime";
 import {
   completeTaskLocalSignIn,
@@ -262,6 +264,9 @@ function createResumptionAttempt(input: {
       executionResult?.executionTimings ??
       input.existingAttempt?.executionTimings ??
       [],
+    agentTiming: executionResult
+      ? executionResult.agentTiming
+      : input.existingAttempt?.agentTiming,
     userActionResumption: {
       requestId: input.request.id,
       requestRevision: getResumptionRequestRevision(input.request),
@@ -485,6 +490,41 @@ async function settlePrepareOnlyVerification(input: {
     return null;
   }
 
+  if (
+    input.outcome === "verified" &&
+    currentRequest.kind === "manual_answer" &&
+    currentRequest.scope.type === "application" &&
+    currentRequest.scope.applicationRecordId !== null &&
+    currentRequest.scope.resultId !== null
+  ) {
+    const scope = currentRequest.scope;
+    const questions = await input.ctx.repository.listApplicationQuestionRecords(
+      {
+        applicationRecordId: scope.applicationRecordId!,
+        resultId: scope.resultId!,
+      },
+    );
+    const answers = await input.ctx.repository.listApplicationAnswerRecords({
+      applicationRecordId: scope.applicationRecordId!,
+      resultId: scope.resultId!,
+    });
+    // Only this request's answers: an earlier pause in the same preparation
+    // has its own summary.
+    const answered = questions.filter((question) =>
+      answers.some(
+        (answer) =>
+          answer.questionId === question.id &&
+          answer.sourceKind === "user" &&
+          answer.sourceId === currentRequest.id &&
+          answer.status !== "rejected",
+      ),
+    );
+    if (answered.length)
+      reduction.request.summary =
+        answered.length === 1
+          ? `You answered “${answered[0]!.prompt}” in the app.`
+          : `You answered ${answered.length} application questions in the app.`;
+  }
   const commit = await input.ctx.repository.commitUserActionTransition({
     request: reduction.request,
     event: reduction.event,
@@ -1110,15 +1150,11 @@ export function createApplicationUserActionResumer(
     ]);
     const [answerRecords, questionRecords] = await Promise.all([
       ctx.repository.listApplicationAnswerRecords({
-        runId: scope.runId,
         jobId: scope.jobId,
-        resultId: scope.resultId,
         applicationRecordId: scope.applicationRecordId,
       }),
       ctx.repository.listApplicationQuestionRecords({
-        runId: scope.runId,
         jobId: scope.jobId,
-        resultId: scope.resultId,
         applicationRecordId: scope.applicationRecordId,
       }),
     ]);
@@ -1127,6 +1163,10 @@ export function createApplicationUserActionResumer(
       answerRecords,
       questionRecords,
       idPrefix: `application_${request.id}`,
+      ...(scope.applicationRecordId
+        ? { applicationRecordId: scope.applicationRecordId }
+        : {}),
+      jobLocation: job.location,
     });
     const provenanceTargetId =
       selectApplicationSighting(job)?.targetId ??
@@ -1166,19 +1206,12 @@ export function createApplicationUserActionResumer(
     // Merged into the profile they would still have to be found; named here
     // the agent can go straight to those fields, fill them and carry on
     // instead of working the whole form a second time.
-    const answeredQuestionLines = questionRecords.flatMap((question) => {
-      const selected = answerRecords.find(
-        (answer) => answer.id === question.selectedAnswerId,
+    const answeredQuestionLines = executionProfile.answerBank.customAnswers
+      .filter((answer) => answer.id.startsWith(`application_${request.id}_`))
+      .map(
+        (answer) =>
+          `Answer to "${answer.question.trim()}": ${answer.answer.trim()}`,
       );
-      const latest =
-        selected ??
-        [...answerRecords]
-          .filter((answer) => answer.questionId === question.id)
-          .sort((left, right) => right.revision - left.revision)[0];
-      return latest
-        ? [`Answer to "${question.prompt.trim()}": ${latest.text.trim()}`]
-        : [];
-    });
     const instructions = uniqueStrings([
       ...buildInstructionGuidance(activeInstruction),
       ...buildRecoveryInstructions({
@@ -1351,6 +1384,7 @@ export function createApplicationUserActionResumer(
             }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFacts,
+            applicationRecordId: scope.applicationRecordId,
             aiClient: ctx.aiClient,
             onProgress: (progress) =>
               persistApplicationPreparationProgress({
@@ -1566,6 +1600,9 @@ export function createApplicationUserActionResumer(
       executionResult: finalExecutionResult,
     });
     const resumedArtifacts = buildApplyCopilotArtifacts({
+      existingAnswerRecords: await ctx.repository.listApplicationAnswerRecords({
+        applicationRecordId: scope.applicationRecordId,
+      }),
       applicationRecordId: scope.applicationRecordId,
       job,
       executionResult: finalExecutionResult,
@@ -1574,6 +1611,7 @@ export function createApplicationUserActionResumer(
       runId: run.id,
       resultId: result.id,
       visualCheckpointsEnabled: run.visualCheckpointsEnabled,
+      reviewCard: mergeApplyReviewCards(result.reviewCard, preparedReviewCard),
     });
     const existingQuestionIds = new Set(
       questionRecords.map((record) => record.id),
@@ -1608,6 +1646,7 @@ export function createApplicationUserActionResumer(
       state: nextResultState,
       summary: finalExecutionResult.summary,
       detail: finalExecutionResult.detail,
+      agentTiming: finalExecutionResult.agentTiming,
       updatedAt: completedAt,
       completedAt: getResultCompletedAt({ executionResult, now: completedAt }),
       blockerReason: mapExecutionResultToApplyBlockerReason(
@@ -1616,12 +1655,13 @@ export function createApplicationUserActionResumer(
       blockerSummary: finalExecutionResult.blocker?.summary ?? null,
       visualObservationSets: finalExecutionResult.visualObservationSets,
       visualCheckpoints: finalExecutionResult.visualCheckpoints,
-      latestQuestionCount: resumedArtifacts.questionRecords.length,
-      latestAnswerCount: resumedArtifacts.answerRecords.length,
+      latestQuestionCount: resumedArtifacts.result.latestQuestionCount,
+      latestAnswerCount: resumedArtifacts.result.latestAnswerCount,
       pendingConsentRequestCount: isConsentBlocked ? 1 : 0,
       latestCheckpointId: checkpoint.id,
       lastUserActionResumptionId: attemptId,
-      reviewCard: preparedReviewCard ?? result.reviewCard,
+      reviewCard: resumedArtifacts.result.reviewCard,
+      privacyReceipt: resumedArtifacts.result.privacyReceipt,
     });
 
     await ctx.repository.upsertApplicationAttempt({
@@ -1677,6 +1717,7 @@ export function createApplicationUserActionResumer(
       resultStartedAt: nextResult.startedAt,
       replayCheckpointId: checkpoint.id,
       blocker: finalExecutionResult.blocker,
+      questions: resumedArtifacts.questionRecords,
       occurredAt: completedAt,
     });
     await handApplicationPageToPersonForAccessStep({
@@ -1836,6 +1877,11 @@ export function createApplicationUserActionResumer(
       await resume(request, scope, attemptId, taskLocalCredentials);
     } finally {
       liveAttemptIds.delete(attemptId);
+      await releaseFinishedApplicationPages({
+        ...ctx,
+        runId: scope.runId,
+        applicationRecordId: scope.applicationRecordId,
+      });
     }
   };
 }

@@ -385,7 +385,12 @@ export type ResumeParserWorkerResponse = z.infer<
 export const RESUME_IMPORT_INTERRUPTED_MESSAGE =
   "This import stopped before it finished, most likely because the app closed while it was reading your resume. Nothing from it was applied. Import the file again to finish it.";
 
-export const resumeImportRunFailureKindValues = ["interrupted"] as const;
+export const resumeImportRunFailureKindValues = [
+  "interrupted",
+  "ai_unavailable",
+  "cancelled",
+  "invalid_document",
+] as const;
 export const ResumeImportRunFailureKindSchema = z.enum(
   resumeImportRunFailureKindValues,
 );
@@ -411,6 +416,26 @@ export function isInterruptedResumeImportRun(
   );
 }
 
+/** Only a stopped read or a connection failure can reuse the saved file. */
+export function canRetrySavedResumeImport(
+  run: {
+    status: string;
+    failureKind?: ResumeImportRunFailureKind | null | undefined;
+    errorMessage?: string | null | undefined;
+  } | null,
+): boolean {
+  if (!run || run.status !== "failed") return false;
+  return (
+    isInterruptedResumeImportRun(run) ||
+    run.failureKind === "ai_unavailable" ||
+    run.failureKind === "cancelled" ||
+    run.errorMessage ===
+      "The AI connection failed, so your resume could not be read. Your file is saved. Try again when the connection is back, or continue manually." ||
+    run.errorMessage ===
+      "Import stopped. Your file is saved; continue manually or try it again later."
+  );
+}
+
 /**
  * The renderer's request to import a resume. `requestId` names the progress
  * channel and the picker a cancel press refers to; `retryInterrupted` imports
@@ -422,6 +447,16 @@ export const ImportResumeRequestSchema = z
     retryInterrupted: z.boolean().optional(),
   })
   .strict();
+export const CancelResumeImportRequestSchema = z
+  .object({
+    requestId: NonEmptyStringSchema,
+    stopProcessing: z.boolean().optional(),
+  })
+  .strict();
+export type CancelResumeImportRequest = z.infer<
+  typeof CancelResumeImportRequestSchema
+>;
+
 export type ImportResumeRequest = z.infer<typeof ImportResumeRequestSchema>;
 
 export const resumeImportRunStatusValues = [
@@ -433,6 +468,15 @@ export const resumeImportRunStatusValues = [
   "applied",
   "failed",
 ] as const;
+export function isResumeImportRunInProgress(
+  run: { status: string } | null,
+): boolean {
+  return (
+    run !== null &&
+    ["queued", "parsing", "extracting", "reconciling"].includes(run.status)
+  );
+}
+
 export const ResumeImportRunStatusSchema = z.enum(resumeImportRunStatusValues);
 export type ResumeImportRunStatus = z.infer<typeof ResumeImportRunStatusSchema>;
 
@@ -1014,3 +1058,13 @@ export const ResumeImportBenchmarkReportSchema = z.object({
 export type ResumeImportBenchmarkReport = z.infer<
   typeof ResumeImportBenchmarkReportSchema
 >;
+
+export function hasModelReadResumeHeader(run: ResumeImportRun | null): boolean {
+  return !!run?.timing?.textStages.some(
+    (stage) =>
+      stage.stage === "identity_summary" &&
+      stage.status === "completed" &&
+      stage.providerKind === "openai_compatible" &&
+      !stage.fallbackKind,
+  );
+}

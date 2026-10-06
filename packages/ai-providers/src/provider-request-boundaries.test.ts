@@ -103,6 +103,18 @@ test.each(["responses", "chat_completions"] as const)(
           score: 5,
           reasons: [],
           gaps: [],
+          requirements: [
+            {
+              id: "language",
+              category: "skill",
+              label: "German B2",
+              importance: "required",
+              status: "missing",
+              jobEvidence: "German B2",
+              resumeEvidence: [],
+              explanation: "No German language evidence in the profile.",
+            },
+          ],
         });
         return Promise.resolve(
           new Response(
@@ -129,10 +141,14 @@ test.each(["responses", "chat_completions"] as const)(
       [{ role: "user", content: "Synthetic test" }],
       [],
     );
-    await client.assessJobFit({
+    const assessment = await client.assessJobFit({
       profile: createProfile(),
       searchPreferences: createPreferences(),
       job: createJobPosting(),
+    });
+    expect(assessment?.requirements?.[0]).toMatchObject({
+      label: "German B2",
+      status: "missing",
     });
     expect(requests).toHaveLength(3);
     for (const [index, request] of requests.entries()) {
@@ -195,3 +211,39 @@ test.each(["search_results", "job_detail"] as const)(
     expect(fetchMock).toHaveBeenCalledTimes(1);
   },
 );
+
+test("fit assessment cancellation does not call the fallback model", async () => {
+  const fetchMock = pendingFetch();
+  vi.stubGlobal("fetch", fetchMock);
+  const client = createJobFinderAiClientFromEnvironment(createEnvironment());
+  const controller = new AbortController();
+  const result = client.assessJobFit({
+    profile: createProfile(),
+    searchPreferences: createPreferences(),
+    job: createJobPosting(),
+    signal: controller.signal,
+  });
+  const rejection = expect(result).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  controller.abort();
+  await rejection;
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("an oversized full read reports its input limit through the configured client without sending an excerpt", async () => {
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  const client = createJobFinderAiClientFromEnvironment(createEnvironment());
+  await expect(
+    client.assessJobFit({
+      profile: createProfile(),
+      searchPreferences: createPreferences(),
+      job: {
+        ...createJobPosting(),
+        description: "Full listing evidence ".repeat(100000),
+      },
+    }),
+  ).rejects.toThrow("exceed the model's input limit");
+  expect(fetchMock).not.toHaveBeenCalled();
+});

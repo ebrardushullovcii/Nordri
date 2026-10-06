@@ -187,7 +187,8 @@ describe("JobSearchHomeScreen", () => {
         workspace={ws}
         discoveryRunFeedback={{
           status: "failed",
-          detail: "Agent discovery failed: Starting page returned HTTP 404: http://127.0.0.1/gone/",
+          detail:
+            "Agent discovery failed: Starting page returned HTTP 404: http://127.0.0.1/gone/",
           headline: "Something unexpected stopped this search.",
           recovery: null,
           targetLabel: null,
@@ -195,7 +196,9 @@ describe("JobSearchHomeScreen", () => {
       />,
     );
     expect(screen.getByText(/1 job source is failing/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Fix in Job sources" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Fix in Job sources" }),
+    ).toBeTruthy();
     expect(screen.queryByTestId("home-discovery-run-feedback")).toBeNull();
   });
 
@@ -229,7 +232,8 @@ describe("JobSearchHomeScreen", () => {
         workspace={ws}
         discoveryRunFeedback={{
           status: "failed",
-          detail: "Agent discovery failed: Starting page returned HTTP 404: http://127.0.0.1/nope/",
+          detail:
+            "Agent discovery failed: Starting page returned HTTP 404: http://127.0.0.1/nope/",
           headline: "The search stopped before it could finish.",
           recovery: null,
           targetLabel: null,
@@ -483,7 +487,7 @@ describe("JobSearchHomeScreen", () => {
     expect(props.onPauseActivity).toHaveBeenCalledTimes(1);
   });
 
-  it("offers Resume in the header while paused", () => {
+  it("offers one Resume while paused, on the next step instead of the header", () => {
     const props = baseProps();
     const ws = workspace();
     ws.activityControl = {
@@ -492,7 +496,10 @@ describe("JobSearchHomeScreen", () => {
       reason: "Paused by you.",
     };
     render(<JobSearchHomeScreen {...props} workspace={ws} />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Resume" })[0]!);
+    const resumeButtons = screen.getAllByRole("button", { name: "Resume" });
+    expect(resumeButtons).toHaveLength(1);
+    expect(resumeButtons[0]!.closest("[data-page-header-actions]")).toBeNull();
+    fireEvent.click(resumeButtons[0]!);
     expect(props.onResumeActivity).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/^Paused\./)).toBeTruthy();
   });
@@ -599,11 +606,23 @@ describe("listCurrentUnreadNotifications", () => {
         sourceTargetId: null,
       }) as unknown as CampaignNotification;
     const kept = listCurrentUnreadNotifications(
-      [note("n_sent", "job_sent"), note("n_open", "job_open"), note("n_src", null)],
+      [
+        note("n_sent", "job_sent"),
+        note("n_open", "job_open"),
+        note("n_src", null),
+      ],
       {
         applicationRecords: [
-          { jobId: "job_sent", status: "submitted", lastAttemptState: "submitted" },
-          { jobId: "job_open", status: "ready_for_review", lastAttemptState: "failed" },
+          {
+            jobId: "job_sent",
+            status: "submitted",
+            lastAttemptState: "submitted",
+          },
+          {
+            jobId: "job_open",
+            status: "ready_for_review",
+            lastAttemptState: "failed",
+          },
         ],
       } as unknown as JobFinderWorkspaceSnapshot,
     );
@@ -626,9 +645,16 @@ describe("listCurrentUnreadNotifications", () => {
     const workspace = (startedAt: readonly string[]) =>
       ({
         applicationRecords: [
-          { jobId: "job_willow", status: "ready_for_review", lastAttemptState: "failed" },
+          {
+            jobId: "job_willow",
+            status: "ready_for_review",
+            lastAttemptState: "failed",
+          },
         ],
-        applyJobResults: startedAt.map((at) => ({ jobId: "job_willow", startedAt: at })),
+        applyJobResults: startedAt.map((at) => ({
+          jobId: "job_willow",
+          startedAt: at,
+        })),
       }) as unknown as JobFinderWorkspaceSnapshot;
 
     // Only the attempt the note is about: it stays.
@@ -708,6 +734,7 @@ describe("listCurrentUnreadNotifications", () => {
       scope: { type: "discovery_source", targetId: "target_auth" },
       state,
       resolvedAt,
+      updatedAt: resolvedAt,
     });
     const workspace = (steps: unknown[]) =>
       ({
@@ -721,6 +748,18 @@ describe("listCurrentUnreadNotifications", () => {
         workspace([step("resolved", "2026-09-26T22:10:59.041Z")]),
       ),
     ).toEqual([]);
+    expect(
+      listCurrentUnreadNotifications(
+        [note],
+        workspace([step("cancelled", "2026-09-26T22:11:00.000Z")]),
+      ),
+    ).toEqual([]);
+    expect(
+      listCurrentUnreadNotifications(
+        [note],
+        workspace([step("skipped", "2026-09-26T22:11:00.000Z")]),
+      ),
+    ).toEqual([]);
     // Still waiting for the sign-in: the note stays.
     expect(
       listCurrentUnreadNotifications(
@@ -732,4 +771,18 @@ describe("listCurrentUnreadNotifications", () => {
       ),
     ).toHaveLength(1);
   });
+});
+
+it("keeps Home's description short and places the full summary on its status line", () => {
+  const view = render(
+    <JobSearchHomeScreen {...baseProps()} workspace={workspace()} />,
+  );
+  const description = view.container.querySelector("[data-page-header] p");
+  expect(description?.textContent?.length).toBeLessThanOrEqual(90);
+  expect(description?.textContent).toBe(
+    "Your search, shortlisted jobs, and applications.",
+  );
+  expect(
+    view.container.querySelector('[data-page-status-item="run-summary"]'),
+  ).not.toBeNull();
 });

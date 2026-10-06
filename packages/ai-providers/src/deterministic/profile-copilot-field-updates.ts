@@ -34,7 +34,7 @@ export const fieldDescriptors = [
  * contract fields cannot silently lack an owner (see the coverage assertions
  * below and `getReplacementFieldOwnershipSnapshot`).
  */
-export type ReplacementFieldOwner = "descriptor" | "specialist";
+export type ReplacementFieldOwner = "descriptor" | "specialist" | "model";
 
 export interface ReplacementFieldOwnershipEntry {
   readonly field: string;
@@ -91,6 +91,18 @@ export const specialistOwnedReplacementFields = {
   >
 >;
 
+// Structured limits and pay intent are model-owned. The deterministic
+// fallback must not guess them from wording or add keyword rules.
+const modelOwnedPreferenceFields = {
+  replace_work_eligibility_fields: ["limitedWorkPermissions"],
+  replace_search_preferences_fields: [
+    "shiftPreference",
+    "weeklyHours",
+    "searchSelectivity",
+  ],
+  replace_compensation_preferences_fields: ["basis"],
+} as const;
+
 export function getReplacementFieldOwnershipSnapshot(): ReplacementFieldOwnershipEntry[] {
   const descriptorEntries: ReplacementFieldOwnershipEntry[] =
     fieldDescriptors.map((descriptor) => ({
@@ -110,7 +122,18 @@ export function getReplacementFieldOwnershipSnapshot(): ReplacementFieldOwnershi
     })),
   );
 
-  return [...descriptorEntries, ...specialistEntries];
+  const modelEntries: ReplacementFieldOwnershipEntry[] = Object.entries(
+    modelOwnedPreferenceFields,
+  ).flatMap(([operation, fields]) =>
+    fields.map((field) => ({
+      field,
+      operation: operation as ReplacementFieldOwnershipEntry["operation"],
+      owner: "model",
+      ownerDetail:
+        "structured preference facts; no deterministic language parser",
+    })),
+  );
+  return [...descriptorEntries, ...specialistEntries, ...modelEntries];
 }
 
 export function buildGenericExplicitFieldPatchGroups(
@@ -138,6 +161,9 @@ type DescriptorReplacementKey =
 type SpecialistReplacementKey =
   (typeof specialistOwnedReplacementFields)[keyof typeof specialistOwnedReplacementFields]["fields"][number];
 
+type ModelOwnedPreferenceKey =
+  (typeof modelOwnedPreferenceFields)[keyof typeof modelOwnedPreferenceFields][number];
+
 type ContractReplacementKey =
   | ContractFieldKeys<typeof ProfileIdentityPatchFieldsSchema>
   | ContractFieldKeys<typeof ProfileWorkEligibilityPatchFieldsSchema>
@@ -158,7 +184,9 @@ type ExhaustiveCoverageCheck<FieldUnion> = [FieldUnion] extends [never]
 const everyReplacementFieldHasAnOwner: ExhaustiveCoverageCheck<
   Exclude<
     ContractReplacementKey,
-    DescriptorReplacementKey | SpecialistReplacementKey
+    | DescriptorReplacementKey
+    | SpecialistReplacementKey
+    | ModelOwnedPreferenceKey
   >
 > = true;
 const noStaleDescriptorKeys: ExhaustiveCoverageCheck<

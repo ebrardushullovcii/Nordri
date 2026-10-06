@@ -88,12 +88,16 @@ describe("SettingsAiBehaviorSection", () => {
     expect(checked(/Only when required/)).toBe("true");
     expect(checked(/^Short/)).toBe("true");
     expect(
-      screen.getByRole("switch", { name: "Count remote jobs as any location" }).getAttribute("aria-checked"),
+      screen
+        .getByRole("switch", { name: "Count remote jobs as any location" })
+        .getAttribute("aria-checked"),
     ).toBe("true");
     // Permissions stay the person's whatever is chosen here.
     expect(screen.getByText(/never what it is allowed to do/)).toBeTruthy();
     expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "Save AI behavior" }).disabled,
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Save AI behavior",
+      }).disabled,
     ).toBe(true);
   });
 
@@ -103,9 +107,13 @@ describe("SettingsAiBehaviorSection", () => {
 
     fireEvent.click(screen.getByRole("radio", { name: /^Proactive/ }));
     fireEvent.click(screen.getByRole("radio", { name: /Cast a wide net/ }));
-    fireEvent.click(screen.getByRole("switch", { name: "Count remote jobs as any location" }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Count remote jobs as any location" }),
+    );
     fireEvent.click(screen.getByRole("radio", { name: /^Light/ }));
-    fireEvent.click(screen.getByRole("radio", { name: /Whenever there is room/ }));
+    fireEvent.click(
+      screen.getByRole("radio", { name: /Whenever there is room/ }),
+    );
     fireEvent.click(screen.getByRole("radio", { name: /^Full/ }));
     fireEvent.change(
       screen.getByPlaceholderText(/Leave empty to match the job posting/i),
@@ -122,7 +130,10 @@ describe("SettingsAiBehaviorSection", () => {
       expect(onUpdateAiBehavior).toHaveBeenCalledWith({
         aiBehavior: {
           profileAssistant: { initiative: "proactive", replyStyle: "brief" },
-          jobSearch: { selectivity: "wide_net", remoteCountsAsAnyLocation: false },
+          jobSearch: {
+            selectivity: "wide_net",
+            remoteCountsAsAnyLocation: false,
+          },
           applying: {
             coverLetterPolicy: "when_possible",
             writtenAnswerLength: "full",
@@ -153,13 +164,20 @@ describe("SettingsAiBehaviorSection", () => {
       vi.fn(() => Promise.resolve(true)),
       parseSettings({
         resumeApplicationMode: "tailored_per_job",
-        coverLetter: { tone: "direct", length: "short", language: "Dutch", sample: null },
+        coverLetter: {
+          tone: "direct",
+          length: "short",
+          language: "Dutch",
+          sample: null,
+        },
       }),
       "aggressive",
     );
 
     expect(
-      screen.getByRole("radio", { name: /^Aggressive/ }).getAttribute("aria-checked"),
+      screen
+        .getByRole("radio", { name: /^Aggressive/ })
+        .getAttribute("aria-checked"),
     ).toBe("true");
     expect(screen.getByRole("status").textContent).toContain(
       "cannot be used until you confirm it yourself",
@@ -175,10 +193,40 @@ describe("SettingsAiBehaviorSection", () => {
     );
 
     expect(
-      screen.getByRole("radio", { name: /^Original/ }).getAttribute("aria-checked"),
+      screen
+        .getByRole("radio", { name: /^Original/ })
+        .getAttribute("aria-checked"),
     ).toBe("true");
     expect(screen.getByTestId("settings-ai-cover-letter-style")).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: /^Never/ }));
     expect(screen.queryByTestId("settings-ai-cover-letter-style")).toBeNull();
   });
+});
+
+it("explains default background-check consent and sending without contradicting Applying", () => {
+  renderSection(vi.fn(() => Promise.resolve(true)));
+  expect(
+    screen
+      .getByRole("switch", { name: "Background check" })
+      .getAttribute("aria-checked"),
+  ).toBe("true");
+  expect(
+    screen.getByText(
+      "Ticks background or reference check consent on forms for you. Turn it off to be asked each time.",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(
+      /Sending follows your Applying choice; signing in and creating accounts stay yours/,
+    ),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("radio", { name: /^Aggressive/ }));
+  expect(
+    screen.getByText(/Aggressive resumes still need your approval/).textContent,
+  ).toContain(
+    "Aggressive resumes still need your approval; sending follows your Applying choice.",
+  );
+  expect(
+    screen.queryByText(/never approves or sends an application on its own/),
+  ).toBeNull();
 });

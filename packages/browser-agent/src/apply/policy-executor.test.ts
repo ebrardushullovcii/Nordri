@@ -1,3 +1,5 @@
+import { createApplyUserPrompt } from "./apply-prompts";
+import { replaceApprovedApplicationLetter } from "./approved-letter";
 import {
   CandidateProfileSchema,
   type CandidateProfile,
@@ -550,7 +552,7 @@ describe("apply policy executor", () => {
     expect(fillText).not.toHaveBeenCalled();
   });
 
-  test("fills a known field from the person's own profile, not from the model", async () => {
+  test("a value the person stored goes in as that fact; anything else waits for the fact check", async () => {
     const page = rawPage({
       controls: [rawControl({ index: 0, label: "Email", inputType: "email" })],
     });
@@ -558,46 +560,52 @@ describe("apply policy executor", () => {
     const fillText = vi.spyOn(hands, "fillText");
     const observation = observationOf(page);
 
-    const outcome = await executeApplyProposal(
+    const stored = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "robin.ashford@example.test" },
+      observation.signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(stored).toMatchObject({
+      kind: "filled",
+      filled: {
+        answer: { sourceId: "profile.email", sourceKind: "profile" },
+      },
+    });
+
+    // Without a fact check, a value that is not one of the person's facts
+    // is never typed; it is left for them.
+    const other = await executeApplyProposal(
       { tool: "type", ref: "c0", text: "someone.else@example.test" },
       observation.signature,
       { config, now, guardState: createApplyGuardState() },
     );
-
-    expect(outcome.kind).toBe("filled");
+    expect(other.kind).toBe("suggestion");
+    expect(fillText).toHaveBeenCalledTimes(1);
     expect(fillText).toHaveBeenCalledWith("c0", "robin.ashford@example.test");
   });
 
-  // A value about the person goes into the form exactly as stored, whatever
-  // the model typed and however the record id was shortened.
+  // A value about the person goes into the form exactly as stored, however
+  // the record id was shortened, without asking the fact check.
   test.each([
-    {
-      label: "Phone",
-      inputType: "tel",
-      typed: "+49 555 0000000",
-      expected: "+49 555 1234567-88",
-    },
+    { label: "Phone", inputType: "tel", typed: "+49 555 1234567-88" },
     {
       label: "LinkedIn URL",
       inputType: "url",
-      typed: "https://www.linkedin.com/in/robin-ashford",
-      expected: "https://www.linkedin.com/in/robin-ashford-test-profile-2026",
+      typed: "https://www.linkedin.com/in/robin-ashford-test-profile-2026",
     },
     {
       label: "GitHub",
       inputType: "url",
-      typed: "https://github.com/robin",
-      expected: "https://github.com/robin-ashford-builds",
+      typed: "https://github.com/robin-ashford-builds",
     },
     {
       label: "Portfolio website",
       inputType: "url",
-      typed: "https://robin.example.test",
-      expected: "https://portfolio.example.test/robin-ashford/work",
+      typed: "https://portfolio.example.test/robin-ashford/work",
     },
   ])(
     "writes the stored $label exactly",
-    async ({ label, inputType, typed, expected }) => {
+    async ({ label, inputType, typed }) => {
       const page = rawPage({
         controls: [rawControl({ index: 0, label, inputType })],
       });
@@ -608,35 +616,24 @@ describe("apply policy executor", () => {
         "https://www.linkedin.com/in/robin-ashford-test-profile-2026";
       stored.githubUrl = "https://github.com/robin-ashford-builds";
       stored.portfolioUrl = "https://portfolio.example.test/robin-ashford/work";
-      stored.links = [
-        {
-          // Record ids are built from a shortened URL; the value is the url.
-          id: "link_linkedin_https_www_linkedin_com_in_robin_ashford_",
-          label: "LinkedIn",
-          url: "https://www.linkedin.com/in/robin-ashford-test-profile-2026",
-          kind: "linkedin",
-          isDraft: false,
-        },
-        {
-          id: "link_github_https_github_com_robin_",
-          label: "GitHub",
-          url: "https://github.com/robin-ashford-builds",
-          kind: "github",
-          isDraft: false,
-        },
-      ];
       const fillText = vi.spyOn(hands, "fillText");
+      const checkWrittenAnswer = vi.fn();
       const observation = observationOf(page);
 
       const outcome = await executeApplyProposal(
         { tool: "type", ref: "c0", text: typed },
         observation.signature,
-        { config, now, guardState: createApplyGuardState() },
+        {
+          config,
+          now,
+          guardState: createApplyGuardState(),
+          checkWrittenAnswer,
+        },
       );
 
       expect(outcome.kind).toBe("filled");
-      expect(fillText).toHaveBeenCalledTimes(1);
-      expect(fillText.mock.calls[0]?.[1]).toBe(expected);
+      expect(checkWrittenAnswer).not.toHaveBeenCalled();
+      expect(fillText).toHaveBeenCalledWith("c0", typed);
     },
   );
 
@@ -662,14 +659,23 @@ describe("apply policy executor", () => {
         text: "I improve CI/CD and support distributed teams.",
       },
       observation.signature,
-      { config, now, guardState: createApplyGuardState() },
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: () =>
+          Promise.resolve({
+            supported: false,
+            reason: "Nothing on file shows CI/CD work.",
+          }),
+      },
     );
 
-    expect(outcome.kind).toBe("filled");
-    expect(fillText).toHaveBeenCalledWith(
-      "c0",
-      "React, TypeScript, Design Systems",
-    );
+    expect(outcome.kind).toBe("suggestion");
+    if (outcome.kind === "suggestion") {
+      expect(outcome.note).toContain("Nothing on file shows CI/CD work.");
+    }
+    expect(fillText).not.toHaveBeenCalled();
   });
 
   test.each([
@@ -738,7 +744,7 @@ describe("apply policy executor", () => {
           "I certify that the information I have given is true and complete",
         question:
           "I certify that the information I have given is true and complete",
-        answer: "Yes",
+        answer: "Yes, I agree",
         roleFamilies: [],
         proofEntryIds: [],
       },
@@ -755,44 +761,133 @@ describe("apply policy executor", () => {
     expect(outcome.kind).toBe("filled");
     if (outcome.kind === "filled") {
       expect(outcome.filled.answer.sourceKind).toBe("answer_library");
+      expect(outcome.filled.answer.provenanceLabel).toBe(
+        "your answer to this question",
+      );
+      // The record shows what the box shows, so the review finds it.
+      expect(outcome.filled.answer.value).toBe("Yes");
     }
     expect(setToggle).toHaveBeenCalledWith("c0", true);
   });
 
-  test("a declaration the person pre-approved is ticked and recorded as theirs", async () => {
+  test("ticks each option the person chose for a required checkbox group", async () => {
     const page = rawPage({
-      controls: [
+      controls: ["Communication", "Planning", "Budgeting"].map((label, index) =>
         rawControl({
-          index: 0,
+          index,
           inputType: "checkbox",
-          label:
-            "I certify that the information I have given is true and complete",
+          name: "skills",
+          label,
+          // Like the replica sites: the group is required, its boxes are not.
+          groupLabel: "Select your skills",
         }),
-      ],
+      ),
     });
-    const { config } = configFor(page, {
-      authority: {
-        preApprovedAttestationKinds: ["truthfulness_certification"],
+    const { config, hands } = configFor(page);
+    // The person's one-use answer from Needs you, as the run receives it.
+    config.sources.reusableAnswers = [
+      {
+        id: "application_request_skills_question_skills",
+        kind: "other",
+        label: "Select your skills",
+        question: "Select your skills",
+        answer: JSON.stringify(["Communication", "Planning"]),
+        roleFamilies: [],
+        proofEntryIds: [],
       },
-    });
+    ];
+    const setToggle = vi.spyOn(hands, "setToggle");
+    const checkWrittenAnswer = vi.fn(() =>
+      Promise.resolve({ supported: false, reason: "Not in the facts." }),
+    );
     const observation = observationOf(page);
 
-    const outcome = await executeApplyProposal(
-      { tool: "set_checkbox", ref: "c0", checked: true },
+    const chosen = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c1", checked: true },
       observation.signature,
-      { config, now, guardState: createApplyGuardState() },
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
     );
-
-    expect(outcome.kind).toBe("filled");
-    if (outcome.kind === "filled") {
-      expect(outcome.filled.answer.provenanceLabel).toBe(
-        "a declaration you approved in advance",
-      );
+    expect(chosen.kind).toBe("filled");
+    if (chosen.kind === "filled") {
+      expect(chosen.filled.answer.value).toBe("Planning");
+      expect(chosen.filled.answer.sourceKind).toBe("answer_library");
     }
+    expect(setToggle).toHaveBeenCalledWith("c1", true);
+    expect(checkWrittenAnswer).not.toHaveBeenCalled();
+
+    const uncheck = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c1", checked: false },
+      observation.signature,
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
+    );
+    expect(uncheck.kind).toBe("filled");
+    expect(setToggle).toHaveBeenLastCalledWith("c1", true);
+
+    // An option the person did not choose is not entered.
+    const other = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c2", checked: true },
+      observation.signature,
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
+    );
+    expect(other.kind).not.toBe("filled");
+    expect(setToggle).not.toHaveBeenCalledWith("c2", true);
   });
 
+  test.each([
+    [
+      "truthfulness_certification",
+      "I certify that the information I have given is true and complete",
+    ],
+    ["background_check_consent", "I consent to a background check"],
+  ] as const)(
+    "a %s declaration approved in Settings keeps that source",
+    async (kind, label) => {
+      const page = rawPage({
+        controls: [
+          rawControl({
+            index: 0,
+            inputType: "checkbox",
+            label,
+          }),
+        ],
+      });
+      const { config } = configFor(page, {
+        authority: {
+          preApprovedAttestationKinds: [kind],
+        },
+      });
+      // A saved "Yes" does not change why the box was ticked.
+      config.sources.reusableAnswers = [
+        {
+          id: "saved_declaration",
+          kind: "other",
+          label,
+          question: label,
+          answer: "Yes, I agree",
+          roleFamilies: [],
+          proofEntryIds: [],
+        },
+      ];
+      const observation = observationOf(page);
+
+      const outcome = await executeApplyProposal(
+        { tool: "set_checkbox", ref: "c0", checked: true },
+        observation.signature,
+        { config, now, guardState: createApplyGuardState() },
+      );
+
+      expect(outcome.kind).toBe("filled");
+      if (outcome.kind === "filled") {
+        expect(outcome.filled.answer.provenanceLabel).toBe(
+          "your Settings (on by default)",
+        );
+        expect(outcome.filled.answer.value).toBe("Yes");
+      }
+    },
+  );
+
   test.each(["set_checkbox", "click"] as const)(
-    "rejects a contradictory radio answer through %s",
+    "a radio choice the facts do not support is not made, through %s",
     async (tool) => {
       const page = rawPage({
         controls: [
@@ -817,27 +912,39 @@ describe("apply policy executor", () => {
         ],
       });
       const { config, hands } = configFor(page);
-      config.sources.profile = CandidateProfileSchema.parse({
-        ...config.sources.profile,
-        answerBank: {
-          ...config.sources.profile.answerBank,
-          workAuthorization: "Yes",
-        },
-      });
       const setToggle = vi.spyOn(hands, "setToggle");
+      const checkWrittenAnswer = vi.fn((_question: string, answer: string) =>
+        Promise.resolve(
+          answer === "Yes"
+            ? {
+                supported: true,
+                reason: "The profile says they may work here.",
+              }
+            : {
+                supported: false,
+                reason: "The profile says they may work here.",
+              },
+        ),
+      );
       const observation = observationOf(page);
+      const deps = {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer,
+      };
 
       const outcome = await executeApplyProposal(
         tool === "click"
           ? { tool: "click", ref: "c1" }
           : { tool: "set_checkbox", ref: "c1", checked: true },
         observation.signature,
-        { config, now, guardState: createApplyGuardState() },
+        deps,
       );
 
-      expect(outcome.kind).toBe("refused");
-      if (outcome.kind !== "refused") throw new Error("Expected refusal.");
-      expect(outcome.reason).toMatch(/grounded answer is "Yes"/iu);
+      expect(outcome.kind).toBe("suggestion");
+      if (outcome.kind !== "suggestion") throw new Error("Expected a note.");
+      expect(outcome.note).toContain("do not support it");
       expect(setToggle).not.toHaveBeenCalled();
 
       const groundedOutcome = await executeApplyProposal(
@@ -845,7 +952,7 @@ describe("apply policy executor", () => {
           ? { tool: "click", ref: "c0" }
           : { tool: "set_checkbox", ref: "c0", checked: true },
         observation.signature,
-        { config, now, guardState: createApplyGuardState() },
+        deps,
       );
 
       expect(groundedOutcome).toMatchObject({
@@ -853,7 +960,8 @@ describe("apply policy executor", () => {
         filled: {
           answer: {
             value: "Yes",
-            sourceKind: "profile",
+            sourceKind: "generated",
+            provenanceLabel: "chosen on the form by Job Finder",
           },
         },
       });
@@ -861,82 +969,166 @@ describe("apply policy executor", () => {
     },
   );
 
-  test("a saved prose answer that cannot choose a radio becomes a person question", async () => {
-    const source = rawPage({
-      controls: ["Yes", "No"].map((label, index) =>
-        rawControl({
-          index,
-          inputType: "radio",
-          name: "authorized",
-          label,
-          value: label,
-          groupLabel: "Are you legally authorized to work in this country?",
-          required: true,
-        }),
-      ),
-    });
-    const { config, hands } = configFor(source);
-    config.sources.profile.answerBank.workAuthorization =
-      "Authorized to work in the United Kingdom and open to remote roles across Europe.";
-    const setToggle = vi.spyOn(hands, "setToggle");
-    const outcome = await executeApplyProposal(
-      { tool: "set_checkbox", ref: "c0", checked: true },
-      observationOf(source).signature,
-      { config, now, guardState: createApplyGuardState() },
-    );
-    expect(outcome.kind).toBe("suggestion");
-    if (outcome.kind !== "suggestion")
-      throw new Error("Expected a person question");
-    expect(outcome.question?.prompt).toContain("legally authorized");
-    expect(outcome.note).toContain("did not match");
-    expect(setToggle).not.toHaveBeenCalled();
-  });
+  test.each(["application_request_a_salary", "answer_memory_salary"])(
+    "pay with disclosure off uses only this application's answer (%s)",
+    async (id) => {
+      const page = rawPage({
+        controls: [
+          rawControl({ index: 0, label: "Expected salary", required: true }),
+        ],
+      });
+      const { config, hands } = configFor(page);
+      const fillText = vi.spyOn(hands, "fillText");
+      config.sources.reusableAnswers = [
+        {
+          id,
+          kind: "salary_expectation",
+          label: "Expected salary",
+          question: "Expected salary",
+          answer: "90000 EUR",
+          roleFamilies: [],
+          proofEntryIds: [],
+        },
+      ];
+      const outcome = await executeApplyProposal(
+        { tool: "type", ref: "c0", text: "90000 EUR" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      );
+      if (id.startsWith("application_")) {
+        expect(outcome).toMatchObject({
+          kind: "filled",
+          filled: { answer: { value: "90000 EUR" } },
+        });
+        expect(fillText).toHaveBeenCalledWith("c0", "90000 EUR");
+      } else {
+        expect(outcome.kind).toBe("suggestion");
+        expect(fillText).not.toHaveBeenCalled();
+      }
+    },
+  );
 
-  test("overrides a proposed target-job title with the matching saved work-history fact", async () => {
+  test.each([false, true])(
+    "salary currency obeys pay privacy and prefers this application's earlier answer (%s)",
+    async (ownAnswer) => {
+      const page = rawPage({
+        controls: [
+          rawControl({ index: 0, label: "Expected salary", required: true }),
+          rawControl({
+            index: 1,
+            label: "Currency",
+            required: true,
+            tagName: "select",
+            options: ["EUR", "GBP"],
+          }),
+        ],
+      });
+      const { config, hands } = configFor(page);
+      const chooseOption = vi.spyOn(hands, "chooseOption");
+      config.sources.reusableAnswers = [
+        {
+          id: "other_job_currency",
+          kind: "other",
+          label: "Currency",
+          question: "Currency",
+          answer: "EUR",
+          roleFamilies: [],
+          proofEntryIds: [],
+        },
+        ...(ownAnswer
+          ? [
+              {
+                id: "application_this_currency",
+                kind: "other" as const,
+                label: "Currency",
+                question: "Currency",
+                answer: "GBP",
+                roleFamilies: [],
+                proofEntryIds: [],
+              },
+            ]
+          : []),
+      ];
+      const outcome = await executeApplyProposal(
+        { tool: "select", ref: "c1", option: ownAnswer ? "GBP" : "EUR" },
+        observationOf(page).signature,
+        {
+          config,
+          now,
+          guardState: createApplyGuardState(),
+          // Even a classifier that overlooks the linked currency cannot override
+          // the salary question's pay permission for this page.
+          classifyQuestions: () =>
+            Promise.resolve(
+              new Map([
+                [
+                  "Expected salary",
+                  { asksAboutPay: true, declarationKind: null },
+                ],
+                ["Currency", { asksAboutPay: false, declarationKind: null }],
+              ]),
+            ),
+        },
+      );
+      if (ownAnswer) {
+        expect(outcome).toMatchObject({
+          kind: "filled",
+          filled: {
+            answer: {
+              value: "GBP",
+              sourceId: "answerLibrary.application_this_currency",
+            },
+          },
+        });
+        expect(chooseOption).toHaveBeenCalledWith("c1", "GBP");
+      } else {
+        expect(outcome.kind).toBe("suggestion");
+        expect(chooseOption).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  test("an application pay answer permits only the exact value for its question", async () => {
     const page = rawPage({
       controls: [
-        rawControl({
-          index: 0,
-          label: "Job title",
-          groupLabel: "Work experience 1",
-          required: true,
-        }),
+        rawControl({ index: 0, label: "Expected salary", required: true }),
       ],
     });
     const { config, hands } = configFor(page);
-    config.sources.profile = CandidateProfileSchema.parse({
-      ...config.sources.profile,
-      experiences: [
-        {
-          id: "experience_signal",
-          companyName: "Signal Systems",
-          title: "Staff Frontend Engineer",
-          startDate: "2014-01",
-          isCurrent: true,
-          summary: "Led design system modernization.",
-        },
-      ],
-    });
     const fillText = vi.spyOn(hands, "fillText");
-    const observation = observationOf(page);
-
-    const outcome = await executeApplyProposal(
+    config.sources.reusableAnswers = [
       {
-        tool: "type",
-        ref: "c0",
-        text: config.sources.posting.title,
+        id: "application_request_a_salary",
+        kind: "salary_expectation",
+        label: "Expected salary",
+        question: "Expected salary",
+        answer: "90000 EUR",
+        roleFamilies: [],
+        proofEntryIds: [],
       },
-      observation.signature,
-      { config, now, guardState: createApplyGuardState() },
-    );
-
-    expect(outcome.kind).toBe("filled");
-    expect(fillText).toHaveBeenCalledWith("c0", "Staff Frontend Engineer");
-    if (outcome.kind === "filled") {
-      expect(outcome.filled.answer.sourceId).toBe(
-        "profile.experiences.experience_signal.title",
+    ];
+    for (const text of ["95000 EUR", "EUR"]) {
+      const outcome = await executeApplyProposal(
+        { tool: "type", ref: "c0", text },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
       );
+      expect(outcome.kind).toBe("filled");
+      expect(fillText).toHaveBeenLastCalledWith("c0", "90000 EUR");
     }
+    config.sources.reusableAnswers = config.sources.reusableAnswers.map(
+      (answer) => ({ ...answer, question: "Current salary" }),
+    );
+    expect(
+      (
+        await executeApplyProposal(
+          { tool: "type", ref: "c0", text: "90000 EUR" },
+          observationOf(page).signature,
+          { config, now, guardState: createApplyGuardState() },
+        )
+      ).kind,
+    ).toBe("suggestion");
+    expect(fillText).toHaveBeenCalledTimes(2);
   });
 
   test("pay is left to the person unless they said otherwise", async () => {
@@ -949,9 +1141,15 @@ describe("apply policy executor", () => {
     const observation = observationOf(page);
 
     const outcome = await executeApplyProposal(
-      { tool: "suggest_answer", ref: "c0" },
+      { tool: "type", ref: "c0", text: "90000" },
       observation.signature,
-      { config, now, guardState: createApplyGuardState() },
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: () =>
+          Promise.resolve({ supported: true, reason: "Saved pay answer." }),
+      },
     );
 
     expect(outcome.kind).toBe("suggestion");
@@ -1102,7 +1300,7 @@ describe("apply policy executor", () => {
     const observation = observationOf(page);
 
     const outcome = await executeApplyProposal(
-      { tool: "suggest_answer", ref: "c0" },
+      { tool: "select", ref: "c0", option: "Leeds" },
       observation.signature,
       { config, now, guardState: createApplyGuardState() },
     );
@@ -1145,7 +1343,7 @@ describe("apply policy executor", () => {
     const observation = observationOf(page);
 
     const outcome = await executeApplyProposal(
-      { tool: "type", ref: "c0", text: "robin@example.test" },
+      { tool: "type", ref: "c0", text: "robin.ashford@example.test" },
       observation.signature,
       { config, now, guardState: createApplyGuardState() },
     );
@@ -2023,7 +2221,7 @@ describe("a site that saves as you go", () => {
     const guardState = createApplyGuardState();
 
     const outcome = await executeApplyProposal(
-      { tool: "type", ref: "c0", text: "" },
+      { tool: "type", ref: "c0", text: "Robin" },
       observationOf(page).signature,
       {
         config: { ...config, safety: safetyThatBlocksOneSave() },
@@ -2079,7 +2277,7 @@ describe("a site that saves as you go", () => {
     const { config } = configFor(page);
 
     const outcome = await executeApplyProposal(
-      { tool: "type", ref: "c0", text: "" },
+      { tool: "type", ref: "c0", text: "Robin" },
       observationOf(page).signature,
       {
         config: {
@@ -2164,38 +2362,29 @@ describe("questions keep to their own control", () => {
     expect(choiceQuestion.answerControlType).toBe("single_choice");
   });
 
-  test("the phone country is still answered from the profile", async () => {
+  test("the phone country the model picks is checked like any other answer", async () => {
     const page = rawPage({ controls: [phoneCountry, phoneNumber] });
     const { config, hands } = configFor(page);
     const chooseOption = vi.spyOn(hands, "chooseOption");
-    const withPhone: ApplyAgentConfig = {
-      ...config,
-      sources: {
-        ...config.sources,
-        profile: {
-          ...config.sources.profile,
-          phone: "+44 7700 900000",
-          currentCountry: "United Kingdom",
-        },
-      },
-    };
+    const checkWrittenAnswer = vi.fn(() =>
+      Promise.resolve({
+        supported: true,
+        reason: "The phone number on file is a UK number.",
+      }),
+    );
 
     const outcome = await executeApplyProposal(
       { tool: "select", ref: "c0", option: "United Kingdom +44" },
       observationOf(page).signature,
-      { config: withPhone, now, guardState: createApplyGuardState() },
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
     );
 
     expect(outcome.kind).toBe("filled");
-    if (outcome.kind === "filled") {
-      expect(outcome.filled.answer.provenanceLabel).toContain(
-        "the country your phone number belongs to",
-      );
-    }
-    expect(chooseOption).toHaveBeenCalled();
+    expect(checkWrittenAnswer).toHaveBeenCalledOnce();
+    expect(chooseOption).toHaveBeenCalledWith("c0", "United Kingdom +44");
   });
 
-  test("a saved choice overrides a different option proposed by the model", async () => {
+  test("the person's saved choice goes in as their own answer", async () => {
     const sourceQuestion =
       "How did you hear about this job? Select an option Job board Company website Referral Other";
     const page = rawPage({
@@ -2230,13 +2419,22 @@ describe("questions keep to their own control", () => {
     ];
     const chooseOption = vi.spyOn(hands, "chooseOption");
 
-    const outcome = await executeApplyProposal(
+    const other = await executeApplyProposal(
       { tool: "select", ref: "c0", option: "Other" },
+      observationOf(page).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    // Without a fact check, a choice that is not the saved one is not made.
+    expect(other.kind).toBe("suggestion");
+
+    const outcome = await executeApplyProposal(
+      { tool: "select", ref: "c0", option: "Job board" },
       observationOf(page).signature,
       { config, now, guardState: createApplyGuardState() },
     );
 
     expect(outcome.kind).toBe("filled");
+    expect(chooseOption).toHaveBeenCalledTimes(1);
     expect(chooseOption).toHaveBeenCalledWith("c0", "Job board");
     if (outcome.kind === "filled") {
       expect(outcome.filled.answer).toMatchObject({
@@ -2514,5 +2712,1578 @@ describe("a button that opens a new tab", () => {
         "https://jobs.employer.test/apply/123",
       );
     }
+  });
+});
+
+describe("Round 2 application recovery", () => {
+  test.each([true, false])(
+    "the model maps saved prose to an option only with a supported fact check (%s)",
+    async (supported) => {
+      const page = rawPage({
+        controls: [
+          rawControl({
+            index: 0,
+            tagName: "select",
+            label: "Do you need visa sponsorship in Germany?",
+            required: true,
+            options: ["Yes", "No"],
+          }),
+        ],
+      });
+      const { config, hands } = configFor(page);
+      config.sources.profile.answerBank.visaSponsorship =
+        "I will need employer sponsorship after my student permit ends.";
+      config.sources.posting.location = "Berlin, Germany";
+      const choose = vi.spyOn(hands, "chooseOption");
+      const check = vi.fn(() =>
+        Promise.resolve({
+          supported,
+          reason: "Permit conditions need clarification.",
+        }),
+      );
+      const outcome = await executeApplyProposal(
+        { tool: "select", ref: "c0", option: "Yes" },
+        observationOf(page).signature,
+        {
+          config,
+          now,
+          guardState: createApplyGuardState(),
+          checkWrittenAnswer: check,
+        },
+      );
+      expect(check).toHaveBeenCalledWith(
+        "Do you need visa sponsorship in Germany?",
+        "Yes",
+      );
+      expect(choose).toHaveBeenCalledTimes(supported ? 1 : 0);
+      expect(outcome.kind).toBe(supported ? "filled" : "suggestion");
+    },
+  );
+
+  test("an old upload must be replaced before advancing a retained form", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          inputType: "file",
+          label: "Resume",
+          value: "C:\\fakepath\\original.docx",
+        }),
+      ],
+      actions: [
+        { index: 0, label: "Continue", visible: true, disabled: false },
+      ],
+    });
+    const { config, hands } = configFor(page);
+    hands.uploadFile = (_ref, file) => {
+      page.controls[0].value = file.name;
+      return Promise.resolve({ ok: true, observedValue: file.name });
+    };
+    config.sources.documents = [
+      {
+        id: "approved",
+        kind: "resume",
+        label: "Your CV",
+        fileName: "approved.pdf",
+        mimeType: "application/pdf",
+        loadBytes: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+      },
+    ];
+    const click = vi.spyOn(hands, "clickElement");
+    expect(
+      await executeApplyProposal(
+        { tool: "click", ref: "a0" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      ),
+    ).toMatchObject({ kind: "refused" });
+    expect(click).not.toHaveBeenCalled();
+    expect(
+      await executeApplyProposal(
+        { tool: "upload", ref: "c0", documentId: "approved" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      ),
+    ).toMatchObject({
+      kind: "attached",
+      attachment: { fileName: "approved.pdf" },
+    });
+    expect((await hands.observe()).controls[0]?.value).toBe("approved.pdf");
+    expect(
+      await executeApplyProposal(
+        { tool: "click", ref: "a0" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      ),
+    ).toMatchObject({ kind: "moved" });
+    expect(click).toHaveBeenCalledOnce();
+  });
+
+  test("an upload that retains another filename is not recorded as attached", async () => {
+    const page = rawPage({
+      controls: [rawControl({ index: 0, inputType: "file", label: "Resume" })],
+    });
+    const { config } = configFor(page, {
+      hands: {
+        uploadFile: () =>
+          Promise.resolve({ ok: true, observedValue: "original.docx" }),
+      },
+    });
+    config.sources.documents = [
+      {
+        id: "approved",
+        kind: "resume",
+        label: "Your CV",
+        fileName: "approved.pdf",
+        mimeType: "application/pdf",
+        loadBytes: () => Promise.resolve(new Uint8Array([1])),
+      },
+    ];
+    expect(
+      await executeApplyProposal(
+        { tool: "upload", ref: "c0", documentId: "approved" },
+        observationOf(page).signature,
+        { config, now, guardState: createApplyGuardState() },
+      ),
+    ).toMatchObject({ kind: "refused" });
+  });
+});
+
+describe("the model's answers stand when the person's facts support them (ADR 0041)", () => {
+  const deps = (
+    config: ApplyAgentConfig,
+    supported: boolean,
+    reason = "checked",
+  ) => {
+    const checkWrittenAnswer = vi.fn(() =>
+      Promise.resolve({ supported, reason }),
+    );
+    return {
+      checkWrittenAnswer,
+      deps: {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer,
+      },
+    };
+  };
+
+  test("text matching a stored fact goes in as that fact without a check", async () => {
+    const page = rawPage({
+      controls: [rawControl({ index: 0, label: "Email", inputType: "email" })],
+    });
+    const { config } = configFor(page);
+    const { deps: run, checkWrittenAnswer } = deps(config, true);
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "robin.ashford@example.test" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(checkWrittenAnswer).not.toHaveBeenCalled();
+    if (outcome.kind !== "filled") throw new Error("Expected a fill");
+    expect(outcome.filled.answer.sourceKind).toBe("profile");
+  });
+
+  test("the model's text replaces a stored fact the question was not asking for", async () => {
+    // Read by keywords this is the person's own email; the model saw it asks
+    // for a referee's.
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Email",
+          inputType: "email",
+          groupLabel: "Referee",
+        }),
+      ],
+    });
+    const fillText = vi.fn((_ref: string, value: string) =>
+      Promise.resolve({ ok: true as const, observedValue: value }),
+    );
+    const { config } = configFor(page, { hands: { fillText } });
+    config.sources.reusableAnswers = [];
+    const { deps: run, checkWrittenAnswer } = deps(config, true);
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "referee@example.test" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(checkWrittenAnswer).toHaveBeenCalledOnce();
+    expect(fillText).toHaveBeenCalledWith("c0", "referee@example.test");
+    if (outcome.kind !== "filled") throw new Error("Expected a fill");
+    expect(outcome.filled.answer.value).toBe("referee@example.test");
+  });
+
+  test("an unsupported answer is not written, and the reason is given", async () => {
+    const page = rawPage({
+      controls: [rawControl({ index: 0, label: "Email", inputType: "email" })],
+    });
+    const fillText = vi.fn();
+    const { config } = configFor(page, { hands: { fillText } });
+    const { deps: run } = deps(
+      config,
+      false,
+      "That is not the applicant's email.",
+    );
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "someone.else@example.test" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(fillText).not.toHaveBeenCalled();
+    if (outcome.kind !== "suggestion") throw new Error("Expected a note");
+    expect(outcome.note).toContain("That is not the applicant's email.");
+  });
+
+  test("the model chooses an option nothing stored answers once the check supports it", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          tagName: "select",
+          label: "How did you hear about this job?",
+          required: true,
+          options: ["LinkedIn", "A friend", "Other"],
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    const choose = vi.spyOn(hands, "chooseOption");
+    const { deps: run, checkWrittenAnswer } = deps(config, true);
+    const outcome = await executeApplyProposal(
+      { tool: "select", ref: "c0", option: "Other" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(checkWrittenAnswer).toHaveBeenCalledOnce();
+    expect(choose).toHaveBeenCalledWith("c0", "Other");
+    expect(outcome.kind).toBe("filled");
+  });
+
+  test("pay the person keeps to themselves is left for them whatever the model chose", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({ index: 0, label: "Expected salary", required: true }),
+      ],
+    });
+    const fillText = vi.fn();
+    const { config } = configFor(page, { hands: { fillText } });
+    const { deps: run, checkWrittenAnswer } = deps(config, true);
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "60000" },
+      observationOf(page).signature,
+      run,
+    );
+    expect(checkWrittenAnswer).not.toHaveBeenCalled();
+    expect(fillText).not.toHaveBeenCalled();
+    expect(outcome.kind).not.toBe("filled");
+  });
+});
+
+describe("the model reads which questions ask about pay or are declarations (ADR 0041)", () => {
+  const classified = (
+    entries: Record<
+      string,
+      { asksAboutPay: boolean; declarationKind: string | null }
+    >,
+  ) =>
+    vi.fn(() =>
+      Promise.resolve(
+        new Map(
+          Object.entries(entries).map(([prompt, value]) => [
+            prompt,
+            value as {
+              asksAboutPay: boolean;
+              declarationKind: null | "truthfulness_certification";
+            },
+          ]),
+        ),
+      ),
+    );
+
+  test("holds a pay question no keyword list would catch while pay stays private", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "What package would make this move worth it for you?",
+          required: true,
+        }),
+      ],
+    });
+    const fillText = vi.fn();
+    const { config } = configFor(page, { hands: { fillText } });
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "70,000 EUR" },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions: classified({
+          "What package would make this move worth it for you?": {
+            asksAboutPay: true,
+            declarationKind: null,
+          },
+        }),
+        checkWrittenAnswer: () =>
+          Promise.resolve({ supported: true, reason: "ok" }),
+      },
+    );
+    expect(fillText).not.toHaveBeenCalled();
+    expect(outcome.kind).not.toBe("filled");
+  });
+
+  test("leaves a declaration the model recognised unticked until the person approves it", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          inputType: "checkbox",
+          label: "Everything above is accurate to the best of my knowledge",
+          required: true,
+        }),
+      ],
+    });
+    const setToggle = vi.fn();
+    const { config } = configFor(page, { hands: { setToggle } });
+    const outcome = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c0", checked: true },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions: classified({
+          "Everything above is accurate to the best of my knowledge": {
+            asksAboutPay: false,
+            declarationKind: "truthfulness_certification",
+          },
+        }),
+      },
+    );
+    expect(setToggle).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("suggestion");
+  });
+
+  test("keeps the keyword check when the model cannot be asked", async () => {
+    const page = rawPage({
+      controls: [
+        rawControl({ index: 0, label: "Expected salary", required: true }),
+      ],
+    });
+    const fillText = vi.fn();
+    const { config } = configFor(page, { hands: { fillText } });
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "60000" },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions: () => Promise.reject(new Error("model unavailable")),
+        checkWrittenAnswer: () =>
+          Promise.resolve({ supported: true, reason: "ok" }),
+      },
+    );
+    expect(fillText).not.toHaveBeenCalled();
+    expect(outcome.kind).not.toBe("filled");
+  });
+});
+
+describe("one-use answers and compatible originals", () => {
+  test.each([
+    {
+      label: "Background-check consent",
+      groupLabel: "Required declarations",
+      inputType: "checkbox",
+      answer: "Yes",
+      tool: "set_checkbox",
+    },
+    {
+      label: "Annual salary expectation",
+      groupLabel: "Compensation",
+      inputType: "number",
+      answer: "60000",
+      tool: "type",
+    },
+    {
+      label: "Analysis experience",
+      groupLabel: "Experience",
+      inputType: "number",
+      answer: "0",
+      tool: "type",
+    },
+  ])(
+    "applies an exact one-job $label answer with global approval off",
+    async ({ label, groupLabel, inputType, answer, tool }) => {
+      const source = rawPage({
+        controls: [
+          rawControl({
+            index: 0,
+            label,
+            groupLabel,
+            inputType,
+            required: true,
+          }),
+        ],
+      });
+      const { config, hands } = configFor(source, {
+        authority: { salaryDisclosure: "answer_from_profile" },
+      });
+      config.sources.reusableAnswers = [
+        {
+          id: "application_once",
+          kind: "other",
+          label,
+          question: `${groupLabel} — ${label}`,
+          answer,
+          roleFamilies: [],
+          proofEntryIds: [],
+        },
+      ];
+      hands.fillText = vi.fn(hands.fillText);
+      hands.setToggle = vi.fn(hands.setToggle);
+      const outcome = await executeApplyProposal(
+        tool === "type"
+          ? { tool: "type", ref: "c0", text: answer }
+          : { tool: "set_checkbox", ref: "c0", checked: true },
+        observationOf(source).signature,
+        { config, now, guardState: createApplyGuardState() },
+      );
+      expect(outcome.kind).toBe("filled");
+      expect(
+        tool === "type" ? hands.fillText : hands.setToggle,
+      ).toHaveBeenCalledOnce();
+      expect(profile().answerBank.customAnswers).toEqual([]);
+      const unrelated = await executeApplyProposal(
+        { tool: "set_checkbox", ref: "c0", checked: true },
+        observationOf(source).signature,
+        {
+          config: configFor(source).config,
+          now,
+          guardState: createApplyGuardState(),
+        },
+      );
+      if (tool === "set_checkbox") expect(unrelated.kind).toBe("suggestion");
+    },
+  );
+
+  test("uses saved expected salary without disclosing current pay", async () => {
+    const source = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Expected compensation",
+          inputType: "number",
+          required: true,
+        }),
+      ],
+    });
+    const { config } = configFor(source, {
+      authority: { salaryDisclosure: "answer_from_profile" },
+    });
+    config.sources.profile.answerBank.salaryExpectations =
+      "EUR 60,000 gross per year";
+    const classifyQuestions = () =>
+      Promise.resolve(
+        new Map([
+          [
+            "Expected compensation",
+            {
+              asksAboutPay: true,
+              asksCurrentPay: false,
+              declarationKind: null,
+            },
+          ],
+        ]),
+      );
+    const checkWrittenAnswer = vi.fn(() =>
+      Promise.resolve({
+        supported: true,
+        reason: "60000 is the amount of the saved expected annual salary.",
+      }),
+    );
+    const result = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "60000" },
+      observationOf(source).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions,
+        checkWrittenAnswer,
+      },
+    );
+    expect(result.kind).toBe("filled");
+    source.controls[0].label = "Current compensation";
+    config.authority.salaryDisclosure = "pause_for_user";
+    const current = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "60000" },
+      observationOf(source).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        classifyQuestions: () =>
+          Promise.resolve(
+            new Map([
+              [
+                "Current compensation",
+                {
+                  asksAboutPay: true,
+                  asksCurrentPay: true,
+                  declarationKind: null,
+                },
+              ],
+            ]),
+          ),
+        checkWrittenAnswer,
+      },
+    );
+    expect(current.kind).toBe("suggestion");
+    expect(checkWrittenAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  test("attaches an unchanged TXT copy when an Original Markdown resume is rejected", async () => {
+    const source = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Resume",
+          inputType: "file",
+          required: true,
+          accept: ".txt,.pdf,.doc,.docx",
+        }),
+      ],
+    });
+    const { config, hands } = configFor(source);
+    const bytes = new TextEncoder().encode(
+      "# Robin Ashford\nSynthetic platform engineer\n",
+    );
+    config.sources.documents = [
+      {
+        id: "original",
+        kind: "resume",
+        fileName: "resume.md",
+        mimeType: "text/markdown",
+        label: "Original resume",
+        loadBytes: () => Promise.resolve(bytes),
+      },
+    ];
+    hands.uploadFile = vi.fn(hands.uploadFile);
+    const result = await executeApplyProposal(
+      { tool: "upload", ref: "c0", documentId: "original" },
+      observationOf(source).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(result.kind).toBe("attached");
+    expect(hands.uploadFile).toHaveBeenCalledWith("c0", {
+      name: "resume.txt",
+      mimeType: "text/plain",
+      bytes,
+    });
+    if (result.kind === "attached")
+      expect(result.attachment.fileName).toBe("resume.txt");
+    source.controls[0].value = "C:\\fakepath\\resume.txt";
+    source.actions = [
+      { index: 0, label: "Next", visible: true, disabled: false },
+    ];
+    const next = await executeApplyProposal(
+      { tool: "click", ref: "a0" },
+      observationOf(source).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(next.kind).toBe("moved");
+    source.actions[0].label = "Submit application";
+    config.authority.mode = "confirm_before_submit";
+    config.authority.allowedOrigins = ["https://apply.example.test"];
+    const submit = await executeApplyProposal(
+      { tool: "submit_application", ref: "a0" },
+      observationOf(source).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(submit.kind).toBe("ready_to_send");
+  });
+
+  test("requests a compatible file before uploading an unsupported Original", async () => {
+    const source = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Resume",
+          inputType: "file",
+          required: true,
+          accept: ".pdf",
+        }),
+      ],
+    });
+    const { config, hands } = configFor(source);
+    config.sources.documents = [
+      {
+        id: "original",
+        kind: "resume",
+        fileName: "resume.md",
+        mimeType: "text/markdown",
+        label: "Original resume",
+        loadBytes: () => Promise.resolve(new Uint8Array([1])),
+      },
+    ];
+    hands.uploadFile = vi.fn(hands.uploadFile);
+    const result = await executeApplyProposal(
+      { tool: "upload", ref: "c0", documentId: "original" },
+      observationOf(source).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(result).toMatchObject({
+      kind: "paused",
+      pause: { code: "document_needs_you" },
+    });
+    expect(hands.uploadFile).not.toHaveBeenCalled();
+  });
+});
+
+test.each([
+  "Expected compensation",
+  "Current compensation",
+  "Previous compensation",
+])("keeps %s private even with an exact saved answer", async (label) => {
+  const source = rawPage({
+    controls: [rawControl({ index: 0, label, required: true })],
+  });
+  const { config, hands } = configFor(source);
+  config.sources.reusableAnswers = [
+    {
+      id: "saved_pay",
+      kind: "other",
+      label,
+      question: label,
+      answer: "60000",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  hands.fillText = vi.fn(hands.fillText);
+  const result = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "60000" },
+    observationOf(source).signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      classifyQuestions: () =>
+        Promise.resolve(
+          new Map([
+            [
+              label,
+              {
+                asksAboutPay: true,
+                asksCurrentPay: label !== "Expected compensation",
+                declarationKind: null,
+              },
+            ],
+          ]),
+        ),
+    },
+  );
+  expect(result).toMatchObject({
+    kind: "suggestion",
+    answer: { value: "60000" },
+    question: {
+      note: "Job Finder leaves pay questions to you. Answer it yourself if you want to.",
+    },
+  });
+  expect(hands.fillText).not.toHaveBeenCalled();
+});
+test("an exact multi-choice selection preserves option labels containing commas", async () => {
+  const label = "Writing, editing";
+  const source = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        inputType: "checkbox",
+        label,
+        groupLabel: "Skills",
+        name: "skills",
+        required: true,
+        value: label,
+      }),
+      rawControl({
+        index: 1,
+        inputType: "checkbox",
+        label: "Planning",
+        groupLabel: "Skills",
+        name: "skills",
+        value: "Planning",
+      }),
+    ],
+  });
+  const { config, hands } = configFor(source);
+  config.sources.reusableAnswers = [
+    {
+      id: "skills",
+      kind: "other",
+      label: "Skills",
+      question: "Skills",
+      answer: JSON.stringify([label]),
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  hands.setToggle = vi.fn(hands.setToggle);
+  const result = await executeApplyProposal(
+    { tool: "set_checkbox", ref: "c0", checked: true },
+    observationOf(source).signature,
+    { config, now, guardState: createApplyGuardState() },
+  );
+  expect(result.kind).toBe("filled");
+  expect(hands.setToggle).toHaveBeenCalledWith("c0", true);
+});
+
+test("a saved generic eligibility answer is checked again for this hiring country", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        tagName: "select",
+        label: "Are you authorized to work here?",
+        options: ["Yes", "No"],
+        required: true,
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.posting.location = "Worldwide remote";
+  config.application.resultId = "current_result";
+  config.sources.reusableAnswers = [
+    {
+      id: "canadian_answer",
+      applicationScope: {
+        resultId: "other_result",
+        applicationRecordId: "other_application",
+        location: "Toronto, Canada",
+      },
+      kind: "work_authorization",
+      label: "Canada authorization",
+      question: "Are you authorized to work here?",
+      answer: "Yes",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  const choose = vi.spyOn(hands, "chooseOption");
+  const check = vi.fn(async () => ({
+    supported: false,
+    reason:
+      "Which country will hire you? Canadian work rights do not establish worldwide permission.",
+  }));
+  const outcome = await executeApplyProposal(
+    { tool: "select", ref: "c0", option: "Yes" },
+    observationOf(page).signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: check,
+      classifyQuestions: async () =>
+        new Map([
+          [
+            "Are you authorized to work here?",
+            {
+              asksAboutPay: false,
+              eligibilityKind: "work_authorization" as const,
+              declarationKind: null,
+            },
+          ],
+        ]),
+    },
+  );
+  expect(check).toHaveBeenCalledOnce();
+  expect(choose).not.toHaveBeenCalled();
+  expect(outcome.kind).toBe("suggestion");
+});
+
+test("private current salary is not filled or suggested from expected pay", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({ index: 0, label: "Current salary", required: true }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.profile.answerBank.salaryExpectations = "EUR 60000";
+  const fill = vi.spyOn(hands, "fillText");
+  const check = vi.fn(async () => ({ supported: true, reason: "checked" }));
+  const outcome = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "60000" },
+    observationOf(page).signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: check,
+      classifyQuestions: async () =>
+        new Map([
+          [
+            "Current salary",
+            { asksAboutPay: true, asksCurrentPay: true, declarationKind: null },
+          ],
+        ]),
+    },
+  );
+  expect(fill).not.toHaveBeenCalled();
+  expect(check).not.toHaveBeenCalled();
+  expect(outcome).toMatchObject({ kind: "suggestion", answer: null });
+});
+
+test.each([true, false])(
+  "checks eligibility checkboxes even if classified as a routine declaration (checked=%s)",
+  async (checked) => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          inputType: "checkbox",
+          label: "I certify that I am authorized to work in the hiring country",
+          required: true,
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    config.authority.preApprovedAttestationKinds = [
+      "truthfulness_certification",
+    ];
+    const toggle = vi.spyOn(hands, "setToggle");
+    const check = vi.fn(() =>
+      Promise.resolve({
+        supported: false,
+        reason: "The hiring country and permit conditions need your review.",
+      }),
+    );
+    const outcome = await executeApplyProposal(
+      { tool: "set_checkbox", ref: "c0", checked },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: check,
+        classifyQuestions: () =>
+          Promise.resolve(
+            new Map([
+              [
+                "I certify that I am authorized to work in the hiring country",
+                {
+                  asksAboutPay: false,
+                  eligibilityKind: "work_authorization" as const,
+                  declarationKind: "truthfulness_certification" as const,
+                },
+              ],
+            ]),
+          ),
+      },
+    );
+    expect(check).toHaveBeenCalledWith(
+      "I certify that I am authorized to work in the hiring country",
+      checked ? "Yes" : "No",
+    );
+    expect(toggle).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe("suggestion");
+  },
+);
+
+test.each([
+  ["Yes", "retained_result", "Worldwide", true],
+  ["No", "retained_result", "Worldwide", true],
+  ["Yes", "earlier_result", "Worldwide", true],
+  ["Yes", "earlier_result", "Different location", false],
+] as const)(
+  "eligibility choice %s from %s in %s is final=%s",
+  async (answer, resultId, location, final) => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          tagName: "select",
+          label: "Are you authorized to work here?",
+          options: ["Yes", "No"],
+          required: true,
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    config.application.resultId = "retained_result";
+    config.application.applicationRecordId = "application";
+    config.sources.posting.location = "Worldwide";
+    config.sources.reusableAnswers = [
+      {
+        id: "own_answer",
+        kind: "work_authorization",
+        label: "Are you authorized to work here?",
+        question: "Are you authorized to work here?",
+        answer,
+        roleFamilies: [],
+        proofEntryIds: [],
+        applicationScope: {
+          resultId,
+          applicationRecordId: "application",
+          location,
+        },
+      },
+    ];
+    const check = vi.fn(() =>
+      Promise.resolve({
+        supported: false,
+        reason: "Hiring country is unknown",
+      }),
+    );
+    const choose = vi.spyOn(hands, "chooseOption");
+    const outcome = await executeApplyProposal(
+      { tool: "select", ref: "c0", option: answer },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: check,
+      },
+    );
+    expect(outcome.kind).toBe(final ? "filled" : "suggestion");
+    if (final) {
+      expect(choose).toHaveBeenCalledWith("c0", answer);
+      expect(check).not.toHaveBeenCalled();
+    } else {
+      expect(choose).not.toHaveBeenCalled();
+      expect(check).toHaveBeenCalled();
+    }
+  },
+);
+
+test.each([false, true])(
+  "a rejected or unavailable check explains the question (unavailable=%s)",
+  async (unavailable) => {
+    const page = rawPage({
+      controls: [
+        rawControl({ index: 0, label: "Why this role?", required: true }),
+      ],
+    });
+    const { config } = configFor(page);
+    const outcome = await executeApplyProposal(
+      { tool: "type", ref: "c0", text: "I led an unsupported project" },
+      observationOf(page).signature,
+      {
+        config,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer: () =>
+          unavailable
+            ? Promise.reject(new Error("incomplete: max_output_tokens"))
+            : Promise.resolve({
+                supported: false,
+                reason: "That project is not in your resume.",
+              }),
+      },
+    );
+    expect(outcome.kind).toBe("suggestion");
+    if (outcome.kind === "suggestion") {
+      expect(outcome.question?.note).toContain(
+        unavailable ? "could not check this answer" : "That project",
+      );
+      expect(outcome.question?.note).not.toContain("max_output_tokens");
+    }
+  },
+);
+
+test("an optional letter that needs review pauses with its draft and reason", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({ index: 0, label: "Cover letter", tagName: "textarea" }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.writing = {
+    coverLetterPolicy: "when_possible",
+    writtenAnswerLength: "short",
+    preApprovedDeclarations: [],
+  };
+  config.letters = {
+    preference: {
+      tone: "direct",
+      length: "short",
+      language: null,
+      sample: null,
+    },
+    provide: () =>
+      Promise.resolve({
+        ok: false,
+        reason: "Agree how to handle the location mismatch before sending.",
+        draftText: "Please accommodate my location.",
+      }),
+  };
+  const write = vi.spyOn(hands, "fillText");
+  const outcome = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "Letter" },
+    observationOf(page).signature,
+    { config, now, guardState: createApplyGuardState() },
+  );
+  expect(outcome.kind).toBe("paused");
+  if (outcome.kind === "paused") {
+    expect(outcome.pause.reviewDraft?.text).toBe(
+      "Please accommodate my location.",
+    );
+    expect(outcome.pause.reviewDraft?.reason).toContain("location mismatch");
+  }
+  expect(write).not.toHaveBeenCalled();
+});
+
+test("Prepare again uses all four of this application's answers over different model proposals", async () => {
+  const fields = [
+    { label: "Years of analysis experience", answer: "4", proposed: "0" },
+    { label: "Expected salary", answer: "62000", proposed: "50000" },
+    {
+      label: "Are you willing to relocate?",
+      answer: "No",
+      proposed: "Yes",
+      tagName: "select",
+      options: ["Yes", "No"],
+    },
+    {
+      label: "Do you require visa sponsorship?",
+      answer: "Yes",
+      proposed: "No",
+      tagName: "select",
+      options: ["Yes", "No"],
+    },
+  ];
+  const page = rawPage({
+    controls: fields.map((field, index) =>
+      rawControl({
+        index,
+        label: field.label,
+        tagName: field.tagName ?? "input",
+        options: field.options ?? [],
+        required: true,
+      }),
+    ),
+  });
+  const { config, hands } = configFor(page);
+  config.application.applicationRecordId = "application_same";
+  config.sources.reusableAnswers = fields.map((field, index) => ({
+    id: `application_once_${index}`,
+    kind: "other",
+    label: field.label,
+    question: field.label,
+    answer: field.answer,
+    roleFamilies: [],
+    proofEntryIds: [],
+    applicationScope: {
+      applicationRecordId: "application_same",
+      resultId: "previous",
+      location: null,
+    },
+  }));
+  const fill = vi.spyOn(hands, "fillText");
+  const select = vi.spyOn(hands, "chooseOption");
+  const checkWrittenAnswer = vi.fn(() =>
+    Promise.resolve({ supported: false, reason: "No profile fact." }),
+  );
+  for (const [index, field] of fields.entries()) {
+    const outcome = await executeApplyProposal(
+      field.options
+        ? { tool: "select", ref: `c${index}`, option: field.proposed }
+        : { tool: "type", ref: `c${index}`, text: field.proposed },
+      observationOf(page).signature,
+      { config, now, guardState: createApplyGuardState(), checkWrittenAnswer },
+    );
+    expect(outcome.kind).toBe("filled");
+    expect(field.options ? select : fill).toHaveBeenLastCalledWith(
+      `c${index}`,
+      field.answer,
+    );
+  }
+  expect(checkWrittenAnswer).not.toHaveBeenCalled();
+  const other = configFor(page).config;
+  other.application.applicationRecordId = "application_other";
+  other.sources.reusableAnswers = config.sources.reusableAnswers;
+  // Even if supplied, one-time answers belong only to the original application.
+  for (const [index, field] of fields.entries()) {
+    const outcome = await executeApplyProposal(
+      field.options
+        ? { tool: "select", ref: `c${index}`, option: field.proposed }
+        : { tool: "type", ref: `c${index}`, text: field.proposed },
+      observationOf(page).signature,
+      {
+        config: other,
+        now,
+        guardState: createApplyGuardState(),
+        checkWrittenAnswer,
+      },
+    );
+    expect(outcome.kind).toBe("suggestion");
+  }
+});
+
+test("Prepare again uses the person's No for a checkbox and the saved sibling radio", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        inputType: "checkbox",
+        label: "I agree to a background check",
+        required: true,
+      }),
+      rawControl({
+        index: 1,
+        inputType: "radio",
+        name: "relocation",
+        groupLabel: "Willing to relocate",
+        label: "Yes",
+        value: "yes",
+      }),
+      rawControl({
+        index: 2,
+        inputType: "radio",
+        name: "relocation",
+        groupLabel: "Willing to relocate",
+        label: "No",
+        value: "no",
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.reusableAnswers = [
+    {
+      id: "application_once_check",
+      kind: "other",
+      label: "I agree to a background check",
+      question: "I agree to a background check",
+      answer: "No",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+    {
+      id: "application_once_relocate",
+      kind: "other",
+      label: "Willing to relocate",
+      question: "Willing to relocate",
+      answer: "No",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  const toggle = vi.spyOn(hands, "setToggle");
+  for (const ref of ["c0", "c1"]) {
+    const outcome = await executeApplyProposal(
+      { tool: "set_checkbox", ref, checked: true },
+      observationOf(page).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(outcome.kind).toBe("filled");
+  }
+  expect(toggle.mock.calls).toEqual([
+    ["c0", false],
+    ["c2", true],
+  ]);
+});
+
+test("conflicting hours produce review wording and never enter it before the person's decision", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        tagName: "textarea",
+        label: "Why this role?",
+        required: true,
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  const fill = vi.spyOn(hands, "fillText");
+  const observation = observationOf(page);
+  const wording =
+    "I can work 20–30 hours per week from Toronto. Can this role support those hours and location?";
+  const outcome = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "I am available full-time in Boston." },
+    observation.signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: () =>
+        Promise.resolve({
+          supported: false,
+          reason: "This job's hours and location conflict with your limits.",
+          reviewWording: wording,
+        }),
+    },
+  );
+  expect(fill).not.toHaveBeenCalled();
+  expect(outcome.kind).toBe("suggestion");
+  if (outcome.kind === "suggestion")
+    expect(outcome.question?.suggestedAnswers[0]).toMatchObject({
+      text: wording,
+      sourceKind: "prior_answer",
+      sourceId: "review.c0",
+    });
+});
+
+test("uncertain eligibility shows the posting and permit facts beside the question", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        tagName: "select",
+        label: "Are you authorized to work here?",
+        required: true,
+        options: ["Yes", "No"],
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.posting.location = "Berlin, Germany";
+  config.sources.profile.workEligibility.limitedWorkPermissions = [
+    {
+      country: "Germany",
+      conditions: "20 hours during term",
+      requiresFutureSponsorship: true,
+    },
+  ];
+  const select = vi.spyOn(hands, "chooseOption");
+  const observation = observationOf(page);
+  const outcome = await executeApplyProposal(
+    { tool: "select", ref: "c0", option: "No" },
+    observation.signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: () =>
+        Promise.resolve({
+          supported: false,
+          reason: "Germany's student permit may not cover this full-time job.",
+        }),
+    },
+  );
+  expect(select).not.toHaveBeenCalled();
+  expect(outcome.kind).toBe("suggestion");
+  if (outcome.kind === "suggestion") {
+    expect(outcome.question?.note).toContain("Berlin, Germany");
+    expect(outcome.question?.note).toContain("20 hours during term");
+    expect(outcome.question?.note).toContain("sponsorship needed later");
+  }
+});
+
+test.each([
+  ["file", "saved answer"],
+  ["text", "saved answer"],
+  ["file", "document library"],
+  ["text", "document library"],
+] as const)(
+  "uses a person's approved letter as %s from %s without asking again",
+  async (delivery, source) => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Cover letter",
+          inputType: delivery === "file" ? "file" : "text",
+          required: true,
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    config.application.applicationRecordId = "app";
+    const approvedText =
+      "I enjoy building dependable platforms. I can work 20 hours a week from Manchester.";
+    config.sources.reusableAnswers = [
+      {
+        id: "application_letter",
+        label: "Cover letter",
+        question: "Cover letter",
+        kind: "other",
+        answer: approvedText,
+        roleFamilies: [],
+        proofEntryIds: [],
+        applicationScope: {
+          resultId: "old_result",
+          applicationRecordId: "app",
+          location: null,
+        },
+      },
+    ];
+    if (source === "document library") {
+      config.sources.approvedLetterText = approvedText;
+      // The library letter wins over an older one-use answer.
+      config.sources.reusableAnswers = config.sources.reusableAnswers.map(
+        (answer) => ({ ...answer, answer: "Earlier letter" }),
+      );
+    }
+    if (source === "document library") {
+      const prompt = createApplyUserPrompt(config);
+      expect(prompt).toContain(approvedText);
+      expect(prompt).toContain(
+        "even when an earlier letter is already present",
+      );
+      expect(prompt).toContain("do not rewrite it or ask for approval again");
+    }
+    config.writing = {
+      coverLetterPolicy: "never",
+      writtenAnswerLength: "short",
+      preApprovedDeclarations: [],
+    };
+    const provide = vi.fn(
+      (
+        request: Parameters<
+          NonNullable<ApplyAgentConfig["letters"]>["provide"]
+        >[0],
+      ) =>
+        Promise.resolve({
+          ok: true as const,
+          text: request.approvedText ?? "",
+          document: {
+            id: "letter",
+            label: "Your letter",
+            fileName: "letter.pdf",
+            kind: "cover_letter" as const,
+            mimeType: "application/pdf",
+            loadBytes: () =>
+              Promise.resolve(new TextEncoder().encode(request.approvedText)),
+          },
+        }),
+    );
+    config.letters = {
+      preference: {
+        tone: "direct",
+        length: "short",
+        language: null,
+        sample: null,
+      },
+      provide,
+    };
+    const upload = vi.spyOn(hands, "uploadFile");
+    const fill = vi.spyOn(hands, "fillText");
+    const result = await executeApplyProposal(
+      delivery === "file"
+        ? { tool: "upload", ref: "c0", documentId: "letter" }
+        : { tool: "type", ref: "c0", text: "wrong model text" },
+      observationOf(page).signature,
+      { config, now, guardState: createApplyGuardState() },
+    );
+    expect(result.kind).toBe(delivery === "file" ? "attached" : "filled");
+    expect(provide).toHaveBeenCalledWith(
+      expect.objectContaining({ approvedText, delivery }),
+    );
+    if (delivery === "file")
+      expect(new TextDecoder().decode(upload.mock.calls[0][1].bytes)).toBe(
+        approvedText,
+      );
+    else expect(fill).toHaveBeenCalledWith("c0", approvedText);
+  },
+);
+
+test("an answer reused from another question names the saved answer it came from", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        label: "Why would you like this role?",
+        required: true,
+      }),
+    ],
+  });
+  const { config } = configFor(page);
+  config.sources.reusableAnswers = [
+    {
+      id: "saved_motivation",
+      label: "Platform work motivation",
+      question: "Why platform engineering?",
+      answer: "I enjoy building dependable platforms.",
+      kind: "other",
+      roleFamilies: [],
+      proofEntryIds: [],
+    },
+  ];
+  const outcome = await executeApplyProposal(
+    { tool: "type", ref: "c0", text: "I enjoy building dependable platforms." },
+    observationOf(page).signature,
+    { config, now, guardState: createApplyGuardState() },
+  );
+  expect(outcome.kind).toBe("filled");
+  if (outcome.kind === "filled")
+    expect(outcome.filled.answer.provenanceLabel).toBe(
+      'your saved answer "Platform work motivation"',
+    );
+});
+
+test("the model's hiring-country question cannot copy residence without a check", async () => {
+  const page = rawPage({
+    controls: [
+      rawControl({
+        index: 0,
+        tagName: "select",
+        label: "Where would you be employed?",
+        options: ["United Kingdom", "Canada"],
+        required: true,
+      }),
+    ],
+  });
+  const { config, hands } = configFor(page);
+  config.sources.profile.currentCountry = "United Kingdom";
+  const choose = vi.spyOn(hands, "chooseOption");
+  const check = vi.fn(async () => ({
+    supported: false,
+    reason: "Confirm which country will employ you for this role.",
+  }));
+  const outcome = await executeApplyProposal(
+    {
+      tool: "select",
+      ref: "c0",
+      option: "United Kingdom",
+      storedFactId: "profile.currentCountry",
+    },
+    observationOf(page).signature,
+    {
+      config,
+      now,
+      guardState: createApplyGuardState(),
+      checkWrittenAnswer: check,
+      classifyQuestions: async () =>
+        new Map([
+          [
+            "Where would you be employed?",
+            {
+              asksAboutPay: false,
+              asksHiringCountry: true,
+              declarationKind: null,
+            },
+          ],
+        ]),
+    },
+  );
+  expect(check).toHaveBeenCalledOnce();
+  expect(choose).not.toHaveBeenCalled();
+  expect(outcome.kind).toBe("suggestion");
+});
+
+test.each(["text", "file"] as const)(
+  "replaces the retained %s letter through the executor without sending",
+  async (delivery) => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Cover letter",
+          inputType: delivery === "file" ? "file" : "text",
+          value: "Earlier letter",
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    config.sources.approvedLetterText = "  My exact approved letter.\n";
+    config.letters = {
+      preference: {
+        tone: "direct",
+        length: "short",
+        language: null,
+        sample: null,
+      },
+      provide: async (request) => ({
+        ok: true,
+        text: request.approvedText!,
+        document: {
+          id: "approved",
+          kind: "cover_letter",
+          label: "Approved letter",
+          fileName: "approved.txt",
+          mimeType: "text/plain",
+          loadBytes: async () => new TextEncoder().encode(request.approvedText),
+        },
+      }),
+    };
+    const chatWithTools = vi.fn(async () => ({
+      toolCalls: [
+        {
+          id: "classify",
+          type: "function" as const,
+          function: {
+            name: "report_question_kinds",
+            arguments: JSON.stringify({
+              questions: [
+                { index: 0, asksAboutPay: false, declarationKind: null },
+              ],
+            }),
+          },
+        },
+      ],
+    }));
+    const fill = vi.spyOn(hands, "fillText");
+    const upload = vi.spyOn(hands, "uploadFile");
+    const click = vi.spyOn(hands, "clickAction");
+    const result = await replaceApprovedApplicationLetter({
+      config,
+      client: { chatWithTools },
+      fields: ["Cover letter"],
+    });
+    expect(result).not.toBeNull();
+    expect(chatWithTools).toHaveBeenCalledTimes(1);
+    if (delivery === "file")
+      expect(new TextDecoder().decode(upload.mock.calls[0]![1].bytes)).toBe(
+        config.sources.approvedLetterText,
+      );
+    else
+      expect(fill).toHaveBeenCalledWith(
+        "c0",
+        config.sources.approvedLetterText,
+      );
+    expect(click).not.toHaveBeenCalled();
+  },
+);
+
+test("does not guess a replacement when a recorded letter field is on another step", async () => {
+  const { config, hands } = configFor(rawPage({ controls: [] }));
+  const fill = vi.spyOn(hands, "fillText");
+  const result = await replaceApprovedApplicationLetter({
+    config,
+    client: { chatWithTools: vi.fn() },
+    fields: ["Cover letter"],
+  });
+  expect(result).toBeNull();
+  expect(fill).not.toHaveBeenCalled();
+});
+
+test("keeps a generated numeric suggestion's real source for later review", () => {
+  const control = observationOf(
+    rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Years of reporting experience",
+          inputType: "text",
+        }),
+      ],
+    }),
+  ).controls[0]!;
+  const question = buildPendingQuestion({
+    control,
+    jobId: "synthetic",
+    detectedAt: "2026-10-05T10:00:00Z",
+    suggestion: {
+      value: "0",
+      kind: control.questionKind,
+      sourceKind: "generated",
+      sourceId: "generated.reporting",
+      provenanceLabel: "your profile",
+      groundedIn: ["your profile"],
+    },
+  });
+  expect(question.suggestedAnswers[0]).toMatchObject({
+    sourceKind: "prior_answer",
+    provenance: [
+      {
+        sourceId: "generated.reporting",
+        label: "your profile",
+        sourceKind: "prior_answer",
+      },
+    ],
   });
 });

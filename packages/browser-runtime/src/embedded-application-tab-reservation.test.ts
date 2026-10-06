@@ -120,3 +120,69 @@ describe("embedded application tab reservation", () => {
     await expect(reservation).rejects.toBeTruthy();
   });
 });
+
+test("waiting forms release working slots without being closed", async () => {
+  const { context, pages } = fakeContext(
+    Array.from({ length: 12 }, (_, i) => `https://jobs.example/apply/${i}`),
+  );
+  const release = await reserveEmbeddedApplicationTab(
+    context,
+    undefined,
+    undefined,
+    undefined,
+    () => 12,
+    () => 2,
+  );
+  expect(pages.every((page) => !page.isClosed())).toBe(true);
+  release();
+});
+
+test("the total cap still holds even when every form is waiting", async () => {
+  const { context, pages } = fakeContext(
+    Array.from({ length: 15 }, (_, i) => `https://jobs.example/apply/${i}`),
+  );
+  const controller = new AbortController();
+  const reservation = reserveEmbeddedApplicationTab(
+    context,
+    controller.signal,
+    undefined,
+    () => undefined,
+    () => 15,
+    () => 0,
+  );
+  controller.abort();
+  await expect(reservation).rejects.toBeTruthy();
+  expect(pages.every((page) => !page.isClosed())).toBe(true);
+});
+
+test("memory pressure queues a new form without losing waiting tabs and wakes when capacity returns", async () => {
+  vi.useFakeTimers();
+  try {
+    const { context, pages } = fakeContext(["https://jobs.example/apply/1"]);
+    let capacity = false;
+    let settled = false;
+    const waiting = vi.fn();
+    const reservation = reserveEmbeddedApplicationTab(
+      context,
+      undefined,
+      undefined,
+      waiting,
+      () => 1,
+      () => 0,
+      () => capacity,
+    ).then((release) => {
+      settled = true;
+      return release;
+    });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(settled).toBe(false);
+    expect(waiting).toHaveBeenCalledOnce();
+    expect(pages[0]!.isClosed()).toBe(false);
+    capacity = true;
+    await vi.advanceTimersByTimeAsync(250);
+    expect(settled).toBe(true);
+    (await reservation)();
+  } finally {
+    vi.useRealTimers();
+  }
+});

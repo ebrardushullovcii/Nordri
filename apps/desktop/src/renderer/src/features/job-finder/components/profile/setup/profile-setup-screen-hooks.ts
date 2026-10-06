@@ -379,6 +379,17 @@ export function useProfileSetupForms(input: {
     defaultValues: createSearchPreferencesEditorValues(input.searchPreferences),
   });
 
+  const ownSaveRef = useRef<{
+    profile: CandidateProfile | null;
+    preferences: JobSearchPreferences | null;
+  }>({ profile: null, preferences: null });
+  const markOwnSave = (
+    profile: CandidateProfile,
+    preferences: JobSearchPreferences,
+  ) => {
+    ownSaveRef.current = { profile, preferences };
+  };
+
   // Raised only around this hook's own canonical reseeds as defense in depth
   // for synchronous reset notifications; the name filter below carries the
   // primary semantics.
@@ -420,6 +431,7 @@ export function useProfileSetupForms(input: {
       ) {
         return;
       }
+      ownSaveRef.current = { profile: null, preferences: null };
       input.onDraftEdited?.();
     });
     const unsubscribePreferences = preferencesForm.watch((_values, info) => {
@@ -430,6 +442,7 @@ export function useProfileSetupForms(input: {
       ) {
         return;
       }
+      ownSaveRef.current = { profile: null, preferences: null };
       input.onDraftEdited?.();
     });
 
@@ -486,6 +499,7 @@ export function useProfileSetupForms(input: {
   ): TFieldArray =>
     wrapFieldArrayStructuralMutators(fieldArray, () => {
       if (!suppressDraftEditSignalRef.current) {
+        ownSaveRef.current = { profile: null, preferences: null };
         input.onDraftEdited?.();
       }
     });
@@ -693,9 +707,32 @@ export function useProfileSetupForms(input: {
         .filter((payload) => payload !== undefined)
         .map((payload) => buildComparableValueFingerprint(payload)),
     );
+    const ownProfile = ownSaveRef.current.profile;
+    const ownProfileOverlay = ownProfile
+      ? mergeDirtyEditorValues(
+          createProfileEditorValues(
+            input.profile,
+            input.latestResumeImportReviewCandidates,
+          ),
+          createProfileEditorValues(
+            ownProfile,
+            input.latestResumeImportReviewCandidates,
+          ),
+          profileForm.formState.dirtyFields,
+        )
+      : null;
     const isSavedProfileDraftEcho =
       profileForm.formState.isDirty &&
-      savedDraftEchoFingerprints.has(incomingProfileFingerprint);
+      (savedDraftEchoFingerprints.has(incomingProfileFingerprint) ||
+        (profileChangedSinceSeen &&
+          ownProfileOverlay?.status === "merged" &&
+          buildComparableValueFingerprint(ownProfileOverlay.value) ===
+            buildComparableValueFingerprint(
+              createProfileEditorValues(
+                input.profile,
+                input.latestResumeImportReviewCandidates,
+              ),
+            )));
 
     // Seen/pending trackers advance on every path; loaded fingerprints and
     // the save baseline only advance when a form actually adopts content.
@@ -705,6 +742,7 @@ export function useProfileSetupForms(input: {
     pendingCanonicalProfileRef.current = input.profile;
 
     if (isSavedProfileDraftEcho) {
+      ownSaveRef.current.profile = null;
       latestProfileRef.current = input.profile;
       loadedProfileContentFingerprintRef.current = incomingProfileFingerprint;
       loadedReviewCandidatesContentFingerprintRef.current =
@@ -822,15 +860,30 @@ export function useProfileSetupForms(input: {
         .filter((payload) => payload !== undefined)
         .map((payload) => buildComparableValueFingerprint(payload)),
     );
+    const ownPreferences = ownSaveRef.current.preferences;
+    const ownPreferencesOverlay = ownPreferences
+      ? mergeDirtyEditorValues(
+          createSearchPreferencesEditorValues(input.searchPreferences),
+          createSearchPreferencesEditorValues(ownPreferences),
+          preferencesForm.formState.dirtyFields,
+        )
+      : null;
     const isSavedPreferencesDraftEcho =
       preferencesForm.formState.isDirty &&
-      savedPreferencesEchoFingerprints.has(incomingPreferencesFingerprint);
+      (savedPreferencesEchoFingerprints.has(incomingPreferencesFingerprint) ||
+        (preferencesChangedSinceSeen &&
+          ownPreferencesOverlay?.status === "merged" &&
+          buildComparableValueFingerprint(ownPreferencesOverlay.value) ===
+            buildComparableValueFingerprint(
+              createSearchPreferencesEditorValues(input.searchPreferences),
+            )));
 
     seenSearchPreferencesContentFingerprintRef.current =
       incomingPreferencesFingerprint;
     pendingCanonicalSearchPreferencesRef.current = input.searchPreferences;
 
     if (isSavedPreferencesDraftEcho) {
+      ownSaveRef.current.preferences = null;
       latestSearchPreferencesRef.current = input.searchPreferences;
       loadedSearchPreferencesContentFingerprintRef.current =
         incomingPreferencesFingerprint;
@@ -951,6 +1004,7 @@ export function useProfileSetupForms(input: {
 
   return {
     backgroundArrays,
+    markOwnSave,
     backgroundMergeNotice,
     discardEditsAndReloadCanonical,
     draftAwareReviewItems,

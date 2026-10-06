@@ -204,7 +204,9 @@ describe("DiscoveryResultsPanel triage filters", () => {
     first.focus();
     fireEvent.keyDown(first, { key: " " });
     fireEvent.click(first);
-    fireEvent.click(screen.getByRole("button", { name: /^Shortlist \d+ selected$/u }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Shortlist \d+ selected$/u }),
+    );
     expect(onShortlistJobs).toHaveBeenCalledWith(["one"]);
 
     unmount();
@@ -220,10 +222,44 @@ describe("DiscoveryResultsPanel triage filters", () => {
         selectedJob={null}
       />,
     );
+    // Bulk actions appear only while a row is ticked, in place of the
+    // toolbar, so ticking a row never moves the list.
+    expect(
+      screen.queryByRole("group", { name: "Bulk shortlist actions" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Select Engineer two" }),
+    );
+    const bar = screen.getByRole("group", { name: "Bulk shortlist actions" });
+    expect(bar.textContent).toContain("1 selected");
+    expect(screen.queryByRole("searchbox")).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Shortlist all 2 shown" }),
     );
     expect(onShortlistJobs).toHaveBeenCalledWith(["one", "two"]);
+  });
+
+  it("clears the selection and brings the search toolbar back", () => {
+    render(
+      <DiscoveryResultsPanel
+        browserSession={browserSession}
+        discoveryTargets={[primarySource, longSource]}
+        hasCompletedSearch
+        jobs={[createJob("one", "strong_fit", ["remote"], primarySource)]}
+        onSelectJob={vi.fn()}
+        onShortlistJobs={vi.fn()}
+        selectedJob={null}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Select Engineer one" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(
+      screen.queryByRole("group", { name: "Bulk shortlist actions" }),
+    ).toBeNull();
+    expect(screen.getByRole("searchbox")).toBeTruthy();
   });
 
   it("combines categories with AND and selections within a category with OR", () => {
@@ -256,7 +292,7 @@ describe("DiscoveryResultsPanel triage filters", () => {
         ),
         (button) => button.dataset.jobResultId,
       ),
-    ).toEqual(["strong-remote", "review-remote"]);
+    ).toEqual(["review-remote", "strong-remote"]);
   });
 
   it("shows a truthful no-results state and clears every filter", () => {
@@ -319,8 +355,15 @@ describe("DiscoveryResultsPanel triage filters", () => {
 
     const groups = screen.getByTestId("discovery-results-filter-groups");
     expect(groups.querySelectorAll("fieldset")).toHaveLength(1);
+    expect(groups.className).not.toContain("max-h-40");
+    // The filters open in the header row above the list, so a long source
+    // list scrolls inside its own bounded box instead of pushing the list
+    // out of view.
+    expect(groups.closest("header")).toBeTruthy();
+    expect(groups.className).toContain("overflow-y-auto");
+    expect(groups.className).toContain("max-h-[min(22rem,45dvh)]");
     expect(groups.className).toContain(
-      "grid-cols-[repeat(auto-fit,minmax(15rem,1fr))]",
+      "grid-cols-[repeat(auto-fit,minmax(12rem,1fr))]",
     );
     expect(groups.className).not.toContain("xl:grid-cols-4");
   });

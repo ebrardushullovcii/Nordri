@@ -707,7 +707,7 @@ describe("buildJobFinderTaskCenterModel", () => {
     expect(durationMs).toBeLessThan(500);
   });
 
-  test("marks a persisted nonterminal resume run interrupted after restart instead of pretending it is active", () => {
+  test("keeps a persisted running import active after navigation clears the local pending flag", () => {
     const run = {
       id: "resume_stale",
       sourceResumeId: "resume_1",
@@ -730,10 +730,10 @@ describe("buildJobFinderTaskCenterModel", () => {
     });
     const task = findTask(model, "resume_import");
 
-    expect(task.status).toBe("interrupted");
-    expect(task.stageLabel).toBe("Import interrupted");
+    expect(task.status).toBe("active");
+    expect(task.stageLabel).toBe("Building profile suggestions");
     expect(task.canCancel).toBe(false);
-    expect(task.resumeRoute).toBe("/job-finder/profile");
+    expect(task.resumeRoute).toBeNull();
     expect(task.historyEstimateLabel).toBeNull();
   });
 
@@ -1705,3 +1705,28 @@ test.each([
     expect(findTask(model, "apply").stageLabel).toBe(label);
   },
 );
+
+test("keeps other running batches visible when the newest batch was cancelled", () => {
+  const model = buildJobFinderTaskCenterModel({
+    workspace: createWorkspace({
+      applyRuns: [
+        createApplyRun({
+          id: "cancelled",
+          state: "cancelled",
+          pendingJobs: 0,
+          updatedAt: "2026-07-31T11:00:00Z",
+        }),
+        createApplyRun({ id: "running_a" }),
+        createApplyRun({ id: "running_b" }),
+      ],
+    }),
+    isDiscoveryPending: false,
+    isResumeImportPending: false,
+  });
+  expect(model.activeCount).toBe(2);
+  expect(
+    model.items
+      .filter((item) => item.status === "active")
+      .map((item) => item.id),
+  ).toEqual(["running_a", "running_b"]);
+});

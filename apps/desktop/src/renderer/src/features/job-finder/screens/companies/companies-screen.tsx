@@ -405,6 +405,7 @@ export function CompaniesScreen(props: CompaniesScreenProps) {
             <Button
               onClick={handleRefresh}
               pending={props.isRefreshPending}
+              size="sm"
               type="button"
               variant="secondary"
             >

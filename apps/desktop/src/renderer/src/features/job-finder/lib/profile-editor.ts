@@ -1,3 +1,4 @@
+import { normalizePublicLinkUrl } from "@nordri/contracts";
 import {
   candidateAnswerKindValues,
   CandidateProfileSchema,
@@ -13,7 +14,10 @@ import type {
   ProofBankEntryFormEntry,
   ReusableAnswerFormEntry,
 } from "./job-finder-types";
-import { deriveJobSourceLabel } from "./job-source-display-name";
+import {
+  deriveJobSourceLabel,
+  isGeneratedJobSourceLabel,
+} from "./job-source-display-name";
 import {
   booleanToSelect,
   buildFullName,
@@ -193,8 +197,9 @@ function toDiscoveryTargets(
     const label = target.label.trim();
     const keptGeneratedLabel =
       startingUrlChanged &&
-      persistedTarget?.label.trim() ===
-        deriveJobSourceLabel(persistedTarget.startingUrl);
+      persistedTarget !== undefined &&
+      label === persistedTarget.label.trim() &&
+      isGeneratedJobSourceLabel(label, persistedTarget.startingUrl);
 
     return {
       instructionStatus: startingUrlChanged ? "missing" : instructionStatus,
@@ -261,10 +266,14 @@ function toReusableAnswerFormEntries(
 ): ReusableAnswerFormEntry[] {
   return profile.answerBank.customAnswers.map((entry) => ({
     id: entry.id,
+    ...(entry.needsConfirmation ? { needsConfirmation: true } : {}),
     label: entry.label,
     question: entry.question,
     answer: entry.answer,
     kind: entry.kind,
+    ...(entry.applicationScope
+      ? { applicationScope: entry.applicationScope }
+      : {}),
     roleFamilies: joinListInput(entry.roleFamilies),
     proofEntryIds: joinListInput(entry.proofEntryIds),
   }));
@@ -319,9 +328,17 @@ export function createProfileEditorValues(
       secondaryEmail: profile.secondaryEmail ?? "",
       summary: profile.summary ?? "",
       timeZone: profile.timeZone ?? "",
-      yearsExperience: String(profile.yearsExperience),
+      yearsExperience: profile.yearsExperience?.toString() ?? "",
     },
     eligibility: {
+      limitedWorkPermissions: (
+        profile.workEligibility.limitedWorkPermissions ?? []
+      ).map((permission) => ({
+        ...permission,
+        requiresFutureSponsorship: booleanToSelect(
+          permission.requiresFutureSponsorship,
+        ),
+      })),
       authorizedWorkCountries: joinListInput(
         profile.workEligibility.authorizedWorkCountries,
       ),
@@ -369,7 +386,9 @@ export function createProfileEditorValues(
       nextChapterSummary: profile.narrative.nextChapterSummary ?? "",
       professionalStory: profile.narrative.professionalStory ?? "",
     },
-    profileSkills: joinListInput(profile.skills),
+    profileSkills: joinListInput(
+      profile.skills.map((skill) => skill.replace(/\.+$/u, "")),
+    ),
     proofBank: toProofBankFormEntries(profile),
     projects: toProjectFormEntries(profile),
     records: {
@@ -409,10 +428,16 @@ export function createSearchPreferencesEditorValues(
     collectOnlyHardCriteriaMatches:
       searchPreferences.discovery.collectOnlyHardCriteriaMatches ?? false,
     employmentTypes: joinListInput(searchPreferences.employmentTypes),
+    shiftPreference: searchPreferences.shiftPreference ?? "any",
+    minimumWeeklyHours:
+      searchPreferences.weeklyHours?.minimum?.toString() ?? "",
+    maximumWeeklyHours:
+      searchPreferences.weeklyHours?.maximum?.toString() ?? "",
     excludedLocations: joinListInput(searchPreferences.excludedLocations),
     jobFamilies: joinListInput(searchPreferences.jobFamilies),
     locations: joinListInput(searchPreferences.locations),
     minimumSalaryUsd: searchPreferences.compensation.minimum?.toString() ?? "",
+    compensationBasis: searchPreferences.compensation.basis ?? "base",
     compensationInterval: searchPreferences.compensation.interval,
     salaryCurrency: searchPreferences.compensation.currency ?? "",
     seniorityLevels: joinListInput(searchPreferences.seniorityLevels),
@@ -491,6 +516,14 @@ export function buildProfilePayload(
     }
   }
 
+  for (const link of values.links) {
+    const message = getProfileLinkValidationMessage(
+      link.url,
+      link.label.trim() || "Public link",
+    );
+    if (message) return { validationMessage: message };
+  }
+
   const incompleteRowMessage =
     findIncompleteRowMessage(
       values.projects,
@@ -562,7 +595,10 @@ export function buildProfilePayload(
   const parsedYearsExperience = parseRequiredNonNegativeInteger(
     values.identity.yearsExperience,
   );
-  if (parsedYearsExperience === null) {
+  if (
+    parsedYearsExperience === null &&
+    values.identity.yearsExperience.trim() !== ""
+  ) {
     return {
       validationMessage:
         "Years of experience must be a whole number greater than or equal to 0.",
@@ -616,7 +652,9 @@ export function buildProfilePayload(
   // resurrect a skill the user deleted from this field just because it also
   // appears in a skill group. Downstream consumers that need the full skill
   // pool derive that union themselves from `skills` plus `skillGroups`.
-  const mainSkills = parseListInput(values.profileSkills);
+  const mainSkills = parseListInput(values.profileSkills).map((skill) =>
+    skill.replace(/\.+$/u, ""),
+  );
   const dedupedExperienceEntries = dedupeImportCandidatesByFingerprint(
     values.records.experiences.filter((entry) =>
       shouldPersistReviewCandidateEntry({
@@ -710,7 +748,7 @@ export function buildProfilePayload(
     email: values.identity.email.trim() || null,
     secondaryEmail: values.identity.secondaryEmail.trim() || null,
     phone: values.identity.phone.trim() || null,
-    portfolioUrl: values.identity.portfolioUrl.trim() || null,
+    portfolioUrl: normalizePublicLinkUrl(values.identity.portfolioUrl) || null,
     linkedinUrl: values.identity.linkedinUrl.trim() || null,
     githubUrl: values.identity.githubUrl.trim() || null,
     personalWebsiteUrl: values.identity.personalWebsiteUrl.trim() || null,
@@ -719,6 +757,19 @@ export function buildProfilePayload(
       textContent: values.identity.resumeText.trim() || null,
     },
     workEligibility: {
+      ...(values.eligibility.limitedWorkPermissions.length > 0 ||
+      profile.workEligibility.limitedWorkPermissions
+        ? {
+            limitedWorkPermissions:
+              values.eligibility.limitedWorkPermissions.map((permission) => ({
+                country: permission.country.trim(),
+                conditions: permission.conditions.trim(),
+                requiresFutureSponsorship: selectToBoolean(
+                  permission.requiresFutureSponsorship,
+                ),
+              })),
+          }
+        : {}),
       authorizedWorkCountries: parseListInput(
         values.eligibility.authorizedWorkCountries,
       ),
@@ -756,6 +807,7 @@ export function buildProfilePayload(
         .filter((entry) => entry.question.trim() && entry.answer.trim())
         .map((entry) => ({
           id: entry.id,
+          ...(entry.needsConfirmation ? { needsConfirmation: true } : {}),
           kind: candidateAnswerKindValues.includes(entry.kind)
             ? entry.kind
             : "other",
@@ -764,6 +816,9 @@ export function buildProfilePayload(
           answer: entry.answer.trim(),
           roleFamilies: parseTokenListInput(entry.roleFamilies),
           proofEntryIds: parseListInput(entry.proofEntryIds),
+          ...(entry.applicationScope
+            ? { applicationScope: entry.applicationScope }
+            : {}),
         })),
     },
     professionalSummary: {
@@ -819,7 +874,7 @@ export function buildProfilePayload(
     links: values.links.map((entry) => ({
       id: entry.id,
       label: entry.label.trim() || null,
-      url: entry.url.trim() || null,
+      url: normalizePublicLinkUrl(entry.url) || null,
       kind: entry.kind ? entry.kind : null,
       isDraft: !entry.label.trim() || !entry.url.trim(),
     })),
@@ -974,17 +1029,45 @@ export function buildSearchPreferencesPayload(
     targetIndustries: parseListInput(values.targetIndustries),
     targetCompanyStages: parseListInput(values.targetCompanyStages),
     employmentTypes: parseListInput(values.employmentTypes),
+    ...(values.shiftPreference !== "any" || searchPreferences.shiftPreference
+      ? { shiftPreference: values.shiftPreference }
+      : {}),
+    ...(values.minimumWeeklyHours.trim() ||
+    values.maximumWeeklyHours.trim() ||
+    searchPreferences.weeklyHours
+      ? {
+          weeklyHours: {
+            minimum: values.minimumWeeklyHours.trim()
+              ? Number(values.minimumWeeklyHours)
+              : null,
+            maximum: values.maximumWeeklyHours.trim()
+              ? Number(values.maximumWeeklyHours)
+              : null,
+          },
+        }
+      : {}),
     minimumSalaryUsd: parsedMinimumSalaryUsd,
     targetSalaryUsd: parsedTargetSalaryUsd,
     salaryCurrency: compensationCurrency,
     compensation: preserveBaselineCompensation
-      ? values.compensationInterval === searchPreferences.compensation.interval
+      ? values.compensationInterval ===
+          searchPreferences.compensation.interval &&
+        values.compensationBasis ===
+          (searchPreferences.compensation.basis ?? "base")
         ? searchPreferences.compensation
         : {
             ...searchPreferences.compensation,
+            ...(values.compensationBasis !== "base" ||
+            searchPreferences.compensation.basis
+              ? { basis: values.compensationBasis }
+              : {}),
             interval: values.compensationInterval,
           }
       : {
+          ...(values.compensationBasis !== "base" ||
+          searchPreferences.compensation.basis
+            ? { basis: values.compensationBasis }
+            : {}),
           minimum: parsedMinimumSalaryUsd,
           maximum: parsedTargetSalaryUsd,
           interval: values.compensationInterval,

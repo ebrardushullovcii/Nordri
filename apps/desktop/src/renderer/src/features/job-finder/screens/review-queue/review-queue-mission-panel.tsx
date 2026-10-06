@@ -1,3 +1,6 @@
+import { joinUniqueSentences } from "../../lib/sentence-copy";
+import { StatusBadge } from "../../components/status-badge";
+import { fitRecommendationCopy } from "../../lib/match-assessment-presentation";
 import { Check, ChevronDown, Pencil } from "lucide-react";
 import { useCallback, useRef } from "react";
 import type {
@@ -303,10 +306,18 @@ export function ReviewQueueMissionPanel({
   // A draft that kept the original wording because the listing body was never
   // captured is presented as the original-resume path, whatever the job's
   // saved choice says.
-  const untailorableListing = describeUntailorableListing(selectedAsset);
+  const untailorableListing =
+    selectedItem?.resumeApplicationMode === "original_resume"
+      ? null
+      : describeUntailorableListing(selectedAsset);
   const untailorableListingReasonId = "resume-choice-untailorable-listing";
   const resumeChoiceFieldset = selectedItem ? (
     <div className="grid gap-2">
+      <p className="text-xs text-foreground-muted">
+        {selectedItem.assetStatus === "ready"
+          ? "Choosing another level writes a new draft. Original uses your file unchanged."
+          : "Choose a level, then create the resume."}
+      </p>
       <div
         aria-describedby={
           untailorableListing ? untailorableListingReasonId : undefined
@@ -443,9 +454,12 @@ export function ReviewQueueMissionPanel({
             className="text-(length:--text-small) leading-5 text-foreground-muted"
             role="note"
           >
-            {originalResume.fileName} goes out exactly as imported. Check it for
-            details you would not share with every employer, such as a home
-            address or date of birth.
+            {originalResume.fileName} goes out with its content unchanged.{" "}
+            {/\.md$/iu.test(originalResume.fileName)
+              ? "Forms that accept plain text receive an unchanged .txt copy. "
+              : ""}
+            Check it for details you would not share with every employer, such
+            as a home address or date of birth.
           </p>
         ) : null}
       </div>
@@ -499,7 +513,7 @@ export function ReviewQueueMissionPanel({
         {!existingApplication && primaryApplicationAction.blocker ? (
           primaryApplicationAction.blockerTone === "info" ? (
             <p
-              className="min-w-0 break-words rounded-(--radius-small) border border-(--info-border) bg-(--info-surface) px-3 py-2 text-(length:--text-small) leading-5 text-(--info-text)"
+              className="min-w-0 break-words text-(length:--text-small) leading-5 text-foreground-muted"
               role="status"
             >
               {primaryApplicationAction.blocker}
@@ -517,6 +531,42 @@ export function ReviewQueueMissionPanel({
           className="flex min-w-0 flex-wrap items-center gap-2"
           data-testid="application-action-row"
         >
+          {selectedJob.matchAssessment.recommendation === "skip" ? (
+            <StatusBadge tone={fitRecommendationCopy.skip.tone}>
+              {fitRecommendationCopy.skip.label}
+            </StatusBadge>
+          ) : null}
+          {selectedJob.matchAssessment.recommendation === "skip" ||
+          selectedJob.matchAssessment.locationReach === "outside_area" ||
+          selectedJob.matchAssessment.dimensions?.preferenceAlignment.state ===
+            "conflict" ||
+          selectedJob.matchAssessment.dimensions?.preferenceAlignment.state ===
+            "mixed" ? (
+            <span
+              className="text-(length:--text-small) text-foreground-soft"
+              data-testid="queue-suitability-warning"
+            >
+              {selectedJob.matchAssessment.recommendation === "skip"
+                ? selectedJob.matchAssessment.recommendationRationale
+                : selectedJob.matchAssessment.dimensions?.preferenceAlignment
+                    .explanation}
+              {selectedJob.matchAssessment.gaps.length > 0
+                ? ` ${selectedJob.matchAssessment.gaps.join(" ")}`
+                : ""}
+            </span>
+          ) : null}
+          {selectedJob.matchAssessment.judgment?.source === "full" &&
+          selectedJob.matchAssessment.recommendation !== "skip" &&
+          selectedJob.matchAssessment.recommendationRationale ? (
+            <p
+              className="basis-full text-(length:--text-small) text-foreground-soft"
+              data-testid="queue-full-assessment-reason"
+            >
+              {joinUniqueSentences([
+                selectedJob.matchAssessment.recommendationRationale,
+              ])}
+            </p>
+          ) : null}
           {existingApplication ? (
             <Button
               className="h-11 w-fit max-w-full justify-start px-5 text-sm font-semibold normal-case tracking-normal"
@@ -672,9 +722,14 @@ export function ReviewQueueMissionPanel({
         >
           Open the listing
         </Button>
+        {isGenerating ? (
+          <p className="text-xs text-foreground-muted">
+            Removing this job stops the draft from being saved. An AI request
+            already running may finish.
+          </p>
+        ) : null}
         <Button
           className={quietActionClassName}
-          disabled={isSelectedJobPending}
           onClick={() => onRemoveReviewJob(selectedItem.jobId)}
           size="compact"
           type="button"

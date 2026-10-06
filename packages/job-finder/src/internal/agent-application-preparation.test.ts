@@ -1,6 +1,8 @@
 import type { LLMClient } from "@nordri/browser-agent";
 import {
   ApplicationAuthorityEnvelopeSchema,
+  AiBehaviorPreferenceSchema,
+  ApplicationReviewCardSchema,
   serializeApplicationAuthorityDecisionPolicyForDigest,
 } from "@nordri/contracts";
 import { createHash } from "node:crypto";
@@ -13,6 +15,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import {
   buildApplyReviewCard,
+  mergeApplyReviewCards,
   createApplyFormPreparer,
   resolveApplicationDocumentMimeType,
   resolveApplicationPreparationTarget,
@@ -164,7 +167,9 @@ function rawPage(bodyText: string): RawApplyPage {
         selectedOptionLabel: "",
       },
     ],
-    actions: [],
+    actions: [
+      { index: 0, label: "Send application", visible: true, disabled: false },
+    ],
     links: [],
     headings: [],
     clickables: [],
@@ -453,59 +458,6 @@ describe("agent application preparation seam", () => {
     expect(result.replay.checkpointUrls[0]).toBe(liveWizardUrl);
   });
 
-  test("shows the model's report and the open experience gap without marking preparation ready", async () => {
-    const facts = executionInput();
-    facts.profile = CandidateProfileSchema.parse({
-      ...facts.profile,
-      experiences: [
-        {
-          id: "signal",
-          companyName: "Signal Systems",
-          title: "Engineer",
-          startDate: "2014-01",
-          isCurrent: true,
-        },
-      ],
-    });
-    const source = rawPage("My Experience. Resume attached.");
-    source.controls = [];
-    source.headings = [{ level: 2, text: "My Experience" }];
-    source.actions = [
-      { index: 0, label: "Add", visible: true, disabled: false },
-    ];
-    const openSession = session();
-    openSession.readPage = () => Promise.resolve(source);
-    const modelReason =
-      "I left the employer's optional work rows empty and kept the resume attached.";
-    const llmClient = modelThatFinishes(modelReason);
-    let reviewCard: ReturnType<typeof buildApplyReviewCard> | null = null;
-    const result = await runAgentApplicationPreparation({
-      session: openSession,
-      executionInput: facts,
-      llmClient,
-      startedAt: "2026-09-14T10:00:00.000Z",
-      siteLabel: "the careers site",
-      now: () => new Date("2026-09-14T10:05:00.000Z"),
-      onPrepared: (prepared) => {
-        reviewCard = prepared.reviewCard;
-      },
-    });
-    expect(result.state).toBe("paused");
-    expect(result.summary).toContain(modelReason);
-    expect(result.detail).toContain("Structured work history is incomplete");
-    expect(result.blocker).toBeNull();
-    expect(
-      result.checkpoints.some((checkpoint) =>
-        checkpoint.detail.includes("Structured work history is incomplete"),
-      ),
-    ).toBe(true);
-    expect(reviewCard).toMatchObject({
-      waitingOnYou: [
-        expect.stringContaining("Structured work history is incomplete"),
-      ],
-    });
-  });
-
   test("a finished prepare-only run becomes a ready record that says nothing was sent", async () => {
     const openSession = session();
     const installPrepareOnlyGuard = vi.spyOn(
@@ -526,12 +478,28 @@ describe("agent application preparation seam", () => {
       intermediateMutationsAuthorized: false,
       allowedOrigins: [],
     });
+    expect(result.agentTiming?.modelTurns).toBeGreaterThan(0);
+    expect(result.agentTiming?.pageReads).toBeGreaterThan(0);
+    expect(result.agentTiming?.totalMs).toBe(0);
     expect(result.state).toBe("ready");
     expect(result.submittedAt).toBeNull();
     expect(result.outcome).toBeNull();
     expect(result.detail).toContain("nothing was sent");
     expect(result.blocker).toBeNull();
     expect(result.replay.lastUrl).toBe(PAGE_URL);
+  });
+
+  test("preserves an observed closure as a terminal listing blocker", async () => {
+    const result = await runAgentApplicationPreparation({
+      session: session("This job is no longer accepting applications"),
+      executionInput: executionInput(),
+      llmClient: modelThatFinishes(),
+      startedAt: "2026-09-14T10:00:00.000Z",
+      siteLabel: "the careers site",
+      now: () => new Date("2026-09-14T10:05:00.000Z"),
+    });
+    expect(result.blocker?.code).toBe("application_closed");
+    expect(result.state).toBe("failed");
   });
 
   test("a sign-in wall the model reports becomes the record's blocker", async () => {
@@ -779,6 +747,7 @@ describe("the review card shown before you press send", () => {
     expect(card.answers[0]).toMatchObject({
       question: "Email",
       source: "your email address",
+      sourceId: "profile.email",
       written: false,
     });
     expect(card.answers[1]?.written).toBe(true);
@@ -905,7 +874,29 @@ describe("each mode, end to end through the seam", () => {
   function completingModel(): LLMClient {
     let calls = 0;
     return {
-      chatWithTools: () => {
+      chatWithTools: (_messages, tools) => {
+        // The page's questions are classified in their own call (ADR 0041);
+        // the email field is neither a pay question nor a declaration.
+        if (
+          tools?.some((tool) => tool.function.name === "report_question_kinds")
+        ) {
+          return Promise.resolve({
+            toolCalls: [
+              {
+                id: "call_kinds",
+                type: "function" as const,
+                function: {
+                  name: "report_question_kinds",
+                  arguments: JSON.stringify({
+                    questions: [
+                      { index: 0, asksAboutPay: false, declarationKind: null },
+                    ],
+                  }),
+                },
+              },
+            ],
+          });
+        }
         calls += 1;
         // Answer the one field, say the form is complete, then finish.
         const name =
@@ -1054,18 +1045,14 @@ describe("questions and failures reaching the record", () => {
     };
   }
 
+  /** Answers nothing it has no facts for, and says it is done. */
   function modelThatTriesBothThenFinishes(): LLMClient {
     let calls = 0;
     return {
       chatWithTools: () => {
         calls += 1;
-        const name = calls <= 2 ? "suggest_answer" : "finish";
-        const args =
-          calls === 1
-            ? { ref: "c0" }
-            : calls === 2
-              ? { ref: "c1" }
-              : { reason: "Nothing left to fill in" };
+        const name = "finish";
+        const args = { reason: "Nothing left to fill in" };
         return Promise.resolve({
           toolCalls: [
             {
@@ -1366,3 +1353,806 @@ describe("toApplyDocuments", () => {
     ]);
   });
 });
+
+test("a handback adds answers while retaining contacts, generated text and exact attachments", () => {
+  const card = buildApplyReviewCard({
+    siteLabel: "Synthetic employer",
+    preparedAt: "2026-09-14T10:05:00.000Z",
+    result: {
+      outcome: "prepared",
+      reason: "Ready.",
+      steps: 1,
+      finalUrl: null,
+      filled: [],
+      attachments: [],
+      pauses: [],
+      notes: [],
+      timeline: [],
+      modelTurns: 0,
+      readyToSend: null,
+    },
+  });
+  const contact = {
+    question: "Email",
+    answer: "robin@example.test",
+    source: "your email address",
+    written: false,
+    groundedIn: [],
+  };
+  const written = {
+    question: "Why this job?",
+    answer: "I build dependable platforms.",
+    source: "this application",
+    written: true,
+    groundedIn: ["your profile"],
+  };
+  const previous = {
+    ...card,
+    answers: [contact, written],
+    attachments: [
+      { label: "Your CV", field: "Resume", fileName: "original.docx" },
+    ],
+    waitingOnYou: ["Authorization"],
+  };
+  const current = {
+    ...card,
+    answers: [
+      {
+        question: "Authorization",
+        answer: "No",
+        source: "your answer to this question",
+        written: false,
+        groundedIn: [],
+      },
+    ],
+    attachments: [
+      { label: "Your CV", field: "Resume", fileName: "approved.pdf" },
+    ],
+  };
+  const merged = mergeApplyReviewCards(previous, current);
+  expect(merged?.answers).toEqual([contact, written, current.answers[0]]);
+  expect(merged?.attachments).toEqual(current.attachments);
+  expect(merged?.waitingOnYou).toEqual([]);
+});
+
+test("continued observations preserve generated provenance and distinct equal-worded fields", () => {
+  const base = buildApplyReviewCard({
+    siteLabel: "Synthetic employer",
+    preparedAt: "2026-09-14T10:05:00.000Z",
+    result: {
+      outcome: "prepared",
+      reason: "Ready.",
+      steps: 1,
+      finalUrl: null,
+      filled: [],
+      attachments: [],
+      pauses: [],
+      notes: [],
+      timeline: [],
+      modelTurns: 0,
+      readyToSend: null,
+    },
+  });
+  const previous = {
+    ...base,
+    answers: [
+      {
+        fieldKey: "https://example.test/form|Work|c0|Description",
+        question: "Description",
+        answer: "First role.",
+        written: true,
+        source: "this application",
+        groundedIn: ["your profile"],
+      },
+      {
+        fieldKey: "https://example.test/form|Work|c1|Description",
+        question: "Description",
+        answer: "Second role.",
+        written: true,
+        source: "this application",
+        groundedIn: ["your profile"],
+      },
+    ],
+  };
+  const current = {
+    ...base,
+    answers: [
+      previous.answers[0]!,
+      {
+        ...previous.answers[1]!,
+        written: false,
+        source: "the filled application form",
+      },
+    ],
+  };
+  expect(mergeApplyReviewCards(previous, current)?.answers).toEqual(
+    previous.answers,
+  );
+});
+
+test("a form stopped on an early step cannot become a ready application record", async () => {
+  const page = rawPage("Application");
+  page.stepLabel = "Step 2 of 4";
+  page.actions = [{ index: 0, label: "Next", visible: true, disabled: false }];
+  const result = await runAgentApplicationPreparation({
+    session: { ...session(), readPage: () => Promise.resolve(page) },
+    executionInput: executionInput(),
+    llmClient: modelThatFinishes(),
+    startedAt: "2026-09-14T10:00:00.000Z",
+    siteLabel: "the careers site",
+  });
+  expect(result.state).toBe("paused");
+  expect(result.blocker).toMatchObject({
+    code: "requires_manual_review",
+    userActionKind: "other",
+  });
+  expect(result.detail).toContain("another step");
+});
+
+test("a required cover letter with Never is a named file handoff", async () => {
+  const page = rawPage("Application");
+  page.controls = [
+    {
+      ...page.controls[0]!,
+      inputType: "file",
+      label: "Cover letter",
+      required: true,
+      value: "",
+    },
+  ];
+  const input = executionInput();
+  input.settings.aiBehavior = AiBehaviorPreferenceSchema.parse({
+    applying: { coverLetterPolicy: "never" },
+  });
+  const result = await runAgentApplicationPreparation({
+    session: { ...session(), readPage: () => Promise.resolve(page) },
+    executionInput: input,
+    llmClient: modelThatFinishes(),
+    startedAt: "2026-09-14T10:00:00.000Z",
+    siteLabel: "the careers site",
+  });
+  expect(result.state).toBe("paused");
+  expect(result.questions[0]).toMatchObject({
+    prompt: "Cover letter",
+    answerControlType: "file",
+  });
+  expect(result.blocker?.userActionKind).toBe("manual_upload");
+  expect(result.detail).toContain("settings");
+  expect(result.nextActionLabel).toBe("Add the required cover letter");
+});
+
+test("a required cover letter and text questions share an answerable handoff", async () => {
+  const page = rawPage("Application");
+  page.controls = [
+    {
+      ...page.controls[0]!,
+      inputType: "file",
+      label: "Cover letter",
+      required: true,
+      value: "",
+    },
+  ];
+  page.controls.push({
+    ...page.controls[0]!,
+    index: 1,
+    inputType: "text",
+    label: "Portfolio URL",
+    required: true,
+    value: "",
+  });
+  const input = executionInput();
+  input.settings.aiBehavior = AiBehaviorPreferenceSchema.parse({
+    applying: { coverLetterPolicy: "never" },
+  });
+  const result = await runAgentApplicationPreparation({
+    session: { ...session(), readPage: () => Promise.resolve(page) },
+    executionInput: input,
+    llmClient: modelThatFinishes(),
+    startedAt: "2026-09-14T10:00:00.000Z",
+    siteLabel: "the careers site",
+  });
+  expect(result.state).toBe("paused");
+  expect(result.questions[0]).toMatchObject({
+    prompt: "Cover letter",
+    answerControlType: "file",
+  });
+  expect(result.blocker?.userActionKind).toBeNull();
+  expect(result.questions.map((question) => question.prompt)).toContain(
+    "Portfolio URL",
+  );
+  expect(result.detail).toContain("settings");
+  expect(result.nextActionLabel).toBe(
+    "Add the required files and answer the remaining questions",
+  );
+});
+
+test("a refreshed review drops an answer and attachment cleared on the live form", () => {
+  const previous = ApplicationReviewCardSchema.parse({
+    siteLabel: "Synthetic form",
+    preparedAt: "2026-10-04T10:00:00.000Z",
+    answers: [
+      {
+        fieldKey: "motivation",
+        question: "Motivation",
+        answer: "Old answer",
+        source: "the filled application form",
+        written: false,
+        groundedIn: [],
+      },
+    ],
+    attachments: [
+      {
+        fieldKey: "portfolio",
+        label: "Portfolio",
+        fileName: "old.pdf",
+        field: "Portfolio",
+      },
+    ],
+  });
+  const current = ApplicationReviewCardSchema.parse({
+    siteLabel: "Synthetic form",
+    preparedAt: "2026-10-04T11:00:00.000Z",
+    answers: [],
+    attachments: [],
+    observedFieldKeys: ["motivation", "portfolio"],
+  });
+  const merged = mergeApplyReviewCards(previous, current);
+  expect(merged?.answers).toEqual([]);
+  expect(merged?.attachments).toEqual([]);
+});
+
+test("send review collapses identical answers and attachments from repeated form steps", () => {
+  const answer = {
+    question: "Email",
+    answer: "synthetic@example.test",
+    source: "your email address",
+    written: false,
+    groundedIn: [],
+  };
+  const attachment = {
+    label: "Your CV",
+    field: "Resume",
+    fileName: "synthetic.pdf",
+  };
+  const card = {
+    siteLabel: "Synthetic",
+    pageUrl: null,
+    answers: [answer],
+    attachments: [attachment],
+    letter: null,
+    waitingOnYou: [],
+    preparedAt: "2026-10-04T00:00:00.000Z",
+  };
+  const prior = {
+    ...card,
+    answers: ["1", "2", "3"].map((step) => ({
+      ...answer,
+      fieldKey: `${step}|email`,
+    })),
+    attachments: ["1", "2", "3"].map((step) => ({
+      ...attachment,
+      fieldKey: `${step}|resume`,
+    })),
+  };
+  const merged = mergeApplyReviewCards(prior, {
+    ...card,
+    answers: [{ ...answer, fieldKey: "4|email" }],
+    attachments: [{ ...attachment, fieldKey: "4|resume" }],
+  });
+  expect(merged?.answers).toHaveLength(1);
+  expect(merged?.attachments).toHaveLength(1);
+});
+
+test("a paused unchecked letter stays on the review card without an attachment", () => {
+  const card = buildApplyReviewCard({
+    siteLabel: "Synthetic",
+    preparedAt: "2026-10-04T12:00:00.000Z",
+    result: {
+      outcome: "paused",
+      reason: "Review the letter",
+      steps: 1,
+      finalUrl: null,
+      filled: [],
+      attachments: [],
+      notes: [],
+      timeline: [],
+      modelTurns: 1,
+      readyToSend: null,
+      pauses: [
+        {
+          code: "document_needs_you",
+          summary: "Agree how to handle the location mismatch.",
+          question: null,
+          blocker: null,
+          reviewDraft: {
+            text: "Letter awaiting your review.",
+            groundedIn: ["Resume"],
+            reason: "Agree how to handle the location mismatch.",
+          },
+        },
+      ],
+    },
+  });
+  expect(card.letter?.text).toBe("Letter awaiting your review.");
+  expect(card.letter?.reviewReason).toContain("location mismatch");
+  expect(card.attachments).toEqual([]);
+  expect(card.waitingOnYou).toContain(
+    "Agree how to handle the location mismatch.",
+  );
+});
+
+test("preparation honors an eligibility answer saved on an earlier attempt of this application", async () => {
+  const facts = executionInput();
+  facts.applicationPageBindingKey = "new_result";
+  facts.profile.answerBank.customAnswers = [
+    {
+      id: "own_answer",
+      kind: "work_authorization",
+      label: "Are you authorized to work here?",
+      question: "Are you authorized to work here?",
+      answer: "Yes",
+      roleFamilies: [],
+      proofEntryIds: [],
+      applicationScope: {
+        resultId: "old_result",
+        applicationRecordId: "same_application",
+        location: "Remote",
+      },
+    },
+  ];
+  const page = rawPage("Application");
+  page.controls = [
+    {
+      ...page.controls[0]!,
+      tagName: "select",
+      inputType: "",
+      label: "Are you authorized to work here?",
+      options: ["Yes", "No"],
+      required: true,
+    },
+  ];
+  const chooseOption = vi.fn<ApplyPageSession["chooseOption"]>(
+    (_ref, option) => {
+      page.controls[0]!.value = option;
+      page.controls[0]!.selectedOptionLabel = option;
+      return Promise.resolve({ ok: true, observedValue: option });
+    },
+  );
+  let calls = 0;
+  const chatWithTools = vi.fn<LLMClient["chatWithTools"]>(
+    (_messages, tools) => {
+      if (tools[0]?.function.name === "report_question_kinds") {
+        return Promise.resolve({
+          toolCalls: [
+            {
+              id: "classification",
+              type: "function",
+              function: {
+                name: "report_question_kinds",
+                arguments: JSON.stringify({
+                  questions: [
+                    {
+                      index: 0,
+                      eligibilityKind: "work_authorization",
+                      asksAboutPay: false,
+                      asksCurrentPay: false,
+                      required: true,
+                      declarationKind: null,
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        });
+      }
+      calls += 1;
+      return Promise.resolve({
+        toolCalls: [
+          {
+            id: `call_${calls}`,
+            type: "function",
+            function: {
+              name: calls === 1 ? "select" : "finish",
+              arguments: JSON.stringify(
+                calls === 1
+                  ? { ref: "c0", option: "Yes" }
+                  : { reason: "The application is complete" },
+              ),
+            },
+          },
+        ],
+      });
+    },
+  );
+  const prepare = createApplyFormPreparer({
+    executionInput: facts,
+    applicationRecordId: "same_application",
+    aiClient: { chatWithTools },
+    siteLabel: "the careers site",
+  });
+  const result = await prepare({
+    session: {
+      ...session(),
+      readPage: () => Promise.resolve(page),
+      chooseOption,
+    },
+    currentUrl: PAGE_URL,
+    startedAt: "2026-09-14T10:00:00.000Z",
+  });
+  expect(chooseOption).toHaveBeenCalledWith("c0", "Yes");
+  expect(result.questions).toEqual([]);
+  expect(result.state).toBe("ready");
+  expect(calls).toBe(2);
+  expect(
+    chatWithTools.mock.calls.some(
+      ([, tools]) => tools[0]?.function.name === "report_answer_checks",
+    ),
+  ).toBe(false);
+});
+
+test("a failed provider call still returns typed timing for persistence", async () => {
+  const result = await runAgentApplicationPreparation({
+    session: session(),
+    executionInput: executionInput(),
+    llmClient: {
+      chatWithTools: () => {
+        return Promise.reject(new Error("Synthetic outage"));
+      },
+    },
+    startedAt: "2026-09-14T10:00:00.000Z",
+    siteLabel: "the careers site",
+    now: () => new Date("2026-09-14T10:05:00.000Z"),
+  });
+  expect(result.state).toBe("failed");
+  expect(result.agentTiming).toMatchObject({ modelTurns: 1, pageReads: 1 });
+});
+
+test("review keeps the latest value across handles and removes cleared fields", () => {
+  const previous = ApplicationReviewCardSchema.parse({
+    siteLabel: "Synthetic board",
+    pageUrl: PAGE_URL,
+    preparedAt: "2026-10-01T10:00:00.000Z",
+    answers: [
+      {
+        fieldKey: `${PAGE_URL}|Contact|c0|Email`,
+        question: "Email",
+        answer: "old@example.test",
+        written: false,
+        source: "your email",
+      },
+    ],
+    attachments: [
+      {
+        fieldKey: `${PAGE_URL}|Contact|c1|Resume`,
+        label: "CV",
+        field: "Resume",
+        fileName: "old.pdf",
+      },
+    ],
+  });
+  const current = ApplicationReviewCardSchema.parse({
+    ...previous,
+    answers: [
+      {
+        ...previous.answers[0],
+        fieldKey: `${PAGE_URL}|Contact|c9|Email`,
+        answer: "new@example.test",
+      },
+    ],
+    attachments: [
+      {
+        ...previous.attachments[0],
+        fieldKey: `${PAGE_URL}|Contact|c8|Resume`,
+        fileName: "new.pdf",
+      },
+    ],
+  });
+  const merged = mergeApplyReviewCards(previous, current)!;
+  expect(merged.answers.map((entry) => entry.answer)).toEqual([
+    "new@example.test",
+  ]);
+  expect(merged.attachments.map((entry) => entry.fileName)).toEqual([
+    "new.pdf",
+  ]);
+  expect(
+    mergeApplyReviewCards(merged, {
+      ...current,
+      answers: [],
+      attachments: [],
+      observedFieldKeys: [
+        `${PAGE_URL}|Contact|c20|Email`,
+        `${PAGE_URL}|Contact|c21|Resume`,
+      ],
+    }),
+  ).toMatchObject({ answers: [], attachments: [] });
+});
+
+test.each(["file", "text"] as const)(
+  "Prepare again reads the latest approved library letter and uses it as %s unchanged",
+  async (delivery) => {
+    const page = rawPage("Application");
+    page.controls = [
+      {
+        ...page.controls[0]!,
+        inputType: delivery === "file" ? "file" : "text",
+        label: "Cover letter",
+        required: true,
+        value: "",
+      },
+    ];
+    const currentSession = {
+      ...session(),
+      readPage: () => Promise.resolve(page),
+    };
+    const fill = vi.fn(async (_ref: string, value: string) => {
+      page.controls[0]!.value = value;
+      return { ok: true as const, observedValue: value };
+    });
+    const upload = vi.fn(
+      async (_ref: string, file: { name: string; bytes: Uint8Array }) => {
+        page.controls[0]!.value = file.name;
+        return { ok: true as const, observedValue: file.name };
+      },
+    );
+    currentSession.fillText = fill;
+    currentSession.uploadFile = upload;
+    const approved = "  My exact approved revision two.\n";
+    const writeLetter = vi.fn();
+    const getApprovedText = vi.fn(async () => approved);
+    let turn = 0;
+    const llmClient: LLMClient = {
+      chatWithTools: async (_messages, tools) => {
+        const classification =
+          tools[0]?.function.name === "report_question_kinds";
+        const tool = classification
+          ? "report_question_kinds"
+          : ++turn === 1
+            ? "fill_fields"
+            : "finish";
+        const args = classification
+          ? {
+              questions: [
+                { index: 0, asksAboutPay: false, declarationKind: null },
+              ],
+            }
+          : tool === "fill_fields"
+            ? {
+                fields: [
+                  delivery === "file"
+                    ? { tool: "upload", ref: "c0", documentId: "letter" }
+                    : { tool: "type", ref: "c0", text: "Model rewrite" },
+                ],
+              }
+            : { reason: "Send application not pressed per fill-only mode" };
+        return {
+          toolCalls: [
+            {
+              id: `call-${turn}`,
+              type: "function",
+              function: { name: tool, arguments: JSON.stringify(args) },
+            },
+          ],
+        };
+      },
+    };
+    const prepared = vi.fn();
+    const result = await runAgentApplicationPreparation({
+      session: currentSession,
+      executionInput: executionInput(),
+      applicationRecordId: "application",
+      startedAt: "2026-10-06T10:00:00.000Z",
+      siteLabel: "Synthetic careers",
+      llmClient,
+      onPrepared: prepared,
+      letters: {
+        preference: {
+          tone: "direct",
+          length: "short",
+          language: null,
+          sample: null,
+        },
+        getApprovedText,
+        writeLetter,
+        renderLetter: async ({ text }) => ({
+          ok: true,
+          fileName: "approved.txt",
+          mimeType: "text/plain",
+          loadBytes: async () => new TextEncoder().encode(text),
+        }),
+      },
+    });
+    expect(result.state).toBe("ready");
+    expect(getApprovedText).toHaveBeenCalledWith(
+      executionInput().job.id,
+      "application",
+    );
+    expect(writeLetter).not.toHaveBeenCalled();
+    expect(prepared.mock.calls[0]![0].reviewCard.letter.text).toBe(approved);
+    expect(result.summary).not.toContain("fill-only");
+    if (delivery === "file")
+      expect(new TextDecoder().decode(upload.mock.calls[0]![1].bytes)).toBe(
+        approved,
+      );
+    else expect(fill).toHaveBeenCalledWith("c0", approved);
+  },
+);
+
+test("fresh preparations keep unchanged sources without reviving removed answers", () => {
+  const labels = [
+    "Full name",
+    "Email",
+    "Phone",
+    "Portfolio URL",
+    "Why this role?",
+  ];
+  const sources = [
+    "your name",
+    "your email address",
+    "your phone number",
+    "your portfolio",
+    "your answer to this question",
+  ];
+  const values = [
+    "Alex Example",
+    "alex@example.test",
+    "+44123456789",
+    "https://example.test/portfolio",
+    "I build dependable platforms.",
+  ];
+  const previous = ApplicationReviewCardSchema.parse({
+    siteLabel: "Example",
+    pageUrl: PAGE_URL,
+    preparedAt: "2026-10-06T10:00:00.000Z",
+    answers: labels.map((question, i) => ({
+      question,
+      fieldKey: `${PAGE_URL}|Application|c${i}|${question}`,
+      answer: values[i],
+      source: sources[i],
+      written: false,
+    })),
+  });
+  let current = ApplicationReviewCardSchema.parse({
+    ...previous,
+    preparedAt: "2026-10-06T10:01:00.000Z",
+    answers: previous.answers.map((answer, i) => ({
+      ...answer,
+      fieldKey: `${PAGE_URL}|Application|c${i + 10}|${answer.question}`,
+      source: "the filled application form",
+    })),
+  });
+  for (let run = 0; run < 3; run += 1) {
+    current = mergeApplyReviewCards(
+      run === 0 ? previous : current,
+      {
+        ...current,
+        answers: current.answers.map((answer) => ({
+          ...answer,
+          source: "the filled application form",
+        })),
+      },
+      { freshPreparation: true },
+    )!;
+    expect(current.answers.map((answer) => answer.source)).toEqual(sources);
+  }
+  const changed = mergeApplyReviewCards(
+    current,
+    {
+      ...current,
+      answers: current.answers.slice(0, 4).map((answer, i) => ({
+        ...answer,
+        answer: i === 1 ? "changed@example.test" : answer.answer,
+        source: "the filled application form",
+      })),
+    },
+    { freshPreparation: true },
+  )!;
+  expect(changed.answers).toHaveLength(4);
+  expect(changed.answers[1]?.source).toBe("the filled application form");
+  expect(
+    changed.answers.some((answer) => answer.question === "Why this role?"),
+  ).toBe(false);
+  expect(
+    mergeApplyReviewCards(previous, null, { freshPreparation: true }),
+  ).toBeNull();
+});
+
+test.each([false, true])(
+  "a saved declaration reaches the card with the correct evidence (Settings on: %s)",
+  async (settingOn) => {
+    const facts = executionInput();
+    const prompt = "I consent to a background check";
+    facts.settings.aiBehavior = AiBehaviorPreferenceSchema.parse({
+      applying: {
+        preApprovedDeclarations: settingOn ? ["background_check_consent"] : [],
+      },
+    });
+    facts.profile.answerBank.customAnswers = [
+      {
+        id: "saved_declaration",
+        kind: "other",
+        label: prompt,
+        question: prompt,
+        answer: "Yes",
+        roleFamilies: [],
+        proofEntryIds: [],
+      },
+    ];
+    const page = rawPage("Application");
+    page.controls[0] = {
+      ...page.controls[0]!,
+      inputType: "checkbox",
+      label: prompt,
+      id: "declaration",
+      name: "declaration",
+    };
+    let turns = 0;
+    let card: ReturnType<typeof buildApplyReviewCard> | null = null;
+    const result = await runAgentApplicationPreparation({
+      executionInput: facts,
+      siteLabel: "Example",
+      startedAt: "2026-10-06T10:00:00.000Z",
+      session: {
+        ...session(),
+        readPage: () => Promise.resolve(page),
+        setToggle: (_ref, checked) => {
+          page.controls[0]!.checked = checked;
+          return Promise.resolve({
+            ok: true,
+            observedValue: checked ? "Yes" : "No",
+          });
+        },
+      },
+      onPrepared: (prepared) => {
+        card = prepared.reviewCard;
+      },
+      llmClient: {
+        chatWithTools: (_messages, tools) => {
+          const classification =
+            tools[0]?.function.name === "report_question_kinds";
+          const name = classification
+            ? "report_question_kinds"
+            : ++turns === 1
+              ? "set_checkbox"
+              : "finish";
+          const args = classification
+            ? {
+                questions: [
+                  {
+                    index: 0,
+                    asksAboutPay: false,
+                    declarationKind: "background_check_consent",
+                  },
+                ],
+              }
+            : turns === 1
+              ? { ref: "c0", checked: true }
+              : { reason: "Done." };
+          return Promise.resolve({
+            toolCalls: [
+              {
+                id: name,
+                type: "function",
+                function: { name, arguments: JSON.stringify(args) },
+              },
+            ],
+          });
+        },
+      },
+    });
+    expect(result.state).toBe("ready");
+    expect(card).toMatchObject({
+      answers: [
+        expect.objectContaining({
+          answer: "Yes",
+          source: settingOn
+            ? "your Settings (on by default)"
+            : "your answer to this question",
+          sourceId: settingOn
+            ? "authority.attestation.background_check_consent"
+            : "answerLibrary.saved_declaration",
+        }),
+      ],
+    });
+  },
+);

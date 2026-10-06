@@ -165,7 +165,6 @@ export function deriveSourceAccessPrompts(input: {
     const learnedStartingUrls = buildDiscoveryStartingUrls(
       target,
       activeInstruction,
-      input.searchPreferences,
     );
     const resolvedTargetUrl = learnedStartingUrls[0] ?? target.startingUrl;
     const updatedAt =
@@ -237,7 +236,6 @@ export function resolveSourceBrowserEntryUrl(input: {
   const startingUrls = buildDiscoveryStartingUrls(
     input.target,
     activeInstruction,
-    input.searchPreferences,
   );
 
   return startingUrls[0] ?? input.target.startingUrl;

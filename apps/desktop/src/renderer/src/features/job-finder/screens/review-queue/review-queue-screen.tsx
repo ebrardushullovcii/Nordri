@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   BrowserSessionState,
   ApplicationAutomationMode,
@@ -18,6 +25,7 @@ import {
   APPLICATION_PREPARATION_BATCH_LIMIT,
   collectInProgressApplicationJobIds,
   getReviewQueueWorkflowStatus,
+  hasResumeGenerationFailure,
   isQueueStageReady,
   isResumeGenerationInProgress,
 } from "./review-queue-status";
@@ -33,7 +41,7 @@ import {
   scrubJobAbsencePlaceholdersList,
 } from "../../lib/job-employer-location-display";
 import { getMatchAssessmentPresentation } from "../../lib/match-assessment-presentation";
-import { RESUME_OPERATION_LONG_RUNNING_MS } from "./review-queue-progress";
+import { RESUME_DRAFT_LONG_RUNNING_MS } from "@renderer/features/job-finder/lib/wait-state";
 import type { JobFinderAutoApplyQueueStartOutcome } from "../../lib/job-finder-types";
 import { useStableCallback } from "../../hooks/use-stable-callback";
 import { ReviewQueueListPanel } from "./review-queue-list-panel";
@@ -48,6 +56,7 @@ import type { TailoredDraftPreparationViewState } from "./review-queue-status";
 const workspacePanelId = "review-queue-workspace-panel";
 
 export function ReviewQueueScreen(props: {
+  scopeControl?: ReactNode;
   resumeOperationStarts?: Readonly<Record<string, number>> | undefined;
   actionState: { message: string | null };
   applicationRecords: readonly ApplicationRecord[];
@@ -55,6 +64,7 @@ export function ReviewQueueScreen(props: {
   browserSession: BrowserSessionState;
   campaignId: string;
   draftPreparation: TailoredDraftPreparationViewState;
+  resumeBatchCheckpoint?: JobFinderWorkspaceSnapshot["intelligence"]["resumeBatchCheckpoint"];
   globalDailyApplicationPreparationCapacity: GlobalDailyApplicationPreparationCapacity | null;
   isApplyPending: boolean;
   /**
@@ -151,7 +161,8 @@ export function ReviewQueueScreen(props: {
   const [selectedJobPendingTooLong, setSelectedJobPendingTooLong] =
     useState(false);
   const isSelectedJobPreparing =
-    selectedJobPending || isResumeGenerationInProgress(selectedItem);
+    !hasResumeGenerationFailure(selectedItem, selectedAsset) &&
+    (selectedJobPending || isResumeGenerationInProgress(selectedItem));
   const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const actionMessageScopeRef = useRef<{
     jobId: string | null;
@@ -246,7 +257,7 @@ export function ReviewQueueScreen(props: {
       },
       Math.max(
         0,
-        RESUME_OPERATION_LONG_RUNNING_MS -
+        RESUME_DRAFT_LONG_RUNNING_MS -
           (operationStartedAt === undefined
             ? 0
             : Date.now() - operationStartedAt),
@@ -293,7 +304,10 @@ export function ReviewQueueScreen(props: {
       ...applicationPreparingJobIds,
     ]);
     const readyJobIds = queue
-      .filter((item) => isQueueStageReady(item, unavailable))
+      .filter(
+        (item) =>
+          !isJobPending(item.jobId) && isQueueStageReady(item, unavailable),
+      )
       .map((item) => item.jobId)
       .slice(0, applicationBatchLimit);
     if (readyJobIds.length === 0) {
@@ -310,10 +324,57 @@ export function ReviewQueueScreen(props: {
     applicationPreparingJobIds,
     applicationAutomationMode,
     onStartAutoApplyQueue,
+    isJobPending,
     preparedJobIds,
     queue,
   ]);
 
+  // Both entry points publish their batch receipt to the workspace.
+  const runningBatch =
+    props.resumeBatchCheckpoint?.running && !props.resumeBatchCheckpoint.done
+      ? props.resumeBatchCheckpoint
+      : null;
+  const visibleDraftPreparation: TailoredDraftPreparationViewState =
+    draftPreparation.status === "running" || !runningBatch
+      ? draftPreparation
+      : {
+          status: "running",
+          totalCount: runningBatch.jobIds.length,
+          completedCount: runningBatch.completedJobIds.length,
+          attemptedCount:
+            runningBatch.completedJobIds.length +
+            runningBatch.activeJobIds.length,
+          failedCount: 0,
+          currentIndex: null,
+          eligibleRemainingCount: 0,
+          durationsMs: runningBatch.durationsMs ?? [],
+          stopRequested: runningBatch.stopRequested,
+        };
+  const [batchStopError, setBatchStopError] = useState<string | null>(null);
+  const stopVisibleBatch = () => {
+    setBatchStopError(null);
+    onStopTailoredDraftPreparation();
+    if (runningBatch)
+      void window.nordri.assistant
+        .stopResumeBatch()
+        .catch(() =>
+          setBatchStopError("Could not stop the resume batch. Try again."),
+        );
+  };
+  const interruptedJobIds =
+    props.draftPreparation.status === "idle" &&
+    props.resumeBatchCheckpoint &&
+    !props.resumeBatchCheckpoint.done &&
+    !props.resumeBatchCheckpoint.running
+      ? props.resumeBatchCheckpoint.jobIds.filter(
+          (id) =>
+            !props.resumeBatchCheckpoint!.completedJobIds.includes(id) &&
+            !preparedJobIds.has(id),
+        )
+      : [];
+  const interruptedJobs = queue.filter((item) =>
+    interruptedJobIds.includes(item.jobId),
+  );
   // Below the `xl` two-pane breakpoint the job column stacks under the list,
   // so selecting a job moved the one next action below the fold with nothing
   // saying so. Find jobs and Applications both reveal their stacked detail
@@ -344,15 +405,42 @@ export function ReviewQueueScreen(props: {
       topContent={
         <PageHeaderStack
           title="Shortlisted"
-          description="The jobs you want. Pick a resume level for each, get the resume ready, then press Apply."
+          subnav={props.scopeControl}
+          description="The jobs you want: pick a resume level, get the resume ready, then press Apply."
         />
       }
     >
+      {batchStopError ? <p role="alert">{batchStopError}</p> : null}
+      {interruptedJobIds.length > 0 ? (
+        <div
+          className="mb-3 rounded-(--radius-field) border border-warning/30 px-4 py-3 text-sm"
+          role="status"
+        >
+          <p>
+            {props.resumeBatchCheckpoint?.stopRequested
+              ? "The previous resume batch was stopped. Finished resumes were kept."
+              : "The previous resume batch stopped when the app closed. Finished resumes were kept."}
+          </p>
+          <p className="text-foreground-muted">
+            {interruptedJobs.length === interruptedJobIds.length
+              ? `Still need resumes: ${interruptedJobs.map((item) => `${item.title} at ${item.company}`).join("; ")}.`
+              : `${interruptedJobIds.length} unfinished ${interruptedJobIds.length === 1 ? "resume is" : "resumes are"} saved in this batch.`}
+          </p>
+          <Button
+            onClick={() => onPrepareTailoredDrafts(interruptedJobIds)}
+            size="sm"
+            type="button"
+          >
+            Continue batch
+          </Button>
+        </div>
+      ) : null}
       <div className="grid min-w-0 items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(24rem,0.72fr)_minmax(34rem,1fr)] assistant-docked:xl:grid-cols-[minmax(16rem,0.72fr)_minmax(0,1fr)] xl:overflow-hidden">
         <ReviewQueueListPanel
           key={props.campaignId}
           campaignId={props.campaignId}
-          draftPreparation={draftPreparation}
+          draftPreparation={visibleDraftPreparation}
+          interruptedResumeJobIds={interruptedJobIds}
           isApplyToAllPending={applyAllPending || isApplyPending}
           applicationBatchLimit={applicationBatchLimit}
           isJobPending={isJobPending}
@@ -362,7 +450,7 @@ export function ReviewQueueScreen(props: {
           {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
           safeguardBlocker={safeguardBlocker ?? null}
           onSelectItem={selectItemAndRevealWorkspace}
-          onStopTailoredDraftPreparation={onStopTailoredDraftPreparation}
+          onStopTailoredDraftPreparation={stopVisibleBatch}
           preparedJobIds={preparedJobIds}
           applicationPreparingJobIds={applicationPreparingJobIds}
           queue={queue}
@@ -495,12 +583,18 @@ export function ReviewQueueScreen(props: {
                         className="text-(length:--text-body) text-(--text-headline)"
                         data-testid="review-queue-fit-score"
                       >
-                        {selectedJobAssessment?.headlineScoreLabel}
+                        {selectedItem.listingAssessmentPending
+                          ? "Assessing listing"
+                          : selectedJobAssessment?.headlineScoreLabel}
                       </strong>
                       <span className="min-w-0 text-(length:--text-small) leading-6 text-foreground-soft">
-                        {selectedJobAssessment?.withheldReason ??
-                          selectedJobFitReasons[0] ??
-                          "Estimated from the listing and your approved profile."}
+                        {selectedItem.listingAssessmentPending
+                          ? "Reading and assessing this listing in the background."
+                          : selectedJobAssessment?.isNotJudged
+                            ? "Open full job details to read and assess this listing."
+                            : (selectedJobAssessment?.withheldReason ??
+                              selectedJobFitReasons[0] ??
+                              "Estimated from the listing and your approved profile.")}
                       </span>
                     </div>
                     <Button

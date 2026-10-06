@@ -168,6 +168,7 @@ export const ProfileSetupStateSchema = z.object({
   currentStep: CanonicalProfileSetupStepSchema.default("import"),
   completedAt: IsoDateTimeSchema.nullable().default(null),
   reviewItems: z.array(ProfileReviewItemSchema).default([]),
+  reviewedSteps: z.array(CanonicalProfileSetupStepSchema).optional(),
   lastResumedAt: IsoDateTimeSchema.nullable().default(null),
 });
 export type ProfileSetupState = z.infer<typeof ProfileSetupStateSchema>;
@@ -348,10 +349,7 @@ export function createFreshStartCandidateProfile(): CandidateProfile {
       uploadedAt: new Date(0).toISOString(),
       extractionStatus: "needs_text",
     },
-    // No experience has been recorded yet; the schema requires a number, so
-    // the seed supplies the neutral zero rather than omitting the field and
-    // failing the entire first-run bootstrap.
-    yearsExperience: 0,
+    yearsExperience: null,
   });
 }
 
@@ -681,6 +679,9 @@ export function deriveProfileSetupState(
         ? (currentState?.completedAt ?? options.now ?? null)
         : null,
     reviewItems: currentState?.reviewItems ?? [],
+    ...(currentState?.reviewedSteps
+      ? { reviewedSteps: currentState.reviewedSteps }
+      : {}),
     lastResumedAt: currentState?.lastResumedAt ?? null,
   });
 }

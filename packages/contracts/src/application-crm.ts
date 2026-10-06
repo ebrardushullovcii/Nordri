@@ -1,3 +1,5 @@
+import type { ApplicationRecord } from "./discovery";
+import type { ApplyJobResult, ApplyRunSummary } from "./apply";
 import { z } from "zod";
 
 import {
@@ -11,7 +13,11 @@ export const applicationCrmStageValues = [
   "reviewing",
   "shortlisted",
   "preparing",
+  "needs_you",
+  "ready_to_send",
   "ready_for_approval",
+  "failed",
+  "cancelled",
   "applied",
   "employer_viewed",
   "recruiter_contact",
@@ -25,6 +31,38 @@ export const applicationCrmStageValues = [
 
 export const ApplicationCrmStageSchema = z.enum(applicationCrmStageValues);
 export type ApplicationCrmStage = z.infer<typeof ApplicationCrmStageSchema>;
+
+/** The current preparation, handoff or hiring state, shared by screens and exports. */
+export function inferApplicationActivityStage(record: {
+  status: string;
+  lastAttemptState?: string | null;
+  latestBlocker?: { code: string } | null;
+}): ApplicationCrmStage {
+  if (
+    ["assessment", "interview", "offer", "rejected", "withdrawn"].includes(
+      record.status,
+    )
+  )
+    return record.status as ApplicationCrmStage;
+  if (record.status === "submitted" || record.lastAttemptState === "submitted")
+    return "applied";
+  if (record.lastAttemptState === "cancelled") return "cancelled";
+  if (
+    record.lastAttemptState === "failed" ||
+    record.lastAttemptState === "unsupported"
+  )
+    return "failed";
+  if (record.lastAttemptState === "in_progress") return "preparing";
+  if (record.latestBlocker || record.lastAttemptState === "paused")
+    return "needs_you";
+  if (record.lastAttemptState === "ready") return "ready_to_send";
+  if (record.status === "drafting") return "preparing";
+  if (record.status === "ready_for_review") return "ready_for_approval";
+  if (record.status === "approved" || record.status === "shortlisted")
+    return "shortlisted";
+  if (record.status === "archived") return "no_response";
+  return "discovered";
+}
 
 export const ApplicationCrmStageDefinitionSchema = z.object({
   id: NonEmptyStringSchema,
@@ -172,6 +210,7 @@ export type ApplicationCrmCompensation = z.infer<
 >;
 
 export const ApplicationCrmDataSchema = z.object({
+  archivedAt: IsoDateTimeSchema.nullable().optional(),
   revision: z.number().int().nonnegative().default(0),
   stage: ApplicationCrmStageSchema,
   stageSource: z.enum(["activity", "user"]).optional(),
@@ -310,6 +349,7 @@ export const ApplicationCrmMutationSchema = z.discriminatedUnion("type", [
     customStageId: NonEmptyStringSchema.nullable().default(null),
     note: NonEmptyStringSchema.nullable().default(null),
   }),
+  z.object({ type: z.literal("set_archived"), archived: z.boolean() }),
   z.object({
     type: z.literal("set_tags"),
     tags: z.array(NonEmptyStringSchema).max(50),
@@ -372,7 +412,17 @@ export type ApplicationCrmMutationInput = z.infer<
   typeof ApplicationCrmMutationInputSchema
 >;
 
+export const ApplicationCrmStageSnapshotSchema = ApplicationCrmDataSchema.pick({
+  stage: true,
+  stageSource: true,
+  customStageId: true,
+  stageChangedAt: true,
+  appliedAt: true,
+  lastEmployerActivityAt: true,
+});
+
 export const ApplicationCrmBulkStageMutationItemSchema = z.object({
+  previousStage: ApplicationCrmStageSnapshotSchema.optional(),
   applicationRecordId: NonEmptyStringSchema,
   expectedRevision: z.number().int().nonnegative(),
 });
@@ -387,6 +437,8 @@ export type ApplicationCrmBulkStageMutationItem = z.infer<
  */
 export const ApplicationCrmBulkStageMutationInputSchema = z
   .object({
+    action: z.enum(["stage", "tags", "archive", "restore", "undo"]).optional(),
+    tags: z.array(NonEmptyStringSchema).max(50).optional(),
     items: ApplicationCrmBulkStageMutationItemSchema.array().min(1).max(1000),
     stage: ApplicationCrmStageSchema,
     customStageId: NonEmptyStringSchema.nullable().default(null),
@@ -394,6 +446,23 @@ export const ApplicationCrmBulkStageMutationInputSchema = z
     actor: ApplicationCrmActorSchema,
   })
   .superRefine((input, context) => {
+    if (input.action === "tags" && !input.tags?.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose at least one tag.",
+        path: ["tags"],
+      });
+    }
+    if (
+      input.action === "undo" &&
+      input.items.some((item) => !item.previousStage)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Undo needs every previous stage.",
+        path: ["items"],
+      });
+    }
     const seen = new Set<string>();
     for (const [index, item] of input.items.entries()) {
       if (seen.has(item.applicationRecordId)) {
@@ -424,6 +493,7 @@ export const ApplicationCrmCalendarEntrySchema = z.object({
   id: NonEmptyStringSchema,
   applicationRecordId: NonEmptyStringSchema,
   kind: z.enum(["reminder", "interview", "offer_deadline"]),
+  timeZone: NonEmptyStringSchema.nullable().optional(),
   title: NonEmptyStringSchema,
   startsAt: IsoDateTimeSchema,
   endsAt: IsoDateTimeSchema.nullable().default(null),
@@ -489,3 +559,205 @@ export type ApplicationCrmFileExportResult = z.infer<
  * batch. Screens show it as skipped, never as an application that failed.
  */
 export const APPLICATION_SKIPPED_BY_PERSON_LABEL = "Skipped at your request.";
+
+/** Project retained records from the latest attempt without changing the person's stage. */
+export function projectApplicationRecordsActivity(input: {
+  records: readonly ApplicationRecord[];
+  results: readonly ApplyJobResult[];
+  runs?: readonly ApplyRunSummary[];
+}): ApplicationRecord[] {
+  const latest = new Map<string, ApplyJobResult>();
+  for (const result of input.results) {
+    if (!result.applicationRecordId) continue;
+    const previous = latest.get(result.applicationRecordId);
+    if (!previous || result.updatedAt > previous.updatedAt)
+      latest.set(result.applicationRecordId, result);
+  }
+  return input.records.map((record) => {
+    const result = latest.get(record.id);
+    const markedByPerson = isApplicationTrackedAsSentByPerson(record.crm);
+    const legacySent =
+      record.status === "submitted" || record.lastAttemptState === "submitted";
+    if (!result) {
+      if (record.personSendReceipt)
+        return {
+          ...record,
+          status: [
+            "assessment",
+            "interview",
+            "offer",
+            "rejected",
+            "withdrawn",
+          ].includes(record.status)
+            ? record.status
+            : "submitted",
+          lastAttemptState: "submitted",
+          lastActionLabel: record.personSendReceipt.summary,
+          nextActionLabel: "View application",
+        };
+      if (!legacySent && !markedByPerson) return record;
+      return {
+        ...record,
+        status:
+          markedByPerson ||
+          [
+            "assessment",
+            "interview",
+            "offer",
+            "rejected",
+            "withdrawn",
+          ].includes(record.status)
+            ? record.status
+            : "ready_for_review",
+        lastAttemptState: markedByPerson ? "submitted" : "paused",
+        lastActionLabel: markedByPerson
+          ? "Marked sent by you"
+          : "Not confirmed",
+        nextActionLabel: markedByPerson
+          ? "View application"
+          : "Check the site and record whether you sent it",
+      };
+    }
+    const outcome = result.privacyReceipt?.submissionOutcome;
+    const sent =
+      Boolean(record.personSendReceipt) ||
+      (result.privacyReceipt?.finalSubmitOccurred === true &&
+        (outcome
+          ? outcome.outcome === "submitted" &&
+            outcome.applicationRecordId === record.id &&
+            outcome.resultId === result.id &&
+            outcome.jobId === record.jobId
+          : result.state === "submitted"));
+    const run = input.runs?.find((run) => run.id === result.runId);
+    const needsAnswers = result.latestQuestionCount > result.latestAnswerCount;
+    const personStep =
+      (["blocked", "awaiting_review"].includes(result.state) &&
+        [
+          "auth_required",
+          "signup_consent_required",
+          "site_protection",
+        ].includes(result.blockerReason ?? "")) ||
+      ([
+        "required_human_input",
+        "question_grounding_failed",
+        "field_interpretation_failed",
+      ].includes(result.blockerReason ?? "") &&
+        (needsAnswers ||
+          record.questionSummary.total > record.questionSummary.answered));
+    const lastAttemptState: ApplicationRecord["lastAttemptState"] = sent
+      ? "submitted"
+      : result.state === "submitted" || outcome?.outcome === "outcome_uncertain"
+        ? "paused"
+        : result.state === "cancelled"
+          ? "cancelled"
+          : personStep
+            ? "paused"
+            : ["failed", "skipped", "blocked"].includes(result.state)
+              ? "failed"
+              : result.state === "planned" &&
+                  run &&
+                  !["running", "draft", "awaiting_submit_approval"].includes(
+                    run.state,
+                  )
+                ? "failed"
+                : [
+                      "planned",
+                      "filling",
+                      "question_capture",
+                      "submitting",
+                    ].includes(result.state)
+                  ? "in_progress"
+                  : result.blockerReason || needsAnswers || record.latestBlocker
+                    ? "paused"
+                    : result.automaticSendPending
+                      ? "in_progress"
+                      : "ready";
+    // A later failed attempt on the record wins over an older retained result.
+    const state =
+      record.lastAttemptState === "failed" &&
+      record.lastUpdatedAt > result.updatedAt
+        ? record.lastAttemptState
+        : lastAttemptState;
+    const appliedAt = sent
+      ? (outcome?.verifiedAt ?? result.completedAt ?? result.updatedAt)
+      : null;
+    return {
+      ...record,
+      lastAttemptState: markedByPerson && !sent ? "submitted" : state,
+      ...(!sent &&
+      (legacySent || result.state === "submitted" || markedByPerson)
+        ? {
+            status:
+              markedByPerson ||
+              [
+                "assessment",
+                "interview",
+                "offer",
+                "rejected",
+                "withdrawn",
+              ].includes(record.status)
+                ? record.status
+                : ("ready_for_review" as const),
+            lastActionLabel: markedByPerson
+              ? "Marked sent by you"
+              : "Not confirmed",
+            nextActionLabel: markedByPerson
+              ? "View application"
+              : "Check the site and record whether you sent it",
+          }
+        : {}),
+      ...(sent &&
+      !["assessment", "interview", "offer", "rejected", "withdrawn"].includes(
+        record.status,
+      )
+        ? { status: "submitted" as const }
+        : {}),
+      ...(appliedAt && !record.crm?.appliedAt
+        ? {
+            crm: ApplicationCrmDataSchema.parse({
+              ...(record.crm ?? {
+                stage: "applied",
+                stageSource: "activity",
+                stageChangedAt: appliedAt,
+              }),
+              appliedAt,
+            }),
+          }
+        : {}),
+    };
+  });
+}
+
+export const APPLICATION_CRM_STAGE_NAMES: Record<ApplicationCrmStage, string> =
+  {
+    discovered: "Discovered",
+    reviewing: "Reviewing",
+    shortlisted: "Shortlisted",
+    preparing: "Preparing",
+    needs_you: "Needs you",
+    ready_to_send: "Ready to send",
+    ready_for_approval: "Ready for approval",
+    failed: "Could not apply",
+    cancelled: "Cancelled by you",
+    applied: "Applied",
+    employer_viewed: "Employer viewed",
+    recruiter_contact: "Recruiter contact",
+    assessment: "Assessment",
+    interview: "Interview",
+    offer: "Offer",
+    rejected: "Rejected",
+    withdrawn: "Withdrawn",
+    no_response: "No response",
+  };
+
+export const APPLICATION_CRM_MANUAL_STAGES = applicationCrmStageValues.filter(
+  (stage) =>
+    ![
+      "preparing",
+      "needs_you",
+      "ready_to_send",
+      "ready_for_approval",
+      "failed",
+      "cancelled",
+    ].includes(stage),
+);

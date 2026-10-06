@@ -1,3 +1,4 @@
+export { readRenderedPageHtml } from "./rendered-page-reader";
 export type {
   AgentDiscoveryOptions,
   ApplicationAttachmentArtifact,

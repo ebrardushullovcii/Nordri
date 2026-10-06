@@ -1,3 +1,4 @@
+import { FAILURE_SENTENCES } from "@renderer/features/job-finder/lib/describe-failure";
 import {
   JOB_FINDER_BROWSER_NAME,
   JOB_FINDER_BROWSER_NAME_SENTENCE_START,
@@ -12,6 +13,7 @@ import {
 } from "@nordri/contracts";
 import type {
   AppearanceTheme,
+  AssistantResumeBatchState,
   ApplicationCrmSettings,
   CandidateProfile,
   DiscoveryActivityEvent,
@@ -131,6 +133,7 @@ import { describeApplicationDefaultsSave } from "@renderer/features/job-finder/s
 export { COMMAND_PENDING_RELEASE_MS };
 
 type ActionOptions = {
+  toastTone?: () => "success" | "warning";
   clearMessageOnStart?: boolean;
   /** A flow that navigates immediately keeps later failures on its destination. */
   statusOwnerPath?: string;
@@ -253,6 +256,16 @@ let isTailoredDraftPreparationRunActive = false;
  * forty-five seconds after pressing it. This flag lives as long as the run.
  */
 let tailoredDraftPreparationStopRequested = false;
+let uiResumeBatch: AssistantResumeBatchState | null = null;
+
+export function stopAssistantUiResumeBatch(batchId: string): boolean {
+  if (uiResumeBatch?.id === batchId && !uiResumeBatch.done) {
+    uiResumeBatch.stopRequested = true;
+    tailoredDraftPreparationStopRequested = true;
+    return true;
+  }
+  return false;
+}
 
 /**
  * Route ownership for the single page-level action status (`ActionState`).
@@ -303,18 +316,18 @@ export function isProfileSetupJustFinished(): boolean {
   return profileSetupJustFinished;
 }
 
-let firstSearchRequested = false;
+let firstSearchRequestedForPlan: string | null = null;
 
 /** Asks Find jobs to start the first search when it next mounts. */
-export function requestFirstSearchOnFindJobs(): void {
-  firstSearchRequested = true;
+export function requestFirstSearchOnFindJobs(campaignId: string): void {
+  firstSearchRequestedForPlan = campaignId;
 }
 
 /** True once per request; Find jobs calls it on mount. */
-export function consumeFirstSearchRequest(): boolean {
-  const requested = firstSearchRequested;
-  firstSearchRequested = false;
-  return requested;
+export function consumeFirstSearchRequest(campaignId?: string | null): boolean {
+  const requested = firstSearchRequestedForPlan;
+  firstSearchRequestedForPlan = null;
+  return requested !== null && requested === campaignId;
 }
 
 /**
@@ -560,12 +573,25 @@ function getActiveCampaignReviewQueue(
  */
 export function describeAutoApplyQueueStart(
   snapshot:
-    | Pick<JobFinderWorkspaceSnapshot, "applyRuns" | "reviewQueue">
+    | (Pick<JobFinderWorkspaceSnapshot, "applyRuns" | "reviewQueue"> &
+        Partial<Pick<JobFinderWorkspaceSnapshot, "applyJobResults">>)
     | null
     | undefined,
   jobIds: readonly string[],
   options?: { onlyWhenHeldBack?: boolean },
 ): string | null {
+  const sentJobIds = new Set(
+    (snapshot?.applyJobResults ?? [])
+      .filter(
+        (result) =>
+          result.privacyReceipt?.finalSubmitOccurred === true &&
+          (!result.privacyReceipt.submissionOutcome ||
+            result.privacyReceipt.submissionOutcome.outcome === "submitted"),
+      )
+      .map((result) => result.jobId),
+  );
+  if (jobIds.length > 0 && jobIds.every((id) => sentJobIds.has(id)))
+    return "These applications are already sent. Nothing was started.";
   const newestRun = [...(snapshot?.applyRuns ?? [])].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt),
   )[0];
@@ -624,6 +650,26 @@ export function describePreparedApplicationsSendResult(
   return notSent === 0
     ? `Sent all ${sent} applications.`
     : `Sent ${sent} of ${jobIds.length} applications. The others are in Applications with what stopped them.`;
+}
+
+export function preparedApplicationsToastTone(
+  snapshot: JobFinderWorkspaceSnapshot,
+  jobIds: readonly string[],
+): "success" | "warning" {
+  return jobIds.every((jobId) => {
+    const result = [...snapshot.applyJobResults]
+      .filter((entry) => entry.jobId === jobId)
+      .sort(
+        (left, right) =>
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      )[0];
+    return (
+      result?.state === "submitted" &&
+      result.privacyReceipt?.submissionOutcome?.outcome === "submitted"
+    );
+  })
+    ? "success"
+    : "warning";
 }
 
 export function createActionRunners(args: {
@@ -695,7 +741,10 @@ export function createActionRunners(args: {
 
     try {
       if (options?.clearMessageOnStart !== false) {
-        applyStatusMessage({ message: options?.startMessage ?? null });
+        applyStatusMessage({
+          message: options?.startMessage ?? null,
+          tone: options?.startMessage ? "progress" : null,
+        });
       }
 
       await withPendingScope(
@@ -720,12 +769,15 @@ export function createActionRunners(args: {
                 : "The workspace view could not refresh automatically.";
             applyStatusMessage({
               message: `Action completed, but the current view could not refresh automatically. ${detail}`,
+              tone: "failure",
             });
             return;
           }
 
           applyStatusMessage({
             message: resolvedSuccessMessage,
+            tone: resolvedSuccessMessage ? "success" : null,
+            ...(options?.toastTone ? { toastTone: options.toastTone() } : {}),
           });
         },
         options?.releasePendingAfterMs,
@@ -733,6 +785,7 @@ export function createActionRunners(args: {
           ? () =>
               applyStatusMessage({
                 message: options.pendingTimeoutMessage ?? null,
+                tone: "progress",
               })
           : undefined,
       );
@@ -746,7 +799,7 @@ export function createActionRunners(args: {
         error,
         "The requested Job Finder action failed.",
       );
-      applyStatusMessage({ message });
+      applyStatusMessage({ message, tone: "failure" });
       if (options?.rethrowError) {
         throw error instanceof Error ? error : new Error(message);
       }
@@ -1149,6 +1202,7 @@ export function createPrimaryPageActions(
             : createDiscoveryRunSucceededFeedback(
                 targetLabel,
                 hasReport ? formatDiscoveryRunReportLabel(reportCounts) : null,
+                hasReport ? reportCounts.new : null,
               ),
         );
       })
@@ -1224,7 +1278,9 @@ export function createPrimaryPageActions(
               return;
             }
             setResumeWorkspaceDirty(false);
-            navigate("/job-finder/applications");
+            if (jobFinderStatusRoute !== "/job-finder/applications") {
+              navigate("/job-finder/applications");
+            }
           },
           successMessage,
           // Preparation can run for minutes and can hang on a job site; the
@@ -1283,18 +1339,54 @@ export function createPrimaryPageActions(
     const preparedJobIds = collectPreparedApplicationJobIds(
       workspace.applicationRecords,
     );
-    const queue = getCampaignReviewQueue().filter(
+    const checkpoint = workspace.intelligence?.resumeBatchCheckpoint;
+    const continuing =
+      !!selectedJobIds &&
+      !!checkpoint &&
+      !checkpoint.done &&
+      !checkpoint.running &&
+      [...selectedJobIds].every((id) => checkpoint.jobIds.includes(id));
+    const queue = (
+      continuing ? workspace.reviewQueue : getCampaignReviewQueue()
+    ).filter(
       (item) =>
         !preparedJobIds.has(item.jobId) &&
         (!selectedJobIds || selectedJobIds.has(item.jobId)),
     );
-    const candidates = getTailoredDraftPreparationCandidates(queue);
+    const candidates = continuing
+      ? queue.filter((item) => !checkpoint.completedJobIds.includes(item.jobId))
+      : getTailoredDraftPreparationCandidates(queue);
     if (candidates.length === 0) {
       return;
     }
 
     const eligibleTotal = countTailoredDraftPreparationEligible(queue);
     const completedJobIds = new Set<string>();
+    const batch: AssistantResumeBatchState = {
+      id: crypto.randomUUID(),
+      jobIds: candidates.map((item) => item.jobId),
+      activeJobIds: [],
+      completedJobIds: [],
+      done: false,
+      stopRequested: false,
+      running: true,
+      durationsMs: continuing ? [...(checkpoint.durationsMs ?? [])] : [],
+      ...(continuing
+        ? {
+            requests: checkpoint.requests ?? [],
+            resumedBatchIds: (
+              workspace.intelligence.resumeBatchCheckpoints ?? [checkpoint]
+            )
+              .filter((entry) => !entry.done)
+              .map((entry) => entry.id),
+          }
+        : {}),
+    };
+    uiResumeBatch = batch;
+    const syncBatch = async () => {
+      const result = await window.nordri.assistant.syncResumeBatch(batch);
+      if (result.stopRequested) stopAssistantUiResumeBatch(batch.id);
+    };
     isTailoredDraftPreparationRunActive = true;
     tailoredDraftPreparationRunRef.current = true;
     tailoredDraftPreparationStopRequestedRef.current = false;
@@ -1311,45 +1403,128 @@ export function createPrimaryPageActions(
         totalCount: candidates.length,
       });
 
-      void prepareTailoredDraftBatch(
-        candidates,
-        async (jobId) => {
-          try {
-            await withPendingScope(
-              jobFinderPendingActions.resumeJob(jobId),
-              () => actions.generateResume(jobId),
-            );
-            completedJobIds.add(jobId);
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        {
-          onProgress: ({
-            completedCount,
-            currentIndex,
-            failedCount,
-            totalCount,
-          }) => {
-            if (tailoredDraftPreparationDisposedRef.current) return;
+      void syncBatch()
+        .then(() =>
+          prepareTailoredDraftBatch(
+            candidates,
+            async (jobId) => {
+              let startedAt: number | null = null;
+              try {
+                batch.activeJobIds.push(jobId);
+                await syncBatch();
+                if (
+                  batch.stopRequested ||
+                  tailoredDraftPreparationStopRequested ||
+                  tailoredDraftPreparationStopRequestedRef.current ||
+                  tailoredDraftPreparationDisposedRef.current
+                )
+                  return null;
+                const request = batch.requests?.findLast(
+                  (entry) => entry.jobId === jobId,
+                );
+                if (request?.level) {
+                  await actions.setJobResumeApplicationMode(
+                    jobId,
+                    "tailored_per_job",
+                    request.level === "light"
+                      ? "conservative"
+                      : request.level === "tailored"
+                        ? "balanced"
+                        : "aggressive",
+                  );
+                }
+                const current = latestWorkspaceRef.current ?? workspace;
+                if (
+                  current.reviewQueue.find((item) => item.jobId === jobId)
+                    ?.resumeApplicationMode === "original_resume" &&
+                  !request?.level
+                ) {
+                  completedJobIds.add(jobId);
+                  batch.completedJobIds.push(jobId);
+                  return "original";
+                }
+                startedAt = Date.now();
+                const generated = await withPendingScope(
+                  jobFinderPendingActions.resumeJob(jobId),
+                  () =>
+                    continuing &&
+                    current.resumeDrafts.some((draft) => draft.jobId === jobId)
+                      ? actions.regenerateResumeDraft(jobId)
+                      : actions.generateResume(jobId),
+                );
+                const failed = generated?.tailoredAssets?.find(
+                  (entry) => entry.jobId === jobId,
+                )?.failureMessage;
+                if (failed) return false;
+                batch.durationsMs!.push(Math.max(0, Date.now() - startedAt));
+                completedJobIds.add(jobId);
+                batch.completedJobIds.push(jobId);
+                if (
+                  generated?.reviewQueue?.find((item) => item.jobId === jobId)
+                    ?.resumeApplicationMode === "original_resume"
+                ) {
+                  return "original";
+                }
+                if (
+                  generated?.reviewQueue &&
+                  !generated.reviewQueue.some((item) => item.jobId === jobId)
+                ) {
+                  return "cancelled";
+                }
+                // A finished generation counts as written unless its asset
+                // says the AI was unavailable and the saved wording was kept.
+                const asset = generated?.tailoredAssets?.find(
+                  (entry) => entry.jobId === jobId,
+                );
+                return asset?.generationMethod === "deterministic"
+                  ? "fallback"
+                  : "written";
+              } catch {
+                return false;
+              } finally {
+                batch.activeJobIds = batch.activeJobIds.filter(
+                  (id) => id !== jobId,
+                );
+                await syncBatch();
+              }
+            },
+            {
+              includeExisting: continuing,
+              onProgress: ({
+                completedCount,
+                fallbackCount,
+                originalChoiceCount,
+                cancelledCount,
+                currentIndex,
+                failedCount,
+                totalCount,
+              }) => {
+                if (tailoredDraftPreparationDisposedRef.current) return;
 
-            setTailoredDraftPreparation((current) => ({
-              ...current,
-              attemptedCount: currentIndex,
-              completedCount,
-              failedCount,
-              currentIndex,
-              totalCount,
-              status: "running",
-            }));
-          },
-          shouldStop: () =>
-            tailoredDraftPreparationStopRequested ||
-            tailoredDraftPreparationStopRequestedRef.current ||
-            tailoredDraftPreparationDisposedRef.current,
-        },
-      )
+                setTailoredDraftPreparation((current) => ({
+                  ...current,
+                  attemptedCount: currentIndex,
+                  durationsMs: [...(batch.durationsMs ?? [])],
+                  completedCount,
+                  ...(fallbackCount ? { fallbackCount } : {}),
+                  ...(originalChoiceCount ? { originalChoiceCount } : {}),
+                  ...(cancelledCount ? { cancelledCount } : {}),
+                  failedCount,
+                  currentIndex,
+                  totalCount,
+                  status: "running",
+                  stopRequested:
+                    batch.stopRequested ||
+                    tailoredDraftPreparationStopRequested,
+                }));
+              },
+              shouldStop: () =>
+                tailoredDraftPreparationStopRequested ||
+                tailoredDraftPreparationStopRequestedRef.current ||
+                tailoredDraftPreparationDisposedRef.current,
+            },
+          ),
+        )
         .then((result) => {
           // A disposed controller no longer owns visible state; skip the
           // final aggregate write instead of updating a dead tree.
@@ -1374,6 +1549,15 @@ export function createPrimaryPageActions(
           const finalState: TailoredDraftPreparationViewState = {
             attemptedCount: result.attemptedCount,
             completedCount: result.completedCount,
+            ...(result.fallbackCount
+              ? { fallbackCount: result.fallbackCount }
+              : {}),
+            ...(result.originalChoiceCount
+              ? { originalChoiceCount: result.originalChoiceCount }
+              : {}),
+            ...(result.cancelledCount
+              ? { cancelledCount: result.cancelledCount }
+              : {}),
             currentIndex: null,
             eligibleRemainingCount: Math.max(
               0,
@@ -1401,7 +1585,21 @@ export function createPrimaryPageActions(
             ownerStartRoute,
           );
         })
-        .finally(() => {
+        .catch(() => {
+          if (tailoredDraftPreparationDisposedRef.current) return;
+          setTailoredDraftPreparation((current) => ({
+            ...current,
+            status: "failed",
+          }));
+        })
+        .finally(async () => {
+          batch.running = false;
+          batch.done =
+            !batch.stopRequested &&
+            !tailoredDraftPreparationStopRequested &&
+            !tailoredDraftPreparationDisposedRef.current;
+          batch.activeJobIds = [];
+          await syncBatch().catch(() => undefined);
           isTailoredDraftPreparationRunActive = false;
           tailoredDraftPreparationStopRequested = false;
           tailoredDraftPreparationRunRef.current = false;
@@ -1494,7 +1692,9 @@ export function createPrimaryPageActions(
               }),
             () => {
               setResumeWorkspaceDirty(false);
-              navigate("/job-finder/applications");
+              if (jobFinderStatusRoute !== "/job-finder/applications") {
+                navigate("/job-finder/applications");
+              }
             },
             "Applications updated. Check the latest attempt and next step there.",
             {
@@ -1528,7 +1728,7 @@ export function createPrimaryPageActions(
     ): Promise<JobFinderAutoApplyQueueStartOutcome> => {
       const capacityRefusal = getDailyCapacityRefusalMessage();
       if (capacityRefusal) {
-        applyRouteScopedMessage({ message: capacityRefusal });
+        applyRouteScopedMessage({ message: capacityRefusal, tone: "failure" });
         return {
           status: "refused",
           reason: "daily_capacity_exhausted",
@@ -1573,7 +1773,9 @@ export function createPrimaryPageActions(
         () => {
           setResumeWorkspaceDirty(false);
           if (!options?.stayOnCurrentPage) {
-            navigate("/job-finder/applications");
+            if (jobFinderStatusRoute !== "/job-finder/applications") {
+              navigate("/job-finder/applications");
+            }
           }
         },
         (snapshot) =>
@@ -1595,7 +1797,7 @@ export function createPrimaryPageActions(
     onStartAutoApply: (input: JobFinderApplicationStartTarget) => {
       const capacityRefusal = getDailyCapacityRefusalMessage();
       if (capacityRefusal) {
-        applyRouteScopedMessage({ message: capacityRefusal });
+        applyRouteScopedMessage({ message: capacityRefusal, tone: "failure" });
         return;
       }
 
@@ -1605,10 +1807,30 @@ export function createPrimaryPageActions(
         jobFinderPendingActions.apply(),
       );
     },
+    onReviewResumePdf: (jobId: string) => {
+      const current = latestWorkspaceRef.current ?? workspace;
+      const approved = current.resumeExportArtifacts.some(
+        (artifact) => artifact.jobId === jobId && artifact.isApproved,
+      );
+      if (!approved) {
+        navigate(buildResumeWorkspaceRoute(jobId));
+        applyRouteScopedMessage({
+          message: "Review and approve a PDF for this job, then apply again.",
+          tone: "failure",
+        });
+        return;
+      }
+      void runAction(
+        () => actions.setJobResumeApplicationMode(jobId, "tailored_per_job"),
+        () => navigate(buildResumeWorkspaceRoute(jobId)),
+        "This job will use your approved PDF. Review it before applying again.",
+        { scope: jobFinderPendingActions.resumeJob(jobId) },
+      );
+    },
     onStartApplyCopilot: (input: JobFinderApplicationStartTarget) => {
       const capacityRefusal = getDailyCapacityRefusalMessage();
       if (capacityRefusal) {
-        applyRouteScopedMessage({ message: capacityRefusal });
+        applyRouteScopedMessage({ message: capacityRefusal, tone: "failure" });
         return;
       }
 
@@ -1628,12 +1850,17 @@ export function createPrimaryPageActions(
       );
     },
     onSubmitPreparedApplication: async (jobId: string): Promise<void> => {
+      let toastTone: "success" | "warning" = "warning";
       await runAction(
         () => actions.submitPreparedApplication({ jobId }),
         () => undefined,
-        (snapshot) => describePreparedApplicationSubmitResult(snapshot, jobId),
+        (snapshot) => {
+          toastTone = preparedApplicationsToastTone(snapshot, [jobId]);
+          return describePreparedApplicationSubmitResult(snapshot, jobId);
+        },
         {
           scope: jobFinderPendingActions.apply(),
+          toastTone: () => toastTone,
           releasePendingAfterMs: COMMAND_PENDING_RELEASE_MS,
           pendingTimeoutMessage:
             "This took too long to confirm. Check its status before trying again.",
@@ -1643,18 +1870,20 @@ export function createPrimaryPageActions(
     onSendPreparedApplications: async (
       jobIds: readonly string[],
     ): Promise<void> => {
+      let toastTone: "success" | "warning" = "warning";
       await runAction(
         // One permission covers the whole press; main then sends each kept
         // page in turn. A page that is gone is recorded on that job alone
         // and the rest still go out.
         () => actions.sendPreparedApplications({ jobIds: [...jobIds] }),
         () => undefined,
-        (snapshot) =>
-          snapshot
-            ? describePreparedApplicationsSendResult(snapshot, jobIds)
-            : null,
+        (snapshot) => {
+          toastTone = preparedApplicationsToastTone(snapshot, jobIds);
+          return describePreparedApplicationsSendResult(snapshot, jobIds);
+        },
         {
           scope: jobFinderPendingActions.apply(),
+          toastTone: () => toastTone,
         },
       );
     },
@@ -1745,7 +1974,7 @@ export function createPrimaryPageActions(
       ),
     onRemoveReviewJob: (jobId: string) => {
       void confirmLeaveDirtyResumeWorkspace(
-        "move this job back to Find jobs",
+        "remove this job from Shortlisted",
       ).then((mayLeave) => {
         if (!mayLeave) {
           return;
@@ -1755,8 +1984,11 @@ export function createPrimaryPageActions(
           () => actions.removeJobFromReview(jobId),
           () => {
             clearResumeWorkspaceState();
-            setSelectedReviewJobId("");
-            navigate("/job-finder/discovery");
+            const queue = getCampaignReviewQueue();
+            const index = queue.findIndex((item) => item.jobId === jobId);
+            const next = queue[index + 1] ?? queue[index - 1];
+            setSelectedReviewJobId(next?.jobId ?? "");
+            navigate("/job-finder/review-queue", { replace: true });
           },
           "Job moved back to Find jobs.",
           { scope: jobFinderPendingActions.resumeJob(jobId) },
@@ -1807,7 +2039,7 @@ export function createPrimaryPageActions(
     onApproveResumeAndApply: (jobId: string) => {
       const capacityRefusal = getDailyCapacityRefusalMessage();
       if (capacityRefusal) {
-        applyRouteScopedMessage({ message: capacityRefusal });
+        applyRouteScopedMessage({ message: capacityRefusal, tone: "failure" });
         return;
       }
       // Light and Tailored drafts keep every fact the person wrote, so
@@ -1938,7 +2170,10 @@ export function createPrimaryPageActions(
             case "needs_text":
               return `${fileName} was saved, but no text could be read from it, so no details were extracted. Try another file, or add your details manually in Profile.`;
             case "failed":
-              return `${fileName} was saved, but extracting its details failed. Try importing it again, or add your details manually in Profile.`;
+              return (
+                result.latestResumeImportRun?.errorMessage ??
+                `${fileName} was saved, but extracting its details failed. Try importing it again, or add your details manually in Profile.`
+              );
             case "not_started":
               return `${fileName} was saved, but its details have not been extracted yet. Open Profile and refresh from the saved resume.`;
           }
@@ -2024,6 +2259,11 @@ export function createPrimaryPageActions(
         },
       );
     },
+    onAssessJobListing: async (jobId: string) => {
+      await withPendingScope(jobFinderPendingActions.discoveryJob(jobId), () =>
+        actions.assessJobListing(jobId),
+      );
+    },
     onQueueJob: async (jobId: string): Promise<JobFinderQueuedJobOutcome> => {
       // Request-local shortlist outcome: the awaited result belongs to this
       // exact click, so overlapping shortlists resolving out of order can
@@ -2044,6 +2284,7 @@ export function createPrimaryPageActions(
         applyRouteScopedMessage(
           {
             message: successMessage,
+            tone: "success",
             actionLink: {
               label: "Open Shortlisted",
               route: "/job-finder/review-queue",
@@ -2065,7 +2306,10 @@ export function createPrimaryPageActions(
           error,
           "The requested Job Finder action failed.",
         );
-        applyRouteScopedMessage({ message: failureMessage }, ownerStartRoute);
+        applyRouteScopedMessage(
+          { message: failureMessage, tone: "failure" },
+          ownerStartRoute,
+        );
         return { status: "failure", message: failureMessage };
       }
     },
@@ -2082,6 +2326,12 @@ export function createPrimaryPageActions(
 
       tailoredDraftPreparationStopRequestedRef.current = true;
       tailoredDraftPreparationStopRequested = true;
+      if (uiResumeBatch && !uiResumeBatch.done) {
+        uiResumeBatch.stopRequested = true;
+        void window.nordri.assistant
+          .syncResumeBatch(uiResumeBatch)
+          .catch(() => undefined);
+      }
       // Show at once that the press landed; the active drafts still finish.
       setTailoredDraftPreparation((current) =>
         current.status === "running"
@@ -2123,7 +2373,23 @@ export function createPrimaryPageActions(
             resumeApplicationMode,
             resumeTailoringMode,
           );
-          return rewrite ? actions.regenerateResumeDraft(jobId) : snapshot;
+          if (!rewrite) return snapshot;
+          try {
+            return await actions.regenerateResumeDraft(jobId);
+          } catch (error) {
+            // A rewrite that failed changed nothing (ADR 0041), so the level
+            // goes back to the one the resume on screen was written at.
+            if (item) {
+              await actions
+                .setJobResumeApplicationMode(
+                  jobId,
+                  item.resumeApplicationMode,
+                  item.resumeTailoringMode,
+                )
+                .catch(() => undefined);
+            }
+            throw error;
+          }
         },
         () => setSelectedReviewJobId(jobId),
         rewrite
@@ -2186,7 +2452,16 @@ export function createPrimaryPageActions(
     },
     onRegenerateResumeDraft: (jobId: string) =>
       void runResumeWorkspaceAction(
-        () => actions.regenerateResumeDraft(jobId),
+        async () => {
+          try {
+            return await actions.regenerateResumeDraft(jobId);
+          } catch (error) {
+            await refreshResumeWorkspace(jobId).catch(() => undefined);
+            throw new Error(FAILURE_SENTENCES.assistant_unavailable, {
+              cause: error,
+            });
+          }
+        },
         async () => {
           await refreshResumeWorkspace(jobId);
         },
@@ -2428,6 +2703,7 @@ export function createPrimaryPageActions(
             : "Saved.");
       let handOffToFindJobs = false;
       let startFirstSearch = false;
+      let firstSearchCampaignId: string | null = null;
 
       return void runSaveAction({
         action: async () => {
@@ -2501,12 +2777,19 @@ export function createPrimaryPageActions(
             // this same step is not in the workspace the handler closed over,
             // so the first search was never requested.
             startFirstSearch = shouldStartFirstSearchAfterSetup(snapshot);
+            firstSearchCampaignId = snapshot.activeCampaignId;
           }
 
           return actions
             .saveProfileSetupState({
               ...snapshot.profileSetupState,
               reviewItems,
+              reviewedSteps: [
+                ...new Set([
+                  ...(snapshot.profileSetupState.reviewedSteps ?? []),
+                  snapshot.profileSetupState.currentStep,
+                ]),
+              ],
               status: nextStatus,
               currentStep:
                 nextStatus === "completed"
@@ -2551,8 +2834,8 @@ export function createPrimaryPageActions(
           // the first search itself instead of waiting for a second press of
           // Search now. Only before any search has run. Find jobs starts it
           // once it has mounted, so the hand-off navigation is never raced.
-          if (startFirstSearch) {
-            requestFirstSearchOnFindJobs();
+          if (startFirstSearch && firstSearchCampaignId) {
+            requestFirstSearchOnFindJobs(firstSearchCampaignId);
           }
           navigate("/job-finder/discovery", { replace: true });
         }
@@ -2565,6 +2848,7 @@ export function createPrimaryPageActions(
     onSaveAll: (
       profile: CandidateProfile,
       searchPreferences: JobSearchPreferences,
+      savedSection?: "sources",
     ) =>
       void runSaveAction({
         action: () => actions.saveWorkspaceInputs(profile, searchPreferences),
@@ -2573,10 +2857,18 @@ export function createPrimaryPageActions(
           searchPreferences,
         }),
         failedFallback:
-          "Profile and saved answers were not saved. Retry before leaving this page.",
-        label: "Profile and saved answers",
+          savedSection === "sources"
+            ? "Job sources were not saved. Retry before leaving this page."
+            : "Profile and saved answers were not saved. Retry before leaving this page.",
+        label:
+          savedSection === "sources"
+            ? "Job sources"
+            : "Profile and saved answers",
         onSuccess: () => undefined,
-        savedMessage: "Profile and saved answers saved.",
+        savedMessage:
+          savedSection === "sources"
+            ? "Job sources saved."
+            : "Profile and saved answers saved.",
         scope: jobFinderPendingActions.profileMutation(),
         surface: "answers",
       }),
@@ -2611,6 +2903,37 @@ export function createPrimaryPageActions(
         const ownerStartRoute = jobFinderStatusRoute;
         const jobId = draft.jobId;
         let saveSucceeded = false;
+
+        // A language rewrite is AI work, not an unsaved editor draft. Its
+        // failure and retry belong to Resume Studio, never the global save notice.
+        if (
+          (draft.language ?? null) !==
+          (activeRouteResumeWorkspace?.draft.language ?? null)
+        ) {
+          await runResumeWorkspaceAction(
+            async () => {
+              try {
+                return await actions.saveResumeDraft(draft);
+              } catch (error) {
+                throw new Error(FAILURE_SENTENCES.assistant_unavailable, {
+                  cause: error,
+                });
+              }
+            },
+            async (snapshot) => {
+              const savedDraft = snapshot.resumeDrafts.find(
+                (entry) => entry.id === draft.id,
+              );
+              if (savedDraft) onSaved?.(savedDraft.updatedAt);
+              saveSucceeded = await refreshResumeWorkspace(jobId);
+              if (saveSucceeded && isCurrentResumeWorkspaceJob(jobId))
+                await next();
+            },
+            successMessage ?? "Changes saved.",
+            { scope: jobFinderPendingActions.resumeJob(jobId) },
+          );
+          return;
+        }
 
         await runSaveAction({
           action: () => actions.saveResumeDraft(draft),

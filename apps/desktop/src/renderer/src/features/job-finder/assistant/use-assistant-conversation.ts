@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AssistantActivity,
+  AssistantNavigationDisplay,
   AssistantAttachment,
   AssistantContextReference,
   AssistantConversation,
@@ -175,7 +176,7 @@ export function applyAssistantEvent(
 }
 
 export function useAssistantConversation(options: {
-  onOpenRoute: (route: string) => void;
+  onOpenRoute: (route: string) => Promise<AssistantNavigationDisplay> | void;
 }) {
   const bridge =
     typeof window === "undefined" ? undefined : window.nordri?.assistant;
@@ -269,7 +270,23 @@ export function useAssistantConversation(options: {
         event.payload.type === "open_route" &&
         event.conversationId === stateRef.current.conversationId
       ) {
-        onOpenRoute.current(event.payload.route);
+        const requestId = event.payload.navigationRequestId;
+        if (requestId) {
+          void Promise.resolve(onOpenRoute.current(event.payload.route))
+            .then((display) => {
+              if (display)
+                return bridge.acknowledgeNavigation({
+                  ...display,
+                  conversationId: event.conversationId,
+                  navigationRequestId: requestId,
+                });
+              return undefined;
+            })
+            .catch(() => undefined);
+        } else
+          void Promise.resolve(onOpenRoute.current(event.payload.route)).catch(
+            () => undefined,
+          );
       }
       if (event.sequence === 0) {
         setState((current) => applyAssistantEvent(current, event));

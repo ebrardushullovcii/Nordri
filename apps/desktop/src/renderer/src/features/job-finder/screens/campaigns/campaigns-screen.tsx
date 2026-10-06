@@ -1,7 +1,10 @@
+import { discoverySourceFailureCopy } from "../discovery/discovery-source-failure-copy";
+import { describeFailure } from "../../lib/describe-failure";
 import {
   DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   describeDiscoveryRunFailureReason,
   getDefaultCampaignConfiguration,
+  resolveCampaignSourceTargetIds,
   type CampaignDigest,
   type CampaignPauseWindow,
   type CampaignRuleFunnelProjection,
@@ -15,7 +18,7 @@ import {
   type SaveCampaignRuleInput,
   type SaveJobSearchCampaignInput,
 } from "@nordri/contracts";
-import { ChevronRight } from "lucide-react";
+import { trackerTimeToIso } from "../applications/applications-tracker-time";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -35,22 +38,33 @@ import {
   formatPlanTimestamp,
   inferProfileTimeZone,
   isSupportedTimeZone,
+  resolvePlanTimeZone,
 } from "../../lib/job-finder-timestamp-format";
-import { jobSourceLabel } from "../../lib/job-source-display-name";
+import {
+  jobSourceLabel,
+  deriveJobSourceLabel,
+} from "../../lib/job-source-display-name";
 import {
   formatDiscoveryRunReportLabel,
   getDiscoveryRunReportCounts,
   hasDiscoveryRunReportCounts,
   readDiscoveryRunReportCounts,
-  resolveDiscoveryRunAlreadyHereCount,
   type DiscoveryRunReportCounts,
 } from "../../lib/discovery-run-count-label";
+
+function isHostOnlySourceLabel(label: string, startingUrl: string): boolean {
+  try {
+    return label === new URL(startingUrl).hostname;
+  } catch {
+    return false;
+  }
+}
 
 const jobFinderDateInputLocale = getJobFinderDateInputLocale();
 
 const splitList = (value: string) =>
   value
-    .split(",")
+    .split(/[,;\r\n]+/u)
     .map((item) => item.trim())
     .filter(Boolean);
 
@@ -61,20 +75,35 @@ function ListTextInput(props: {
   onChange: (values: string[]) => void;
   placeholder: string;
   values: readonly string[];
+  preserveCommas?: boolean;
+  title?: string;
 }) {
-  const joined = props.values.join(", ");
+  const parse = useCallback(
+    (value: string) =>
+      props.preserveCommas
+        ? value
+            .split(/[;\r\n]+/u)
+            .map((item) => item.trim())
+            .filter(Boolean)
+        : splitList(value),
+    [props.preserveCommas],
+  );
+  const joined = props.values.join(props.preserveCommas ? "; " : ", ");
   const [text, setText] = useState(joined);
   useEffect(() => {
     setText((current) =>
-      splitList(current).join(", ") === joined ? current : joined,
+      parse(current).join(props.preserveCommas ? "; " : ", ") === joined
+        ? current
+        : joined,
     );
-  }, [joined]);
+  }, [joined, parse, props.preserveCommas]);
   return (
     <Input
+      title={props.title}
       onBlur={() => setText(joined)}
       onChange={(event) => {
         setText(event.target.value);
-        props.onChange(splitList(event.target.value));
+        props.onChange(parse(event.target.value));
       }}
       placeholder={props.placeholder}
       value={text}
@@ -86,11 +115,24 @@ const runOutcomeLabels: Record<
   NonNullable<JobSearchCampaignSchedule["runFacts"]["lastRunOutcome"]>,
   string
 > = {
-  success: "succeeded",
-  partial: "partially completed",
-  failed: "failed",
-  skipped: "skipped",
+  success: "Finished",
+  partial: "Finished with some sources incomplete",
+  failed: "Failed",
+  skipped: "Skipped",
 };
+
+function describePlanHistory(
+  entry: JobSearchCampaign["history"][number],
+): string {
+  if (entry.kind === "activated") return "Made current.";
+  if (entry.kind === "created") {
+    if (entry.summary.endsWith("created in precision mode."))
+      return "Created with the Focused search setting.";
+    if (entry.summary.endsWith("created in scale mode."))
+      return "Created with the Wider search setting.";
+  }
+  return entry.summary;
+}
 
 function localTimeZone(): string {
   return deviceTimeZone();
@@ -156,9 +198,15 @@ function describeScheduleStart(
   const suffix = hour < 12 ? "AM" : "PM";
   const time = `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
   const zone = schedule.timeZone?.trim();
-  return zone && zone !== deviceTimeZone()
-    ? `Runs at ${time} ${zone}`
-    : `Runs at ${time}`;
+  const days =
+    schedule.mode === "selected_days"
+      ? [...new Set(schedule.daysOfWeek)]
+          .sort((a, b) => a - b)
+          .map((day) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day])
+          .join(", ")
+      : null;
+  const start = days ? `Runs ${days} at ${time}` : `Runs at ${time}`;
+  return zone && zone !== deviceTimeZone() ? `${start} ${zone}` : start;
 }
 
 function describeNextRun(schedule: JobSearchCampaignSchedule): string {
@@ -169,7 +217,7 @@ function describeNextRun(schedule: JobSearchCampaignSchedule): string {
     }
     return "Next run not scheduled yet";
   }
-  return formatPlanCardDateTime(nextRunAt) ?? "Next run not scheduled yet";
+  return `${formatPlanTimestamp(nextRunAt, schedule.timeZone)} (${resolvePlanTimeZone(schedule.timeZone)})`;
 }
 
 /**
@@ -204,14 +252,12 @@ function readPlanRunReport(
   runs: readonly DiscoveryRunRecord[] | undefined,
   digest: CampaignDigest | null,
 ): DiscoveryRunReportCounts {
-  const fromDigest = readDiscoveryRunReportCounts(digest?.report ?? null);
-  if (hasDiscoveryRunReportCounts(fromDigest)) {
-    return fromDigest;
-  }
   const run = (runs ?? []).find(
     (candidate) => candidate.id === digest?.discoveryRunId,
   );
-  return getDiscoveryRunReportCounts(run ?? null);
+  const fromRun = getDiscoveryRunReportCounts(run ?? null);
+  if (hasDiscoveryRunReportCounts(fromRun)) return fromRun;
+  return readDiscoveryRunReportCounts(digest?.report ?? null);
 }
 
 /**
@@ -228,7 +274,19 @@ export function describePlanRunFailure(
   const run = (runs ?? []).find(
     (candidate) => candidate.id === digest?.discoveryRunId,
   );
-  return describeDiscoveryRunFailureReason(run ?? null);
+  if (digest?.outcome === "interrupted")
+    return "This search was interrupted when the app closed.";
+  if (digest?.outcome === "stopped" || run?.state === "cancelled")
+    return "This search was stopped before all sources finished.";
+  const reason = describeDiscoveryRunFailureReason(run ?? null);
+  return reason
+    ? describeFailure(reason, {
+        unknownSentence:
+          reason.includes("page.") || reason.includes("\u001b")
+            ? "The source could not be read. Try again."
+            : reason,
+      }).sentence
+    : null;
 }
 
 /**
@@ -329,7 +387,15 @@ function describeLastRun(
    * for a run whose counts were on screen. A run with a report ran.
    */
   report?: DiscoveryRunReportCounts | null,
+  run?: DiscoveryRunRecord | null,
+  digest?: CampaignDigest | null,
 ): string {
+  const stopped = digest?.outcome === "stopped" || run?.state === "cancelled";
+  const interrupted =
+    digest?.outcome === "interrupted" || run?.runPhase === "interrupted";
+  if (stopped || interrupted) {
+    return `${interrupted ? "Interrupted" : "Stopped"} · ${formatPlanCardDateTime(run?.completedAt ?? run?.startedAt ?? digest?.generatedAt ?? null) ?? "unknown time"}`;
+  }
   const facts = schedule.runFacts;
   const runIsWitnessedByItsReport = report
     ? hasDiscoveryRunReportCounts(report)
@@ -357,15 +423,6 @@ function describeLastRun(
     : `Ran · ${witnessed} (outcome not recorded)`;
 }
 
-/** Converts a `datetime-local` input value to an ISO-8601 UTC instant. */
-function toIsoDateTime(localValue: string): string | null {
-  const trimmed = localValue.trim();
-  if (!trimmed) return null;
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
-}
-
 function campaignToInput(
   campaign: JobSearchCampaign,
 ): SaveJobSearchCampaignInput {
@@ -377,6 +434,7 @@ function campaignToInput(
     status: campaign.status,
     searchPreferences: campaign.searchPreferences,
     sourceTargetIds: campaign.sourceTargetIds,
+    sourceSelectionMode: campaign.sourceSelectionMode,
     minimumFitScore: campaign.minimumFitScore,
     limits: campaign.limits,
     stopRules: campaign.stopRules,
@@ -429,6 +487,9 @@ function newCampaignFrom(
     status: "active",
     searchPreferences,
     sourceTargetIds: campaign?.sourceTargetIds ?? [],
+    sourceSelectionMode:
+      campaign?.sourceSelectionMode ??
+      (campaign?.sourceTargetIds.length ? "selected" : "profile"),
     minimumFitScore: campaign?.minimumFitScore ?? null,
     limits: defaults.limits,
     stopRules: defaults.stopRules,
@@ -478,14 +539,12 @@ function CampaignEditor(props: {
   const [draft, setDraft] = useState(props.campaign);
   // The same rule the run uses: the plan's own selection, or Profile's
   // Include in search when the plan has not chosen any.
-  const plannedSourceCount =
-    draft.sourceTargetIds.length > 0
-      ? draft.searchPreferences.discovery.targets.filter((target) =>
-          draft.sourceTargetIds.includes(target.id),
-        ).length
-      : draft.searchPreferences.discovery.targets.filter(
-          (target) => target.enabled,
-        ).length;
+  const includedSourceIds = resolveCampaignSourceTargetIds(draft);
+  const plannedSourceCount = includedSourceIds.length;
+  const followsProfileSources =
+    draft.sourceSelectionMode === "profile" ||
+    (draft.sourceSelectionMode === undefined &&
+      draft.sourceTargetIds.length === 0);
   // The baseline a dirty check compares against moves forward on every
   // successful save, so a saved plan is never treated as an unsaved draft.
   const [baselineCampaign, setBaselineCampaign] = useState(props.campaign);
@@ -517,8 +576,14 @@ function CampaignEditor(props: {
     // window.confirm; staying is the safe default.
     setDiscardConfirmationOpen(true);
   };
-  const pauseWindowStart = toIsoDateTime(pauseWindowStartsAt);
-  const pauseWindowEnd = toIsoDateTime(pauseWindowEndsAt);
+  const pauseWindowStart = trackerTimeToIso(
+    pauseWindowStartsAt,
+    resolvePlanTimeZone(draft.schedule.timeZone),
+  );
+  const pauseWindowEnd = trackerTimeToIso(
+    pauseWindowEndsAt,
+    resolvePlanTimeZone(draft.schedule.timeZone),
+  );
   const pauseWindowValidationMessage =
     pauseWindowStartsAt.trim() && pauseWindowStart === null
       ? "Enter a valid start date and time."
@@ -631,6 +696,36 @@ function CampaignEditor(props: {
           </h2>
         </div>
 
+        <label className="grid gap-1 text-sm">
+          Search pickiness
+          <select
+            aria-label="Search pickiness"
+            className="h-11 rounded-(--radius-field) border border-(--field-border) bg-(--field) px-3.5 text-(length:--text-field) outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]"
+            value={draft.searchPreferences.searchSelectivity ?? ""}
+            onChange={(event) => {
+              const searchPreferences = { ...draft.searchPreferences };
+              if (event.target.value === "") {
+                delete searchPreferences.searchSelectivity;
+              } else {
+                searchPreferences.searchSelectivity = event.target.value as
+                  | "best_matches"
+                  | "balanced"
+                  | "wide_net";
+              }
+              setDraft({ ...draft, searchPreferences });
+            }}
+          >
+            <option value="">Use Settings</option>
+            <option value="best_matches">Best matches only</option>
+            <option value="balanced">Balanced</option>
+            <option value="wide_net">Cast a wide net</option>
+          </select>
+          <span className="text-xs text-foreground-muted">
+            {draft.searchPreferences.searchSelectivity
+              ? "This choice applies to every run of this plan, including scheduled searches."
+              : "This plan uses the search pickiness saved in Settings."}
+          </span>
+        </label>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">Name</span>
@@ -782,7 +877,9 @@ function CampaignEditor(props: {
                     },
                   })
                 }
-                placeholder="Worldwide remote, Prishtina"
+                preserveCommas
+                placeholder="Seattle, WA; Portland, OR"
+                title="Separate places with semicolons. Commas stay within a place."
                 values={draft.searchPreferences.locations}
               />
             </label>
@@ -798,7 +895,8 @@ function CampaignEditor(props: {
                     },
                   })
                 }
-                placeholder="Locations that cannot work"
+                preserveCommas
+                placeholder="Paris; Berlin"
                 values={draft.searchPreferences.excludedLocations}
               />
             </label>
@@ -866,10 +964,27 @@ function CampaignEditor(props: {
             <fieldset className="grid gap-2">
               <legend className="text-sm">Included sources</legend>
               <p className="text-xs leading-5 text-foreground-muted">
-                This is the live source list from Profile. New sources follow
-                Profile&apos;s Include in search setting until you change this
-                plan.
+                These sources control new searches. Saved jobs may be shared
+                with other plans when they match this plan’s roles and places.
+                When using Profile, newly enabled sources are included
+                automatically. Choosing individual sources keeps that list.
               </p>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={followsProfileSources}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      sourceSelectionMode: event.target.checked
+                        ? "profile"
+                        : "selected",
+                      sourceTargetIds: includedSourceIds,
+                    })
+                  }
+                />
+                Use enabled sources from Profile
+              </label>
               <div className="grid max-h-44 gap-2 overflow-y-auto rounded-(--radius-field) border border-border-subtle p-3 sm:grid-cols-2">
                 {draft.searchPreferences.discovery.targets.map((target) => (
                   <label
@@ -877,28 +992,46 @@ function CampaignEditor(props: {
                     key={target.id}
                   >
                     <input
-                      checked={draft.sourceTargetIds.includes(target.id)}
+                      aria-label={
+                        isHostOnlySourceLabel(target.label, target.startingUrl)
+                          ? deriveJobSourceLabel(target.startingUrl)
+                          : target.label
+                      }
+                      checked={includedSourceIds.includes(target.id)}
                       onChange={(event) => {
                         setDraft({
                           ...draft,
                           // A plan owns only its selected ids. The source's
                           // Profile-level Include flag is a separate choice
                           // and must not be rewritten by this checkbox.
+                          sourceSelectionMode: "selected",
                           sourceTargetIds: event.target.checked
                             ? [
-                                ...new Set([
-                                  ...draft.sourceTargetIds,
-                                  target.id,
-                                ]),
+                                ...new Set([...includedSourceIds, target.id]),
                               ]
-                            : draft.sourceTargetIds.filter(
+                            : includedSourceIds.filter(
                                 (candidateId) => candidateId !== target.id,
                               ),
                         });
                       }}
                       type="checkbox"
                     />
-                    {target.label}
+                    <span className="min-w-0">
+                      <span className="block">
+                        {isHostOnlySourceLabel(target.label, target.startingUrl)
+                          ? deriveJobSourceLabel(target.startingUrl)
+                          : target.label}
+                      </span>
+                      {!target.enabled &&
+                      includedSourceIds.includes(target.id) ? (
+                        <span className="block text-xs text-foreground-muted">
+                          Off in Profile; this plan still searches it
+                        </span>
+                      ) : null}
+                      <span className="block break-all text-xs text-foreground-muted">
+                        {target.startingUrl}
+                      </span>
+                    </span>
                   </label>
                 ))}
               </div>
@@ -997,6 +1130,35 @@ function CampaignEditor(props: {
                   <option value="month">Monthly</option>
                   <option value="year">Yearly</option>
                 </select>
+              </label>
+              <label className="grid gap-1 text-sm">
+                Minimum pay counts as
+                <select
+                  aria-label="Minimum pay counts as"
+                  className="h-11 rounded-(--radius-field) border border-(--field-border) bg-(--field) px-3.5 text-(length:--text-field) outline-none focus-visible:border-(--field-focus-border) focus-visible:bg-(--field-strong) focus-visible:shadow-[var(--field-focus-shadow)]"
+                  value={draft.searchPreferences.compensation.basis ?? "base"}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      searchPreferences: {
+                        ...draft.searchPreferences,
+                        compensation: {
+                          ...draft.searchPreferences.compensation,
+                          basis: event.target.value as "base" | "total_ote",
+                        },
+                      },
+                    })
+                  }
+                >
+                  <option value="base">Base salary</option>
+                  <option value="total_ote">
+                    Total pay including commission (OTE)
+                  </option>
+                </select>
+                <span className="text-xs text-foreground-muted">
+                  Job assessments compare pay on this basis. Unclear pay needs
+                  review.
+                </span>
               </label>
             </div>
           </div>
@@ -1228,8 +1390,15 @@ function CampaignEditor(props: {
                         {window.enabled ? "Active" : "Disabled"}
                       </label>
                       <div className="text-sm text-foreground-soft">
-                        {formatDateTime(window.startsAt) ?? window.startsAt} →{" "}
-                        {formatDateTime(window.endsAt) ?? window.endsAt}
+                        {formatDateTime(
+                          window.startsAt,
+                          draft.schedule.timeZone,
+                        ) ?? window.startsAt}{" "}
+                        →{" "}
+                        {formatDateTime(
+                          window.endsAt,
+                          draft.schedule.timeZone,
+                        ) ?? window.endsAt}
                         {window.reason ? ` · ${window.reason}` : ""}
                       </div>
                       <Button
@@ -1246,7 +1415,9 @@ function CampaignEditor(props: {
               )}
               <div className="grid gap-3 sm:grid-cols-4">
                 <label className="grid gap-1 text-sm">
-                  <span>Starts</span>
+                  <span>
+                    Starts ({resolvePlanTimeZone(draft.schedule.timeZone)})
+                  </span>
                   <Input
                     aria-label="Do not run from"
                     aria-describedby={
@@ -1267,7 +1438,9 @@ function CampaignEditor(props: {
                   />
                 </label>
                 <label className="grid gap-1 text-sm">
-                  <span>Ends</span>
+                  <span>
+                    Ends ({resolvePlanTimeZone(draft.schedule.timeZone)})
+                  </span>
                   <Input
                     aria-label="Do not run until"
                     aria-describedby={
@@ -1338,7 +1511,11 @@ function CampaignEditor(props: {
               </dl>
               {draft.schedule.runFacts.lastRunSummary ? (
                 <p className="text-xs text-foreground-muted">
-                  {draft.schedule.runFacts.lastRunSummary}
+                  {draft.schedule.runFacts.lastRunSummary.includes("page.") ||
+                  draft.schedule.runFacts.lastRunSummary.includes("\u001b")
+                    ? describeFailure(draft.schedule.runFacts.lastRunSummary)
+                        .sentence
+                    : draft.schedule.runFacts.lastRunSummary}
                 </p>
               ) : null}
               {draft.schedule.runFacts.consecutiveFailures > 0 ? (
@@ -1544,6 +1721,10 @@ export function CampaignsScreen(props: {
     knownIds: readonly string[];
     resolvedId: string | null;
   } | null>(null);
+  useEffect(() => {
+    if (createdPlanNotice?.resolvedId === props.activeCampaignId)
+      setCreatedPlanNotice(null);
+  }, [createdPlanNotice, props.activeCampaignId]);
   const campaignIdsRef = useRef<readonly string[]>([]);
   useEffect(() => {
     campaignIdsRef.current = props.campaigns.map((campaign) => campaign.id);
@@ -1706,70 +1887,27 @@ export function CampaignsScreen(props: {
     props.campaigns.find((campaign) => campaign.id === rulesCampaignId) ?? null;
 
   return (
-    <section className="grid gap-5 pb-8">
+    // The header stack owns its 12px seam; the -mb-2 cancels the part of
+    // the 20px grid gap that would double it.
+    <section className="grid gap-5 pb-8 [&>[data-page-header-stack]]:-mb-2">
       <PageHeaderStack
         actions={
-          // The banner below says most people should stay on the default
-          // plan, so creating one is a secondary action, not the only filled
-          // button on the page.
+          // Most people stay on the default plan, so creating one is a
+          // secondary action, not the only filled button on the page.
           <Button
             onClick={() =>
               beginEditing(newCampaignFrom(activeCampaign ?? null))
             }
+            size="sm"
             type="button"
             variant="secondary"
           >
             New search plan
           </Button>
         }
-        description="Organize roles, sources, how many jobs each search keeps, and progress into reusable plans."
+        description="Optional reusable searches. Find jobs always searches with the current plan."
         title="Search plans"
       />
-
-      <details
-        aria-labelledby="search-plans-guide"
-        className="group rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-raised) px-4 py-2.5 [&_summary::-webkit-details-marker]:hidden"
-      >
-        {/* The toggle used to sit as bare grey text at the far right edge of
-            the banner, where it read as a stray label. It now sits under the
-            explanation as a bordered control with a rotating chevron. */}
-        <summary className="grid cursor-pointer gap-2 text-sm">
-          <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span
-              className="font-semibold text-(--text-headline)"
-              id="search-plans-guide"
-            >
-              Search plans are optional.
-            </span>
-            <span className="min-w-0 flex-1 text-foreground-soft">
-              Find jobs always searches with the current plan. Switch plans with
-              Make current here. Create another plan when you want a reusable
-              search setup with its own roles, sources,
-              how many jobs each search keeps, and progress.
-            </span>
-          </span>
-          <span className="inline-flex w-fit items-center gap-1.5 rounded-(--radius-button) border border-(--surface-panel-border) px-2.5 py-1 text-xs font-medium text-foreground">
-            <ChevronRight
-              aria-hidden="true"
-              className="size-3.5 shrink-0 transition-transform group-open:rotate-90"
-            />
-            <span className="group-open:hidden">How much a plan searches</span>
-            <span className="hidden group-open:inline">
-              Hide how much a plan searches
-            </span>
-          </span>
-        </summary>
-        <div className="grid gap-2 pt-2.5 text-sm text-foreground-soft sm:grid-cols-2">
-          <p>
-            <span className="font-medium text-foreground">Focused:</span> fewer
-            jobs each run, chosen for a closer match.
-          </p>
-          <p>
-            <span className="font-medium text-foreground">Wide:</span> more jobs
-            each run, keeping more of them for review.
-          </p>
-        </div>
-      </details>
 
       {editing ? (
         <CampaignEditor
@@ -1900,7 +2038,8 @@ export function CampaignsScreen(props: {
       ) : (
         <div className="grid gap-3">
           <p className="text-xs text-foreground-muted">
-            Times shown in {deviceTimeZone()}.
+            Past activity is shown in {deviceTimeZone()}. Schedule times and
+            pauses use each plan’s saved time zone.
           </p>
           <div
             className={
@@ -1985,14 +2124,8 @@ export function CampaignsScreen(props: {
                     {campaign.description || "No description yet."}
                   </p>
                   <p className="text-sm text-foreground-soft">
-                    Uses {campaign.sourceTargetIds.length} of your{" "}
-                    {
-                      new Set(
-                        props.campaigns.flatMap(
-                          (entry) => entry.sourceTargetIds,
-                        ),
-                      ).size
-                    }{" "}
+                    Uses {resolveCampaignSourceTargetIds(campaign).length} of your{" "}
+                    {campaign.searchPreferences.discovery.targets.length}{" "}
                     job sites.
                   </p>
                   {describeScheduleStart(campaign.schedule) ? (
@@ -2002,7 +2135,7 @@ export function CampaignsScreen(props: {
                   ) : null}
                   {remoteOnlySourceWarning ? (
                     <p
-                      className="rounded-(--radius-small) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-sm leading-6 text-(--warning-text)"
+                      className="text-sm leading-6 text-(--warning-text)"
                       data-testid="campaign-remote-only-sources-note"
                     >
                       {remoteOnlySourceWarning}
@@ -2086,6 +2219,15 @@ export function CampaignsScreen(props: {
                               props.discoveryRuns,
                               campaign.latestDigest,
                             ),
+                            props.discoveryRuns?.find(
+                              (run) =>
+                                run.id ===
+                                campaign.latestDigest?.discoveryRunId,
+                            ) ??
+                              props.discoveryRuns?.find(
+                                (run) => run.campaignId === campaign.id,
+                              ),
+                            campaign.latestDigest,
                           )}
                         </dd>
                       </div>
@@ -2124,7 +2266,7 @@ export function CampaignsScreen(props: {
                           completed
                           {campaign.latestDigest.failedSources.map(
                             (source) =>
-                              ` · ${jobSourceLabel(source.sourceTargetId, campaign.searchPreferences.discovery.targets)} failed (${source.reason})`,
+                              ` · ${jobSourceLabel(source.sourceTargetId, campaign.searchPreferences.discovery.targets)} failed (${discoverySourceFailureCopy(source.reason)})`,
                           )}
                         </p>
                       ) : null}
@@ -2162,24 +2304,6 @@ export function CampaignsScreen(props: {
                         </div>
                         <div>
                           <dt className="text-xs text-foreground-muted">
-                            Seen before
-                          </dt>
-                          {/* Same field the headline above prints. The change
-                            digest's own tally counts sightings, not the
-                            listings this run found already saved, so reading
-                            it here printed "Seen before 0" under "7 already
-                            here" for one run. */}
-                          <dd>
-                            {resolveDiscoveryRunAlreadyHereCount(
-                              readPlanRunReport(
-                                props.discoveryRuns,
-                                campaign.latestDigest,
-                              ),
-                            ) ?? campaign.latestDigest.counts.known}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-foreground-muted">
                             Skipped
                           </dt>
                           <dd>{campaign.latestDigest.counts.skipped}</dd>
@@ -2195,7 +2319,7 @@ export function CampaignsScreen(props: {
                                   campaign.searchPreferences.discovery.targets,
                                 )}
                               </span>{" "}
-                              — {source.reason}
+                              — {discoverySourceFailureCopy(source.reason)}
                             </li>
                           ))}
                         </ul>
@@ -2215,20 +2339,28 @@ export function CampaignsScreen(props: {
                         Recent search-plan history
                       </summary>
                       <ol className="mt-3 grid gap-2 text-sm text-foreground-soft">
-                        {campaign.history.slice(0, 5).map((entry) => (
-                          <li key={entry.id}>
-                            <span className="font-medium text-foreground">
-                              {formatPlanCardDateTime(entry.occurredAt) ??
-                                "Unknown time"}
-                            </span>{" "}
-                            — {entry.summary}
-                          </li>
-                        ))}
+                        {campaign.history
+                          .filter(
+                            (entry, index, history) =>
+                              entry.kind !== "activated" ||
+                              history[index - 1]?.kind !== "activated",
+                          )
+                          .slice(0, 5)
+                          .map((entry) => (
+                            <li key={entry.id}>
+                              <span className="font-medium text-foreground">
+                                {formatPlanCardDateTime(entry.occurredAt) ??
+                                  "Unknown time"}
+                              </span>{" "}
+                              — {describePlanHistory(entry)}
+                            </li>
+                          ))}
                       </ol>
                     </details>
                   ) : null}
                   {deleteCandidateId === campaign.id ? (
                     <div
+                      data-toast-avoid
                       aria-label={`Confirm deleting ${campaign.name}`}
                       className="grid gap-2 rounded-(--radius-field) border border-destructive/40 bg-destructive/10 p-3"
                       role="group"
@@ -2281,7 +2413,10 @@ export function CampaignsScreen(props: {
                       </div>
                     </div>
                   ) : null}
-                  <div className="flex flex-wrap items-center justify-end gap-2">
+                  <div
+                    data-toast-avoid
+                    className="flex flex-wrap items-center justify-end gap-2"
+                  >
                     {/* One search runs at a time. The service refuses a second
                       one with this exact sentence, so the button says it here
                       instead of looking like a click that did nothing. */}
@@ -2343,7 +2478,10 @@ export function CampaignsScreen(props: {
                     row, at the opposite end, one deliberate reach away from
                     Edit. */}
                   {props.onDeleteCampaign ? (
-                    <div className="flex flex-wrap justify-start gap-2 border-t border-(--surface-panel-border) pt-2">
+                    <div
+                      data-toast-avoid
+                      className="flex flex-wrap justify-start gap-2 border-t border-(--surface-panel-border) pt-2"
+                    >
                       <Button
                         className="border-destructive/45 text-destructive hover:border-destructive hover:text-destructive"
                         onClick={() => {

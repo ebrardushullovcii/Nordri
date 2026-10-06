@@ -1842,6 +1842,7 @@ function collectGateCandidates(
   }
 
   for (const conflict of safeguards.simultaneousApplicationConflicts) {
+    if (conflict.companyKey) continue;
     if (conflict.status !== "detected") continue;
     if (
       isDismissed(dismissals, "simultaneous_application_conflict", conflict.id)
@@ -2048,6 +2049,7 @@ export function deriveScopeBlockers(
   }
 
   for (const conflict of safeguards.simultaneousApplicationConflicts) {
+    if (conflict.companyKey) continue;
     if (conflict.status !== "detected") continue;
     if (
       isDismissed(dismissals, "simultaneous_application_conflict", conflict.id)

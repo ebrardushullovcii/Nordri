@@ -1,3 +1,4 @@
+import { APPLICATION_BOUNDARY_SENTENCE } from "../safeguards/safeguards-application-boundary";
 import { useEffect, useId, useState } from "react";
 import { Field, FieldLabel } from "@renderer/components/ui/field";
 import { Input } from "@renderer/components/ui/input";
@@ -5,7 +6,11 @@ import {
   APPLY_MODE_OPTIONS,
   ChoiceCards,
 } from "@renderer/features/job-finder/components/choice-cards";
-import type { ApplicationAutomationMode } from "@nordri/contracts";
+import { Switch } from "@renderer/components/ui/switch";
+import type {
+  ApplicationSalaryDisclosureRule,
+  ApplicationAutomationMode,
+} from "@nordri/contracts";
 import { useRegisterSettingsDirtySection } from "./settings-dirty-sections";
 import {
   hasOutstandingSectionChanges,
@@ -63,9 +68,38 @@ export function SettingsApplyModeSection(props: {
     mode: ApplicationAutomationMode;
     maxApplicationsPerLocalDay: number;
   }) => void | Promise<void>;
+  salaryDisclosure?: ApplicationSalaryDisclosureRule;
+  onSaveSalaryDisclosure?: (
+    value: ApplicationSalaryDisclosureRule,
+  ) => Promise<void>;
   isSaving?: boolean;
 }) {
   const { headingId, isSaving = false, mode, onSave } = props;
+  const payId = useId();
+  const payDescriptionId = useId();
+  const [payChoice, setPayChoice] = useState(
+    props.salaryDisclosure ?? "pause_for_user",
+  );
+  const [paySaving, setPaySaving] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+  useEffect(() => {
+    setPayChoice(props.salaryDisclosure ?? "pause_for_user");
+  }, [props.salaryDisclosure]);
+  const choosePay = (checked: boolean) => {
+    if (paySaving || isSaving || !props.onSaveSalaryDisclosure) return;
+    const previous = payChoice;
+    const next = checked ? "answer_from_profile" : "pause_for_user";
+    setPayChoice(next);
+    setPaySaving(true);
+    setPayError(null);
+    void props
+      .onSaveSalaryDisclosure(next)
+      .catch(() => {
+        setPayChoice(previous);
+        setPayError("Your pay choice did not save. Try again.");
+      })
+      .finally(() => setPaySaving(false));
+  };
   const dailyCapId = useId();
   const dailyCapErrorId = useId();
   const [selectedMode, setSelectedMode] = useState(mode);
@@ -210,13 +244,49 @@ export function SettingsApplyModeSection(props: {
       ) : null}
 
       <p className="text-sm leading-5 text-foreground-soft">
-        Sign-in, security checks, and account creation pause for you. Job Finder
-        never stores a password you provide for one task.
+        {APPLICATION_BOUNDARY_SENTENCE}
       </p>
 
+      <div className="grid gap-2 border-t border-(--surface-panel-border) pt-4">
+        <div className="flex items-start justify-between gap-4">
+          <label
+            className="text-sm font-medium text-foreground"
+            htmlFor={payId}
+          >
+            Let Job Finder answer expected and current pay questions
+          </label>
+          <Switch
+            id={payId}
+            checked={payChoice === "answer_from_profile"}
+            disabled={isSaving || paySaving || !props.onSaveSalaryDisclosure}
+            aria-describedby={payDescriptionId}
+            onCheckedChange={choosePay}
+          />
+        </div>
+        <p
+          id={payDescriptionId}
+          className="text-(length:--text-small) leading-5 text-foreground-soft"
+        >
+          Includes pay history. Off: optional pay fields stay blank; required
+          questions wait for you. On: answers use your saved facts. Expected pay
+          never answers current pay. Your choice saves when you change it.
+        </p>
+        {payError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {payError}
+          </p>
+        ) : null}
+      </div>
+
+      <p className="text-sm text-foreground-soft">
+        Each preparation that starts uses one slot, including failed attempts
+        and retries. If the employer page never opens, no slot is used. Filling
+        answers in an existing prepared form uses no new slot. Confirmed sends
+        are counted separately.
+      </p>
       <Field>
         <FieldLabel htmlFor={dailyCapId}>
-          Most applications in one day
+          Most preparations in one day
         </FieldLabel>
         <Input
           aria-describedby={!capIsValid ? dailyCapErrorId : undefined}

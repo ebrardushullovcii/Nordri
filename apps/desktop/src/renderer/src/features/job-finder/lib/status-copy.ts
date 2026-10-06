@@ -84,6 +84,7 @@ export const DISCOVERY_STOP_UNACKNOWLEDGED_LABEL =
 export const APPLICATION_BLOCKER_LABELS = {
   missing_candidate_answer: "The form asks something you have not answered yet",
   requires_manual_review: "This step needs a decision from you",
+  application_closed: "The listing is no longer accepting applications",
   unsupported_apply_path: "This employer's form is one Job Finder cannot fill",
   missing_resume: "This job has no approved resume yet",
   missing_consent: "You have not agreed to share a file this form asks for",
@@ -208,6 +209,7 @@ export const CANDIDATE_ASSET_RETENTION_LABELS = {
 export const RESUME_PATCH_OPERATION_LABELS = {
   replace_section_text: "Rewrite this section",
   replace_entry_summary: "Rewrite this summary",
+  replace_entry_date_range: "Change date wording",
   insert_bullet: "Add a bullet",
   update_bullet: "Reword a bullet",
   remove_bullet: "Remove a bullet",

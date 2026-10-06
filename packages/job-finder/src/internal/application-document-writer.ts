@@ -2,6 +2,7 @@ import {
   buildCoverLetterRequest,
   looksLikeUsableLetter,
 } from "@nordri/browser-agent";
+import { ApplicationLetterGroundingError } from "./application-letter-provider";
 import { buildApplyLetterDependencies } from "./agent-application-preparation";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 
@@ -9,8 +10,8 @@ import type { WorkspaceServiceContext } from "./workspace-service-context";
  * Writes the text of a letter or written answer the person drafts from
  * Applications, with the same writer and grounding rules the apply agent uses
  * for the letter it sends. Returns null when no model is available or the
- * reply is not a usable document; the caller then falls back to the plain
- * evidence-built draft.
+ * reply is not a usable document; the caller reports the failure and keeps
+ * existing drafts.
  */
 export async function writeApplicationDocumentText(
   ctx: WorkspaceServiceContext,
@@ -21,10 +22,11 @@ export async function writeApplicationDocumentText(
     priorText: string | null;
   },
 ): Promise<string | null> {
-  const [savedJobs, profile, settings] = await Promise.all([
+  const [savedJobs, profile, settings, searchPreferences] = await Promise.all([
     ctx.repository.listSavedJobs(),
     ctx.repository.getProfile(),
     ctx.repository.getSettings(),
+    ctx.repository.getSearchPreferences(),
   ]);
   const job = savedJobs.find((entry) => entry.id === input.jobId);
   if (!job) {
@@ -36,6 +38,7 @@ export async function writeApplicationDocumentText(
     job,
     profile,
     settings,
+    searchPreferences,
   });
   if (!letters) {
     return null;
@@ -43,6 +46,7 @@ export async function writeApplicationDocumentText(
   const request = buildCoverLetterRequest({
     sources: {
       profile,
+      preferences: searchPreferences,
       resumeText: profile.baseResume.textContent ?? null,
       posting: {
         title: job.title,
@@ -79,7 +83,10 @@ export async function writeApplicationDocumentText(
       return null;
     }
     return text.length > 0 && text.length <= 12_000 ? text : null;
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof ApplicationLetterGroundingError) throw error;
+    throw new Error(
+      "Job Finder could not write this draft right now. Try again.",
+    );
   }
 }

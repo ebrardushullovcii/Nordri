@@ -1,3 +1,4 @@
+import type { ApplyJobResult } from "@nordri/contracts";
 import type { GlobalDailyApplicationPreparationCapacity } from "@nordri/contracts";
 
 /**
@@ -32,7 +33,7 @@ export const FALLBACK_DAILY_APPLICATION_PREPARATION_LIMIT = 20;
 
 /**
  * The quiet footer summary for the fixed local-day limit, in plain language:
- * "Applications today: 3 of 20 used · resets at midnight". Older records
+ * "Preparations today: 3 of 20 used · resets at midnight". Older records
  * whose start could not be verified are named only when any exist, so the
  * exact count never silently absorbs them. A missing capacity object stays
  * truthful by naming the safeguard maximum; an exhausted day says when more
@@ -42,7 +43,7 @@ export function formatDailyPreparationCapacitySummaryText(
   capacity: GlobalDailyApplicationPreparationCapacity | null | undefined,
 ): string {
   if (!capacity) {
-    return `Applications today: up to ${FALLBACK_DAILY_APPLICATION_PREPARATION_LIMIT} per day`;
+    return `Preparations today: up to ${FALLBACK_DAILY_APPLICATION_PREPARATION_LIMIT} per day`;
   }
 
   const legacySuffix =
@@ -54,7 +55,7 @@ export function formatDailyPreparationCapacitySummaryText(
   const tail = isDailyPreparationCapacityExhausted(capacity)
     ? "more available after midnight"
     : "resets at midnight";
-  return `Applications today: ${capacity.used} of ${capacity.limit} used${legacySuffix} · ${tail}`;
+  return `Preparations today: ${capacity.used} of ${capacity.limit} used${legacySuffix} · ${tail}`;
 }
 
 /**
@@ -69,7 +70,7 @@ export function formatDailyPreparationBatchExceedsRemainingText(input: {
 }): string {
   const { capacity } = input;
   const selectedCount = Math.max(0, input.selectedCount);
-  return `You selected ${selectedCount} ${selectedCount === 1 ? "job" : "jobs"} for this run, but only ${capacity.remaining} of ${capacity.limit} daily application ${capacity.remaining === 1 ? "slot remains" : "slots remain"} today. Trim the selection to ${capacity.remaining} or fewer to prepare now, or prepare the rest after it resets at local midnight (${formatDailyPreparationResetTime(capacity.resetsAt)}).`;
+  return `You selected ${selectedCount} ${selectedCount === 1 ? "job" : "jobs"} for this run, but only ${capacity.remaining} of ${capacity.limit} daily preparation ${capacity.remaining === 1 ? "slot remains" : "slots remain"} today. Trim the selection to ${capacity.remaining} or fewer to prepare now, or prepare the rest after it resets at local midnight (${formatDailyPreparationResetTime(capacity.resetsAt)}).`;
 }
 
 /**
@@ -85,5 +86,42 @@ export function formatDailyPreparationCapacityReachedText(
           capacity.legacyUncertain === 1 ? "record" : "records"
         } that may also have begun`
       : "";
-  return `Today's application preparation limit is reached: ${capacity.used} of ${capacity.limit} used today${legacySuffix}. New preparations reset at local midnight (${formatDailyPreparationResetTime(capacity.resetsAt)}).`;
+  return `Today's preparation limit is reached: ${capacity.used} of ${capacity.limit} used today${legacySuffix}. Failed attempts and retries each use a slot when preparation starts. Continuing a filled form does not. New preparations reset at local midnight (${formatDailyPreparationResetTime(capacity.resetsAt)}).`;
+}
+
+export function describeDailyPreparationUsage(input: {
+  capacity: GlobalDailyApplicationPreparationCapacity;
+  results: readonly ApplyJobResult[];
+}): string {
+  const attempts = new Map<string, ApplyJobResult>();
+  const sends = new Set<string>();
+  for (const result of input.results) {
+    if (
+      result.applicationPreparationStartedLocalDate ===
+        input.capacity.localDate &&
+      !(
+        result.state === "failed" &&
+        result.blockerReason === "application_page_unreachable"
+      )
+    )
+      attempts.set(`${result.runId}\0${result.jobId}`, result);
+    const receipt = result.privacyReceipt;
+    if (
+      receipt?.finalSubmitOccurred === true &&
+      (!receipt.submissionOutcome ||
+        receipt.submissionOutcome.outcome === "submitted")
+    ) {
+      const at = new Date(receipt.generatedAt);
+      const day = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+      if (day === input.capacity.localDate)
+        sends.add(result.applicationRecordId ?? result.jobId);
+    }
+  }
+  const jobs = new Set([...attempts.values()].map((result) => result.jobId));
+  const repeats = attempts.size - jobs.size;
+  const failed = [...attempts.values()].filter((result) =>
+    ["failed", "cancelled", "skipped"].includes(result.state),
+  ).length;
+  const other = Math.max(0, input.capacity.used - attempts.size);
+  return `${input.capacity.used} preparation attempt${input.capacity.used === 1 ? "" : "s"} today · ${repeats} repeat attempt${repeats === 1 ? "" : "s"} · ${failed} failed or stopped · ${sends.size} confirmed send${sends.size === 1 ? "" : "s"}${other ? ` · ${other} earlier preparations without attempt details` : ""}. A new preparation uses one slot; continuing a filled form does not.`;
 }

@@ -1,3 +1,4 @@
+import type { JudgeJobFitsInput } from "@nordri/ai-providers";
 import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import { JobPostingSchema } from "@nordri/contracts";
 import { describe, expect, test } from "vitest";
@@ -10,9 +11,8 @@ import {
 
 /**
  * Settings' "How picky a search is" and "Count remote jobs as any location"
- * must change what a search keeps and how it scores it, not only the words
- * the search agent reads. A search that met the same five cards under every
- * setting kept the same five jobs with the same scores.
+ * must change what a search keeps, not only the words the search agent reads.
+ * How the kept jobs fit is the model's judgment (ADR 0041).
  */
 function card(token: string, title: string, location: string) {
   return JobPostingSchema.parse({
@@ -73,10 +73,50 @@ function runtimeReturning(): BrowserSessionRuntime {
   };
 }
 
+/**
+ * Stands in for the model judging the cards (ADR 0041): a frontend role is
+ * the work asked for; Berlin is in the person's area; a remote role reaches
+ * them only while remote counts as any location, and never from the
+ * Americas.
+ */
+function judgeLikeTheModel(input: JudgeJobFitsInput) {
+  const remoteCounts =
+    input.searchPreferences.discovery.remoteCountsAsAnyLocation !== false;
+  return Promise.resolve(
+    input.jobs.map(({ jobId, posting }) => {
+      const role = posting.title.startsWith("Frontend")
+        ? ("exact" as const)
+        : ("conflict" as const);
+      const locationReach =
+        posting.location === "Berlin, Germany"
+          ? ("in_area" as const)
+          : remoteCounts && !posting.location.includes("Americas")
+            ? ("remote_preferred" as const)
+            : ("outside_area" as const);
+      return {
+        jobId,
+        score: role === "exact" ? 80 : 20,
+        recommendation:
+          role === "exact" ? ("strong_fit" as const) : ("skip" as const),
+        role,
+        roleExplanation: null,
+        preferences: "aligned" as const,
+        preferencesExplanation: null,
+        locationReach,
+        reasons: [],
+        gaps: [],
+        listingClosed: false,
+        listingClosedEvidence: null,
+      };
+    }),
+  );
+}
+
 async function search(input: {
   selectivity: "best_matches" | "balanced" | "wide_net";
   remoteCountsAsAnyLocation: boolean;
   targetRoles?: string[];
+  planSelectivity?: "best_matches" | "balanced" | "wide_net";
 }) {
   const seed = createSeed();
   seed.savedJobs = [];
@@ -88,6 +128,7 @@ async function search(input: {
   seed.searchPreferences.locations = ["Berlin, Germany"];
   seed.searchPreferences.workModes = [];
   seed.searchPreferences.excludedLocations = [];
+  seed.searchPreferences.searchSelectivity = input.planSelectivity;
   seed.searchPreferences.companyWhitelist = [];
   seed.searchPreferences.companyBlacklist = [];
   // The Settings save mirrors Best matches only into the strict filter.
@@ -111,7 +152,7 @@ async function search(input: {
   const { workspaceService } = createWorkspaceServiceHarness({
     seed,
     browserRuntime: runtimeReturning(),
-    aiClient: createAgentAiClient(),
+    aiClient: { ...createAgentAiClient(), judgeJobFits: judgeLikeTheModel },
   });
   const snapshot = await workspaceService.runDiscoveryForTarget(
     "target_behavior",
@@ -136,7 +177,7 @@ describe("saved search behavior changes what a search keeps", () => {
     expect(Object.keys(kept)).toHaveLength(CARDS.length);
   }, 60_000);
 
-  test("Best matches only drops the cards that miss the title or place, with no rescue", async () => {
+  test("Best matches only drops the cards the model judged outside the role or place", async () => {
     const kept = await search({
       selectivity: "best_matches",
       remoteCountsAsAnyLocation: true,
@@ -153,7 +194,7 @@ describe("saved search behavior changes what a search keeps", () => {
   }, 60_000);
 
   test.each(["balanced", "wide_net"] as const)(
-    "%s keeps adjacent jobs, and remote off lowers remote-region scores",
+    "%s keeps adjacent jobs whatever the remote setting; the model judges their fit",
     async (selectivity) => {
       const on = await search({
         selectivity,
@@ -172,10 +213,22 @@ describe("saved search behavior changes what a search keeps", () => {
         "worldwide",
       ]);
       expect(Object.keys(off).sort()).toEqual(Object.keys(on).sort());
-      expect(off.europe).toBeLessThan(on.europe ?? 0);
-      expect(off.worldwide).toBeLessThan(on.worldwide ?? 0);
-      expect(off.berlin).toBe(on.berlin);
     },
     60_000,
   );
 });
+
+test("R3-193 independent saved plan pickiness controls retention despite opposite Settings", async () => {
+  const strict = await search({
+    selectivity: "wide_net",
+    planSelectivity: "best_matches",
+    remoteCountsAsAnyLocation: true,
+  });
+  const broad = await search({
+    selectivity: "best_matches",
+    planSelectivity: "wide_net",
+    remoteCountsAsAnyLocation: true,
+  });
+  expect(Object.keys(strict).sort()).toEqual(["berlin", "europe", "worldwide"]);
+  expect(Object.keys(broad)).toHaveLength(CARDS.length);
+}, 60000);

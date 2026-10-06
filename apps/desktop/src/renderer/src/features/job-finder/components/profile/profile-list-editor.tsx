@@ -159,10 +159,12 @@ export function ProfileListEditor({
           displayMode === "chips" ? (
             <div
               key={`${label}_${value}`}
-              className="inline-flex max-w-full items-center gap-2 rounded-full border border-(--border) bg-(--surface-fill-chip) px-3 py-2 text-(length:--text-item) text-foreground-soft"
+              className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-full border border-(--border) bg-(--surface-fill-chip) px-3 py-2 text-(length:--text-item) text-foreground-soft"
               title={value}
             >
-              <span className="truncate whitespace-nowrap">{value}</span>
+              <span className="min-w-0 whitespace-normal break-words">
+                {value}
+              </span>
               <button
                 aria-label={`Remove ${value}`}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-full text-(length:--text-icon-small) leading-none text-muted-foreground transition-colors hover:bg-(--surface-panel) hover:text-foreground"

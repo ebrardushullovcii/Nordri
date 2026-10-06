@@ -179,6 +179,25 @@ export function applyPatchToResumeDraft(input: {
           patch,
           updatedAt,
         );
+      case "replace_entry_date_range": {
+        if (!targetEntry || !patch.newText) {
+          throw new Error(
+            "replace_entry_date_range requires a target resume entry and its date wording.",
+          );
+        }
+        if (targetEntry.dateRange === patch.newText) return section;
+        sectionsChanged = true;
+        // Only display wording changes; structured dates and claim origins stay intact.
+        return {
+          ...section,
+          entries: section.entries.map((entry) =>
+            entry.id === targetEntry.id
+              ? { ...entry, dateRange: patch.newText, updatedAt }
+              : entry,
+          ),
+          updatedAt,
+        };
+      }
       case "replace_entry_summary": {
         if (!targetEntry) {
           throw new Error(

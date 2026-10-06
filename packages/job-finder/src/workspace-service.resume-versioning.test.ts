@@ -1051,7 +1051,7 @@ describe("resume draft versioning", () => {
     expect(profileAfter.baseResume).toEqual(profileBefore.baseResume);
   });
 
-  test("restore reports review-pending truth, persists the exact sanitized draft, and keeps real generation failures distinct", async () => {
+  test("restore reports review-pending truth, persists the exact sanitized draft, and a failed regenerate keeps the approved resume", async () => {
     let generationFailure: Error | null = null;
     const baseAiClient = createAiClient();
     const { repository, workspaceService } = createWorkspaceServiceHarness({
@@ -1182,21 +1182,31 @@ describe("resume draft versioning", () => {
     });
     expect(reApproved.tailoredAsset?.storagePath).toBeTruthy();
 
-    // A true generation failure keeps its durable failed/retry truth with a
-    // sanitized failureMessage; it is never silently rewritten by later
-    // review-state transitions.
+    // A failed regenerate keeps the approved file and saves its failure notice.
+    const approvedAsset = (await repository.listTailoredAssets()).find(
+      (asset) => asset.jobId === "job_ready",
+    )!;
     generationFailure = new Error("Provider offline for tests");
     await expect(
       workspaceService.regenerateResumeDraft("job_ready"),
     ).rejects.toThrow(/Provider offline/);
-    const failedAsset = (await repository.listTailoredAssets()).find(
-      (asset) => asset.jobId === "job_ready",
-    )!;
-    expect(failedAsset.status).toBe("failed");
-    expect(failedAsset.failureMessage).toContain("Provider offline");
-    expect(failedAsset.failedAt).toBeTruthy();
+    expect(
+      (await repository.listTailoredAssets()).find(
+        (asset) => asset.jobId === "job_ready",
+      ),
+    ).toEqual({
+      ...approvedAsset,
+      failureMessage: expect.stringContaining("Your previous resume was kept"),
+      failedAt: expect.any(String),
+    });
+    expect(
+      (await workspaceService.getResumeWorkspace("job_ready")).draft,
+    ).toMatchObject({
+      status: "approved",
+      approvedExportId: reApprovedExportId,
+    });
 
-    const failedQueueItem = buildReviewQueue(
+    const keptQueueItem = buildReviewQueue(
       await repository.listSavedJobs(),
       await repository.listTailoredAssets(),
       await repository.listResumeDrafts(),
@@ -1204,6 +1214,6 @@ describe("resume draft versioning", () => {
       beforeRestore.profile,
       await repository.getSettings(),
     ).find((entry) => entry.jobId === "job_ready")!;
-    expect(failedQueueItem.assetStatus).toBe("failed");
+    expect(keptQueueItem.assetStatus).toBe("ready");
   });
 });

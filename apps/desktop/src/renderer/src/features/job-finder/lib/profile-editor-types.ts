@@ -37,6 +37,11 @@ export interface ProfileEditorValues {
   };
   eligibility: {
     authorizedWorkCountries: string;
+    limitedWorkPermissions: {
+      country: string;
+      conditions: string;
+      requiresFutureSponsorship: BooleanSelectValue;
+    }[];
     availableStartDate: string;
     noticePeriodDays: string;
     preferredRelocationRegions: string;
@@ -102,10 +107,14 @@ export interface SearchPreferencesEditorValues {
   companyWhitelist: string;
   collectOnlyHardCriteriaMatches: boolean;
   employmentTypes: string;
+  shiftPreference: "day" | "night" | "any";
+  minimumWeeklyHours: string;
+  maximumWeeklyHours: string;
   excludedLocations: string;
   jobFamilies: string;
   locations: string;
   minimumSalaryUsd: string;
+  compensationBasis: "base" | "total_ote";
   compensationInterval: JobSearchPreferences["compensation"]["interval"];
   salaryCurrency: string;
   seniorityLevels: string;

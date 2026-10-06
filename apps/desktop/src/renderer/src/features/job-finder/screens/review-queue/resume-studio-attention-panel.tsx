@@ -88,7 +88,7 @@ export function ResumeStudioAttentionPanel(
 
       {props.setAsideProposalNote ? (
         <div
-          className="flex flex-wrap items-center justify-between gap-2 rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-3 py-2 text-(length:--text-small) leading-5 text-(--info-text)"
+          className="flex flex-wrap items-center justify-between gap-2 text-(length:--text-small) leading-5 text-foreground-soft"
           data-resume-set-aside-proposal-note
           role="status"
         >

@@ -1,4 +1,5 @@
 import {
+  type ApplyAgentTiming,
   JobFinderPerformanceEvidenceSchema,
   JobFinderPerformanceSnapshotSchema,
   type JobFinderPerformanceEvidence,
@@ -96,6 +97,7 @@ function unavailableEvidence(
 }
 
 function measuredEvidence(input: {
+  agentTiming?: ApplyAgentTiming;
   area: PerformanceEvidenceArea;
   budgetEvaluations: readonly PerformanceBudgetEvaluation[];
   durationMs: number | null;
@@ -115,6 +117,7 @@ function measuredEvidence(input: {
       sampleCount: input.sampleCount ?? 1,
       ...budget,
       stageDurations: input.stageDurations,
+      agentTiming: input.agentTiming,
     });
   }
 
@@ -128,6 +131,7 @@ function measuredEvidence(input: {
       sampleCount: input.sampleCount ?? 1,
       ...budget,
       stageDurations: input.stageDurations,
+      agentTiming: input.agentTiming,
       unavailableReason: "total_not_recorded",
     });
   }
@@ -209,7 +213,10 @@ function buildApplicationPreparationEvidence(
   budgetEvaluations: readonly PerformanceBudgetEvaluation[],
 ): JobFinderPerformanceEvidence {
   const attempt = [...workspace.applicationAttempts]
-    .filter((candidate) => candidate.executionTimings.length > 0)
+    .filter(
+      (candidate) =>
+        candidate.executionTimings.length > 0 || candidate.agentTiming,
+    )
     .sort(
       (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
     )[0];
@@ -234,7 +241,8 @@ function buildApplicationPreparationEvidence(
   return measuredEvidence({
     area: "application_preparation",
     budgetEvaluations,
-    durationMs: total?.durationMs ?? null,
+    durationMs: total?.durationMs ?? attempt.agentTiming?.totalMs ?? null,
+    ...(attempt.agentTiming ? { agentTiming: attempt.agentTiming } : {}),
     method: "application_attempt",
     recordedAt: total?.completedAt ?? attempt.updatedAt,
     stageDurations,

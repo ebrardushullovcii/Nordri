@@ -234,11 +234,11 @@ export function buildLiveRunRecord(
     scope: isSingleTargetRun ? "single_target" : "run_all",
     startedAt: firstEvent.timestamp,
     completedAt: null,
-    targetIds: enabledTargets.map((target) => target.id),
+    targetIds: targetExecutions.map((execution) => execution.targetId),
     targetExecutions,
     activity: runEvents,
     summary: {
-      targetsPlanned: enabledTargets.length,
+      targetsPlanned: targetExecutions.length,
       targetsCompleted,
       validJobsFound: targetExecutions.reduce(
         (total, execution) => total + execution.jobsFound,
@@ -281,12 +281,16 @@ export function getRunOptions(
   );
   const seen = new Set<string>();
 
-  return runs.filter((run) => {
-    if (seen.has(run.id)) {
-      return false;
-    }
+  return runs
+    .filter((run) => {
+      if (seen.has(run.id)) {
+        return false;
+      }
 
-    seen.add(run.id);
-    return true;
-  });
+      seen.add(run.id);
+      return true;
+    })
+    .sort(
+      (left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt),
+    );
 }

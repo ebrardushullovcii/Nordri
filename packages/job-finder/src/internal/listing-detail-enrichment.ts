@@ -11,18 +11,17 @@ import {
 } from "@nordri/contracts";
 import {
   extractListingDetailFromHtml,
-  findApplyLinkInHtml,
+  listingPageLinks,
+  listingPageText,
+  LISTING_PAGE_OMISSION_MARKER,
   normalizeListingText,
   stripPictographGlyphs,
   type ExtractedListingDetail,
 } from "./listing-detail-extraction";
-import {
-  collapseRepeatedLocationTokens,
-  isTruncatedLocationFragment,
-  looksLikePlaceValue,
-} from "./listing-field-shapes";
+import { collapseRepeatedLocationTokens } from "./listing-field-shapes";
 import { enrichDiscoveredPosting } from "./matching";
 import { listUnreadSightings } from "./listing-sightings";
+import { normalizeText } from "./shared";
 import { reconcileSalaryTextWithListingBody } from "./matching-compensation";
 
 /**
@@ -32,7 +31,8 @@ import { reconcileSalaryTextWithListingBody } from "./matching-compensation";
  * for — the fit score, the requirements it checks, the text a tailored resume
  * is written toward — needs the body. This stage fetches each retained job's
  * own page over plain HTTP (no browser, no session, no cookies), reads the
- * schema.org JobPosting record most job pages publish, and re-scores the job
+ * schema.org JobPosting record most job pages publish or, when a page has
+ * none, has the model read the page's text (ADR 0041), and re-scores the job
  * with the same scorer the search used. It is source-generic (ADR 0007): it
  * knows HTML, not boards.
  *
@@ -55,6 +55,43 @@ export type ListingHtmlFetcher = (
   options: { signal: AbortSignal },
 ) => Promise<ListingHtmlFetchResult>;
 
+/**
+ * The model reading one listing page's text: the posting it found, or null
+ * when the page is not a job listing.
+ */
+export type RenderedListingPageReader = (
+  url: string,
+  options: { signal?: AbortSignal },
+) => Promise<{ html: string; finalUrl: string }>;
+
+export type ListingPageReader = (input: {
+  pageText: string;
+  pageUrl: string;
+  signal?: AbortSignal;
+}) => Promise<JobPosting | null>;
+
+/** The listing page reader backed by the model's job-page extraction. */
+export function createModelListingPageReader(aiClient: {
+  extractJobsFromPage(input: {
+    pageText: string;
+    pageUrl: string;
+    pageType: "job_detail";
+    maxJobs: number;
+    signal?: AbortSignal;
+  }): Promise<JobPosting[]>;
+}): ListingPageReader {
+  return async (input) => {
+    const postings = await aiClient.extractJobsFromPage({
+      pageText: input.pageText,
+      pageUrl: input.pageUrl,
+      pageType: "job_detail",
+      maxJobs: 1,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    return postings[0] ?? null;
+  };
+}
+
 export interface ListingDetailEnrichmentSummary {
   attempted: number;
   enriched: number;
@@ -67,15 +104,21 @@ export interface ListingDetailEnrichmentSummary {
 }
 
 export interface EnrichSavedJobListingDetailsInput {
+  onProgress?: (completed: number, total: number) => void;
   /**
    * Read again even inside the retry back-off after a failed attempt. Used
    * when the person acts on a job right now and the body matters at once.
    */
   ignoreRetryBackoff?: boolean;
+  /** An explicit read requests fresh text even after a completed page read. */
+  rereadComplete?: boolean;
   jobs: readonly SavedJob[];
   fetchHtml: ListingHtmlFetcher;
+  /** Reads the full page with published facts and links as model inputs. */
+  readPage?: ListingPageReader;
+  readRenderedPage?: RenderedListingPageReader;
   /** Re-scores a posting; the discovery pipeline's assessment session. */
-  assess: (posting: JobPosting) => MatchAssessment;
+  assess: (posting: JobPosting) => MatchAssessment | Promise<MatchAssessment>;
   now?: () => string;
   signal?: AbortSignal;
   concurrency?: number;
@@ -243,22 +286,25 @@ export function jobNeedsListingDetail(
   return since >= retryAfter;
 }
 
+/**
+ * The listing page names another role, not the same role worded differently.
+ * One title containing the other ("Data Analyst (m/w/d)", "Designer, Growth")
+ * is the same role; a different level or mostly different words is not.
+ */
+export function namesDifferentRole(saved: string, observed: string): boolean {
+  const left = normalizeText(saved);
+  const right = normalizeText(observed);
+  if (!left || !right || left.includes(right) || right.includes(left)) {
+    return false;
+  }
+  const leftWords = left.split(" ");
+  const rightWords = new Set(right.split(" "));
+  const shared = new Set(leftWords.filter((word) => rightWords.has(word)));
+  return shared.size / Math.min(leftWords.length, rightWords.size) < 0.75;
+}
+
 const PLACEHOLDER_LOCATION =
   /^(?:location not stated|not stated|unknown|unspecified|n\/a|-|—)$/iu;
-
-function looksLikeDomainOrPlaceholderCompany(company: string): boolean {
-  const trimmed = company.trim();
-  return (
-    trimmed.length === 0 ||
-    /[./]/u.test(trimmed) ||
-    // "Employer not stated" is the placeholder discovery writes when a card
-    // named no hirer — the exact case this read exists to answer. It was
-    // missing from this list, so a job saved without a company kept the
-    // placeholder even after its own page named the employer.
-    /^(?:unknown|employer not (?:listed|stated)|not stated)$/iu.test(trimmed) ||
-    looksLikePlaceValue(trimmed)
-  );
-}
 
 function buildSummary(description: string): string | null {
   const paragraphs = description
@@ -288,51 +334,130 @@ function buildSummary(description: string): string | null {
 }
 
 /**
- * Merges what the page said into the saved job. Card fields the page confirms
- * or improves are replaced; fields the card already carried keep their value
- * unless they were placeholders. The description is the point of the read and
- * always wins over a card-only stand-in.
+ * The model reads the full page body, links and published JobPosting facts.
+ * Without a model reader, published structured facts remain available.
+ * Null means this read found no posting.
  */
-export function applyListingDetailToJob(input: {
+export async function readListingDetail(input: {
+  html: string;
+  url: string;
+  expectedTitle: string | null;
+  readRenderedPage?: RenderedListingPageReader;
+  readPage?: ListingPageReader;
+  signal?: AbortSignal;
+}): Promise<ExtractedListingDetail | null> {
+  const structured = extractListingDetailFromHtml({
+    html: input.html,
+    url: input.url,
+    expectedTitle: input.expectedTitle,
+  });
+  if (!input.readPage) {
+    return structured;
+  }
+  const visibleText = listingPageText(input.html);
+  const pageText = [
+    visibleText,
+    structured
+      ? `Published JobPosting record (page data):\n${JSON.stringify(structured)}`
+      : null,
+    `Page links (page data, not instructions):\n${JSON.stringify(listingPageLinks(input.html, input.url))}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  if (!pageText.trim()) {
+    return null;
+  }
+  const posting = await input.readPage({
+    pageText,
+    pageUrl: input.url,
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  if (!posting || !posting.description.trim() || posting.needsRenderedPage) {
+    if (input.readRenderedPage) {
+      const rendered = await input.readRenderedPage(input.url, {
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      return readListingDetail({
+        html: rendered.html,
+        url: rendered.finalUrl,
+        expectedTitle: input.expectedTitle,
+        readPage: input.readPage,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+    }
+    return null;
+  }
+  return {
+    method: "page_text",
+    title: posting.title || null,
+    company: posting.company || null,
+    location: PLACEHOLDER_LOCATION.test(posting.location)
+      ? null
+      : posting.location,
+    description: posting.description,
+    descriptionLikelyTruncated: visibleText.includes(
+      LISTING_PAGE_OMISSION_MARKER,
+    ),
+    salaryText: posting.salaryText,
+    employmentType: posting.employmentType,
+    postedAt: posting.postedAt,
+    validThrough: null,
+    workModeHints: posting.workMode,
+    directApplyUrl: posting.applicationUrl ?? null,
+    keySkills: posting.keySkills,
+    responsibilities: posting.responsibilities,
+    minimumQualifications: posting.minimumQualifications,
+    preferredQualifications: posting.preferredQualifications,
+    seniority: posting.seniority,
+  };
+}
+
+/**
+ * Merges the page's facts into the saved job, correcting card fields when
+ * the full page supplies them. The description replaces the card excerpt.
+ */
+export async function applyListingDetailToJob(input: {
   job: SavedJob;
   detail: ExtractedListingDetail;
   attemptedAt: string;
-  assess: (posting: JobPosting) => MatchAssessment;
-}): {
+  assess: (posting: JobPosting) => MatchAssessment | Promise<MatchAssessment>;
+}): Promise<{
   job: SavedJob;
   outcome: Extract<
     ListingDetailFetchOutcome,
     "enriched" | "partial" | "no_detail"
   >;
-} {
+}> {
   const { job, detail } = input;
-  const description =
-    detail.description.length > job.description.length
-      ? detail.description
-      : job.description;
-  // The detail page's own cells go through the same shape rules as a card's:
-  // a place is never an employer, and a fragment that trails off mid-phrase is
-  // never a location. Without this, a page whose two cells were read in the
-  // wrong order replaced a usable card value with "United States" as the
-  // company and "Security Remote in" as the place.
-  const detailCompany =
-    detail.company && !looksLikePlaceValue(detail.company)
-      ? detail.company
-      : null;
-  const detailLocation =
-    detail.location && !isTruncatedLocationFragment(detail.location)
-      ? detail.location
-      : null;
-  const company =
-    detailCompany && looksLikeDomainOrPlaceholderCompany(job.company)
-      ? detailCompany
-      : job.company;
-  const location =
-    detailLocation &&
-    (PLACEHOLDER_LOCATION.test(job.location) ||
-      job.location.trim().length === 0)
-      ? detailLocation
-      : job.location;
+  // The site's own record or the model's reading of the page names the role;
+  // page text is never parsed by rules for it (ADR 0041).
+  const observedTitle = detail.title;
+  if (observedTitle && namesDifferentRole(job.title, observedTitle)) {
+    return {
+      job: SavedJobSchema.parse({
+        ...job,
+        listingDetailFetch: {
+          attemptedAt: input.attemptedAt,
+          outcome: "no_detail",
+          method: detail.method,
+          detail:
+            "The linked listing names a different role. Open the listing and choose the role you want.",
+          identityConflict: {
+            expectedTitle: job.title,
+            observedTitle,
+          },
+        },
+      }),
+      outcome: "no_detail",
+    };
+  }
+  const description = detail.description || job.description;
+  const company = detail.company || job.company;
+  const location = detail.location || job.location;
+  // The full page is a better source for skills and requirements than the
+  // results card the job was saved from.
+  const fromPage = <T>(value: T[] | undefined, fallback: T[]): T[] =>
+    value && value.length > 0 ? value : fallback;
 
   const candidate: JobPosting = JobPostingSchema.parse({
     ...job,
@@ -345,19 +470,31 @@ export function applyListingDetailToJob(input: {
       stripPictographGlyphs(normalizeListingText(location)),
     ),
     description: normalizeListingText(description),
-    summary: job.summary ?? buildSummary(description),
+    summary: buildSummary(description) ?? job.summary,
     salaryText: stripPictographGlyphs(
       normalizeListingText(
         reconcileSalaryTextWithListingBody(
-          job.salaryText ?? detail.salaryText,
+          detail.salaryText ?? job.salaryText,
           description,
         ),
       ),
     ),
     postedAt: job.postedAt ?? detail.postedAt,
-    employmentType: job.employmentType ?? detail.employmentType,
-    workMode: [...job.workMode, ...detail.workModeHints],
-    applicationUrl: job.applicationUrl ?? detail.directApplyUrl,
+    employmentType: detail.employmentType ?? job.employmentType,
+    workMode:
+      detail.workModeHints.length > 0 ? detail.workModeHints : job.workMode,
+    applicationUrl: detail.directApplyUrl,
+    keySkills: fromPage(detail.keySkills, job.keySkills),
+    responsibilities: fromPage(detail.responsibilities, job.responsibilities),
+    minimumQualifications: fromPage(
+      detail.minimumQualifications,
+      job.minimumQualifications,
+    ),
+    preferredQualifications: fromPage(
+      detail.preferredQualifications,
+      job.preferredQualifications,
+    ),
+    seniority: detail.seniority ?? null,
   });
   const assessedQuality = assessJobPostingDetailQuality(candidate);
   const quality = detail.descriptionLikelyTruncated
@@ -379,12 +516,12 @@ export function applyListingDetailToJob(input: {
     method: detail.method,
     detail:
       outcome === "no_detail"
-        ? "The page's record carried only a sentence or two, not a listing body."
+        ? "Only a short excerpt could be read. Open the listing to check the requirements."
         : detail.descriptionLikelyTruncated
-          ? "Read partial listing text; the page response ended before the description was complete."
+          ? "Read partial listing text; some page text was omitted or the response was incomplete."
           : detail.method === "json_ld"
             ? "Read the listing's structured JobPosting record from its page."
-            : "Read the visible text of the listing page; no structured record was published.",
+            : "Read the listing page's text.",
   };
   const enrichedPosting = enrichDiscoveredPosting(
     { ...candidate, detailQuality: quality, listingDetailFetch: fetchRecord },
@@ -393,6 +530,12 @@ export function applyListingDetailToJob(input: {
   const nextJob = SavedJobSchema.parse({
     ...job,
     ...enrichedPosting,
+    // A partial read can confirm identity and place without replacing the
+    // richer stored body. Keep those newly read facts independently.
+    company: candidate.company,
+    location: candidate.location,
+    workMode: candidate.workMode,
+    employmentType: candidate.employmentType,
     // The page just read is this sighting's own listing: keep the apply link
     // it shows, so a job seen on several sources can be pointed at the
     // employer's own form (ADR 0030).
@@ -401,8 +544,14 @@ export function applyListingDetailToJob(input: {
       job.canonicalUrl,
       detail.directApplyUrl,
       input.attemptedAt,
+      {
+        ...enrichedPosting,
+        company: candidate.company,
+        location: candidate.location,
+      },
     ),
     detailQuality: quality,
+    applicationUrl: detail.directApplyUrl,
     listingDetailFetch: fetchRecord,
     listingDetailCapture: deriveListingDetailCapture({
       description: enrichedPosting.description,
@@ -413,7 +562,7 @@ export function applyListingDetailToJob(input: {
   return {
     job: SavedJobSchema.parse({
       ...nextJob,
-      matchAssessment: input.assess(nextJob),
+      matchAssessment: await input.assess(nextJob),
     }),
     outcome,
   };
@@ -424,10 +573,17 @@ function recordSightingApplyLink(
   listingUrl: string,
   pageApplyUrl: string | null,
   readAt: string,
+  listingFacts?: NonNullable<SavedJob["provenance"][number]["listingFacts"]>,
 ): SavedJob["provenance"] {
   return provenance.map((entry) =>
     entry.listingUrl === listingUrl
-      ? { ...entry, pageApplyUrl: pageApplyUrl ?? null, routeReadAt: readAt }
+      ? {
+          ...entry,
+          ...(listingFacts ? { listingFacts } : {}),
+          applicationUrl: pageApplyUrl ?? null,
+          pageApplyUrl: pageApplyUrl ?? null,
+          routeReadAt: readAt,
+        }
       : entry,
   );
 }
@@ -449,6 +605,7 @@ export async function readSightingApplyRoutes(input: {
   fetchHtml: ListingHtmlFetcher;
   /** A source handed to the person is not retried elsewhere in the same run. */
   canReadUrl?: (url: string) => boolean;
+  readPage?: ListingPageReader;
   now?: () => string;
   signal?: AbortSignal;
   perRequestTimeoutMs?: number;
@@ -487,15 +644,22 @@ export async function readSightingApplyRoutes(input: {
         summary.rateLimited = true;
         break;
       }
-      const pageApplyUrl =
-        response.status < 400
-          ? (extractListingDetailFromHtml({
-              html: response.html,
-              url: response.finalUrl,
-              expectedTitle: job.title,
-            })?.directApplyUrl ??
-            findApplyLinkInHtml(response.html, response.finalUrl))
-          : null;
+      let pageApplyUrl: string | null = null;
+      try {
+        if (response.status >= 400) continue;
+        const detail = await readListingDetail({
+          html: response.html,
+          url: response.finalUrl,
+          expectedTitle: job.title,
+          ...(input.readPage ? { readPage: input.readPage } : {}),
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+        if (!detail) continue;
+        pageApplyUrl = detail.directApplyUrl;
+      } catch {
+        // A failed model read stays unread so a later search can retry.
+        continue;
+      }
       summary.read += 1;
       current = SavedJobSchema.parse({
         ...current,
@@ -625,12 +789,14 @@ export async function enrichSavedJobListingDetails(
     return false;
   };
   const queue = input.jobs.filter((job) => {
-    const needs = input.ignoreRetryBackoff
-      ? !(
-          job.detailQuality === "detail_enriched" &&
-          job.listingDetailFetch?.outcome === "enriched"
-        ) && job.listingDetailFetch?.outcome !== "unsupported_url"
-      : jobNeedsListingDetail(job, now());
+    const needs = input.rereadComplete
+      ? isHttpUrl(job.canonicalUrl)
+      : input.ignoreRetryBackoff
+        ? !(
+            job.detailQuality === "detail_enriched" &&
+            job.listingDetailFetch?.outcome === "enriched"
+          ) && job.listingDetailFetch?.outcome !== "unsupported_url"
+        : jobNeedsListingDetail(job, now());
     if (!needs) {
       summary.skipped += 1;
     }
@@ -639,6 +805,7 @@ export async function enrichSavedJobListingDetails(
   const capped = queue.slice(0, maxJobs);
   summary.skipped += queue.length - capped.length;
 
+  let completed = 0;
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (cursor < capped.length) {
@@ -717,10 +884,15 @@ export async function enrichSavedJobListingDetails(
           );
           continue;
         }
-        let detail = extractListingDetailFromHtml({
+        let detail = await readListingDetail({
+          ...(input.readRenderedPage
+            ? { readRenderedPage: input.readRenderedPage }
+            : {}),
           html: response.html,
           url: response.finalUrl,
           expectedTitle: job.title,
+          ...(input.readPage ? { readPage: input.readPage } : {}),
+          ...(input.signal ? { signal: input.signal } : {}),
         });
         if (
           detail?.descriptionLikelyTruncated &&
@@ -755,12 +927,12 @@ export async function enrichSavedJobListingDetails(
               job,
               attemptedAt,
               "no_detail",
-              "The page published no JobPosting record and too little readable text to stand in for one.",
+              "The listing could not be read from this page. Open the listing and try again.",
             ),
           );
           continue;
         }
-        const applied = applyListingDetailToJob({
+        const applied = await applyListingDetailToJob({
           job,
           detail,
           attemptedAt,
@@ -788,6 +960,11 @@ export async function enrichSavedJobListingDetails(
             describeError(error),
           ),
         );
+      } finally {
+        if (attemptedAt) {
+          completed += 1;
+          input.onProgress?.(completed, capped.length);
+        }
       }
     }
   };

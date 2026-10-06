@@ -1,3 +1,4 @@
+import type { JudgeJobFitsInput } from "@nordri/ai-providers";
 import {
   DiscoveryAgentMetadataSchema,
   type DiscoveryActivityEvent,
@@ -5,6 +6,7 @@ import {
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
+  createAiClient,
   createSeed,
   createAgentBrowserRuntime,
   createWorkspaceServiceHarness,
@@ -248,6 +250,11 @@ describe("progressive public API discovery", () => {
     },
     { intent: "", freshness: "recent" as const, sourceIds: "all" as const },
     {
+      intent: "Find design roles whose feed needs detail pages",
+      freshness: "any" as const,
+      sourceIds: "all" as const,
+    },
+    {
       intent: "Find customer support roles instead",
       freshness: "any" as const,
       sourceIds: "all" as const,
@@ -256,6 +263,7 @@ describe("progressive public API discovery", () => {
     "hands explicit search choices and the feed to the agent: %j",
     async (request) => {
       const strictConflict = request.intent.includes("customer support");
+      const browserPages = request.intent.includes("detail pages") ? 2 : 0;
       vi.spyOn(globalThis, "fetch").mockImplementation(() =>
         Promise.resolve(
           createGreenhouseResponse({
@@ -295,6 +303,8 @@ describe("progressive public API discovery", () => {
             warning: null,
             jobs: options.sourceCatalog ?? [],
             agentMetadata: DiscoveryAgentMetadataSchema.parse({
+              pagesCovered: browserPages,
+              coveredPageUrls: browserPages ? undefined : [],
               phaseCompletionReason: strictConflict
                 ? "Customer support conflicts with your saved Product Designer role. Change the saved role or search selectivity to find support jobs."
                 : "The catalog contains a matching design role.",
@@ -302,9 +312,37 @@ describe("progressive public API discovery", () => {
           }),
       );
       runtime.runAgentDiscovery = agent;
+      const base = createAiClient();
       const { workspaceService } = createWorkspaceServiceHarness({
         seed,
         browserRuntime: runtime,
+        // The model judges a support role against a saved designer role as
+        // another occupation, so Best matches only does not keep it.
+        aiClient: {
+          ...base,
+          judgeJobFits: (input: JudgeJobFitsInput) =>
+            Promise.resolve(
+              input.jobs.map(({ jobId, posting }) => {
+                const fit = posting.title.includes("Designer");
+                return {
+                  jobId,
+                  score: fit ? 85 : 10,
+                  recommendation: fit
+                    ? ("strong_fit" as const)
+                    : ("skip" as const),
+                  role: fit ? ("exact" as const) : ("conflict" as const),
+                  roleExplanation: null,
+                  preferences: "aligned" as const,
+                  preferencesExplanation: null,
+                  locationReach: "in_area" as const,
+                  reasons: [],
+                  gaps: [],
+                  listingClosed: false,
+                  listingClosedEvidence: null,
+                };
+              }),
+            ),
+        },
       });
       const snapshot = await workspaceService.runAgentDiscovery(
         undefined,
@@ -313,6 +351,26 @@ describe("progressive public API discovery", () => {
         request,
       );
       expect(agent).toHaveBeenCalledOnce();
+      // Keep the feed's page plus any browser detail reads, including readers
+      // that report their actual count without individual page addresses.
+      expect(
+        snapshot.recentDiscoveryRuns[0]?.targetExecutions[0]?.pagesCovered,
+      ).toBe(1 + browserPages);
+      expect(
+        snapshot.recentDiscoveryRuns[0]?.summary.report?.pagesCovered,
+      ).toBe(1 + browserPages);
+      expect(
+        snapshot.recentDiscoveryRuns[0]?.summary.report?.sources?.reduce(
+          (total, source) => total + (source.pagesCovered ?? 0),
+          0,
+        ),
+      ).toBe(1 + browserPages);
+      expect(
+        snapshot.recentDiscoveryRuns[0]?.targetExecutions[0]?.sourceCounts?.reduce(
+          (total, source) => total + (source.pagesCovered ?? 0),
+          0,
+        ),
+      ).toBe(1 + browserPages);
       expect(agent.mock.calls[0]?.[1]).toMatchObject({
         searchRequest: request,
         retainAllFound: true,

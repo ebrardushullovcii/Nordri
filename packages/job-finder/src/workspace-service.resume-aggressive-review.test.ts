@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { completeTailoredResumeDraft } from "@nordri/ai-providers";
-import { createAiClient } from "./workspace-service.test-runtimes";
+import {
+  createAiClient,
+  fakeResumeClaimCheck,
+} from "./workspace-service.test-runtimes";
 import {
   createWorkspaceServiceHarness,
   createSeed,
@@ -50,10 +53,14 @@ describe("aggressive resume review routing", () => {
       seed,
       aiClient: {
         ...baseAiClient,
+        checkResumeClaims: fakeResumeClaimCheck({ Terraform: "stretch" }),
         createResumeDraft(input) {
           return Promise.resolve(
             completeTailoredResumeDraft(
-              { coreSkills: [...skills, "United", "States", "Terraform"] },
+              {
+                coreSkills: [...skills, "United", "States", "Terraform"],
+                languagePresentation: { language: "English", translations: [] },
+              },
               input,
             ),
           );
@@ -282,6 +289,55 @@ describe("aggressive resume review routing", () => {
     expect(workspace.effectiveTailoringStrength).toBe("aggressive");
   });
 
+  test("a kept resume gets the checker's fixes for lines it rejected", async () => {
+    const seed = createSeed();
+    const invented =
+      "Led a forty-person platform team through two acquisitions.";
+    const fixedSummary = "Builds design systems and frontend platforms.";
+    const baseAiClient = createAiClient();
+    const { workspaceService } = createWorkspaceServiceHarness({
+      seed,
+      aiClient: {
+        ...baseAiClient,
+        checkResumeClaims: fakeResumeClaimCheck(
+          { [invented]: "unsupported", Terraform: "unsupported" },
+          { [invented]: fixedSummary, Terraform: "" },
+        ),
+        createResumeDraft(input) {
+          return Promise.resolve(
+            completeTailoredResumeDraft(
+              {
+                languagePresentation: { language: "English", translations: [] },
+                summary: invented,
+                coreSkills: [...seed.profile.skills, "Terraform"],
+              },
+              input,
+            ),
+          );
+        },
+      },
+    });
+
+    await workspaceService.generateResume("job_ready");
+    const workspace = await workspaceService.getResumeWorkspace("job_ready");
+    const sections = workspace.draft.sections;
+
+    expect(sections.find((section) => section.kind === "summary")?.text).toBe(
+      fixedSummary,
+    );
+    expect(
+      sections
+        .filter((section) => section.kind === "skills")
+        .flatMap((section) => section.bullets)
+        .find((bullet) => bullet.text === "Terraform"),
+    ).toMatchObject({ included: false });
+    expect(
+      workspace.validation?.claimAssessments.filter(
+        (claim) => claim.status === "unsupported",
+      ),
+    ).toEqual([]);
+  });
+
   test("generation preview returns blocking model repairs separately from person confirmations", async () => {
     const seed = createSeed();
     seed.savedJobs = seed.savedJobs.map((job) =>
@@ -339,6 +395,7 @@ describe("aggressive resume review routing", () => {
       seed,
       aiClient: {
         ...baseAiClient,
+        checkResumeClaims: fakeResumeClaimCheck({ Terraform: "stretch" }),
         async createResumeDraft(input) {
           const draft = await baseAiClient.createResumeDraft(input);
           const preview = await input.renderPreview?.({

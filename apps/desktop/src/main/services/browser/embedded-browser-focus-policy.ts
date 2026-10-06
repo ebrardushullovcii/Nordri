@@ -20,8 +20,7 @@ export interface EmbeddedBrowserFocusOperation {
  * - A tab parked for the person (a sign-in, a check): helping there is
  *   task-local; it never stops work in other tabs, however many clicks and
  *   keystrokes it takes.
- * - Any other tab: runs that have not said which tab they use may be using
- *   this one, so they stop; runs working in other tabs carry on.
+ * - Any other tab: nothing stops. A run must claim its tab before using it.
  */
 export function getEmbeddedBrowserFocusAction(input: {
   focusedTabId: string;
@@ -46,10 +45,5 @@ export function getEmbeddedBrowserFocusAction(input: {
     return input.bannerOnTab ? { type: "dismiss_attention" } : { type: "none" };
   }
   if (input.closingTab) return { type: "none" };
-  const unclaimed = input.operations
-    .filter((operation) => operation.tabIds.length === 0)
-    .map((operation) => operation.id);
-  if (unclaimed.length > 0)
-    return { type: "take_tab", operationIds: unclaimed };
   return input.bannerOnTab ? { type: "dismiss_attention" } : { type: "none" };
 }

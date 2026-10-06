@@ -1,5 +1,11 @@
 import type { ApplyProposal } from "./types";
 
+const STORED_FACT_PARAMETER = {
+  type: "string",
+  description:
+    "For an unchanged stored value: its exact id from the stored-fact catalog. Values that differ still need an answer check. Eligibility always needs its question and hiring context checked.",
+};
+
 /**
  * What the apply agent can do.
  *
@@ -28,7 +34,6 @@ export const APPLY_TOOL_NAMES = [
   "scroll",
   "wait",
   "go_back",
-  "suggest_answer",
   "submit_application",
   "finish",
 ] as const;
@@ -56,7 +61,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "observe",
         description:
-          "Look at the whole page: its address, headings, every visible field, every button, every link with where it goes, anything else clickable, tabs the page opened, and an excerpt of the text. Nothing is filtered — what a person could see, you can see. Start here and look again whenever the page changes.",
+          "Look at the whole page: its address, headings, every visible field, every button, every link with where it goes, anything else clickable, tabs the page opened, and an excerpt of the text. Nothing is filtered — what a person could see, you can see. The first page view is supplied before your first turn. Use observe when that read failed or you need page facts beyond the fresh view returned by fill_fields.",
         parameters: { type: "object", properties: {} },
       },
     },
@@ -149,12 +154,13 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "type",
         description:
-          "Type into a field. For a question about the person, call suggest_answer first and use what it gives you; only write your own words when it has nothing and the question genuinely needs prose.",
+          "Type into one field. To fill several fields at once, use fill_fields. An answer about the person must come from their facts; Job Finder checks it before it is typed.",
         parameters: {
           type: "object",
           properties: {
             ref: { type: "string" },
             text: { type: "string" },
+            storedFactId: STORED_FACT_PARAMETER,
             groundedIn: {
               type: "array",
               items: { type: "string" },
@@ -175,6 +181,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
           type: "object",
           properties: {
             ref: { type: "string" },
+            storedFactId: STORED_FACT_PARAMETER,
             option: {
               type: "string",
               description: "The option's exact label.",
@@ -194,6 +201,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
           type: "object",
           properties: {
             ref: { type: "string" },
+            storedFactId: STORED_FACT_PARAMETER,
             checked: { type: "boolean" },
           },
           required: ["ref", "checked"],
@@ -267,22 +275,9 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
     {
       type: "function",
       function: {
-        name: "suggest_answer",
-        description:
-          "Ask what the person's own profile, the resume going out with this application, and their saved answers say about one field. Returns the answer and where it came from, or says there is nothing — in which case either write the answer yourself if it is a prose question, or finish and say this question needs them.",
-        parameters: {
-          type: "object",
-          properties: { ref: { type: "string" } },
-          required: ["ref"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
         name: "submit_application",
         description:
-          "Say the form is complete and this is the button that sends it. First observe again and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls; readable fields can still have a covered send button. Job Finder checks everything again and presses it only if the person allowed that; otherwise the application stops here, filled in and ready for them.",
+          "Say the form is complete and this is the button that sends it. First read the fresh page returned by fill_fields or observe and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls; readable fields can still have a covered send button. Job Finder checks everything again and presses it only if the person allowed that; otherwise the application stops here, filled in and ready for them.",
         parameters: {
           type: "object",
           properties: { ref: { type: "string" } },
@@ -295,7 +290,7 @@ export function getApplyToolDefinitions(): ApplyToolDefinition[] {
       function: {
         name: "finish",
         description:
-          "Finish. Before reporting a completed form, observe again and dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls, then observe the final button. Call finish when the form is complete, when only the person can go further (they have to sign in, pass a security check, pay, or make an account), or when you are genuinely stuck. The reason is your report to the person: which site and page you were on, what you tried, what the page did, and what they need to do. Pass stuck: true when you could not get there.",
+          "Finish. Before reporting a completed form, read the fresh page returned by fill_fields or observe, dismiss ordinary cookie banners, newsletter dialogs, and chat overlays using their own controls, and check the final button on the returned page. When questions remain for the person, use needsPerson: true; one finish hands back all the questions and ends the run. Call finish when the form is complete, when only the person can go further (they have to sign in, pass a security check, pay, or make an account), or when you are genuinely stuck. The reason is your report to the person: which site and page you were on, what you tried, what the page did, and what they need to do. Pass stuck: true when you could not get there.",
         parameters: {
           type: "object",
           properties: {
@@ -362,6 +357,8 @@ export function parseApplyProposal(
   const args = asRecord(parsedArguments);
   const ref = asString(args.ref);
   const reason = asString(args.reason);
+  const storedFactId = asString(args.storedFactId);
+  const factReference = storedFactId ? { storedFactId } : {};
   const withReason = <T extends object>(
     proposal: T,
   ): T & { reason?: string } => (reason ? { ...proposal, reason } : proposal);
@@ -409,6 +406,7 @@ export function parseApplyProposal(
           ref,
           text,
           ...(groundedIn ? { groundedIn } : {}),
+          ...factReference,
         },
       };
     }
@@ -416,7 +414,10 @@ export function parseApplyProposal(
       if (!ref) return needsRef();
       const option = asString(args.option);
       return option
-        ? { ok: true, proposal: { tool: "select", ref, option } }
+        ? {
+            ok: true,
+            proposal: { tool: "select", ref, option, ...factReference },
+          }
         : { ok: false, error: "select needs the option's label." };
     }
     case "set_checkbox":
@@ -427,6 +428,7 @@ export function parseApplyProposal(
               tool: "set_checkbox",
               ref,
               checked: args.checked !== false,
+              ...factReference,
             },
           }
         : needsRef();
@@ -456,10 +458,6 @@ export function parseApplyProposal(
     }
     case "go_back":
       return { ok: true, proposal: { tool: "go_back" } };
-    case "suggest_answer":
-      return ref
-        ? { ok: true, proposal: { tool: "suggest_answer", ref } }
-        : needsRef();
     case "submit_application":
       return ref
         ? { ok: true, proposal: { tool: "submit_application", ref } }
@@ -479,4 +477,149 @@ export function parseApplyProposal(
     default:
       return { ok: false, error: `There is no tool called ${toolName}.` };
   }
+}
+
+/** A batch carries the same proposals as the single-field tools. */
+export const FILL_FIELDS_TOOL_DEFINITION: ApplyToolDefinition = {
+  type: "function",
+  function: {
+    name: "fill_fields",
+    description:
+      "Complete the visible step in one call, from the first step onward: fill all answerable fields, attach the requested available documents with upload, then include thenContinue for Continue or Next when no required answer is missing. Entries use the exact single-tool arguments for type, select, set_checkbox, upload or click through the same executor, permissions and send checks. Independent stored-fact fills may run before answers waiting for a check; clicks, uploads and writes to the same field or choice group retain their order. Click may dismiss a cookie banner or add a required history row on this step; use handles already observed and read the returned page for newly revealed handles. Choose a radio with set_checkbox on its option's ref. A refusal, pause, navigation, changed step or newly revealed question after a field write stops the rest and names entries not attempted. Ordinary upload buttons changing or a chore click revealing a row on this same page do not stop planned entries. Omit thenContinue when a question needs the person; fill everything else, then finish once. Never use this tool to send. Validation errors or an unchanged step are reported with one fresh page observation.",
+    parameters: {
+      type: "object",
+      properties: {
+        thenContinue: {
+          type: "string",
+          description:
+            "Optional ref of this step’s Continue or Next control. Use only when every required field is answered.",
+        },
+        fields: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              tool: {
+                type: "string",
+                enum: ["type", "select", "set_checkbox", "upload", "click"],
+              },
+              ref: { type: "string" },
+              storedFactId: STORED_FACT_PARAMETER,
+              text: {
+                type: "string",
+                description: "For type: the text to enter.",
+              },
+              option: {
+                type: "string",
+                description: "For select: the option's label.",
+              },
+              checked: {
+                type: "boolean",
+                description: "For set_checkbox: true or false.",
+              },
+              documentId: {
+                type: "string",
+                description:
+                  "For upload: an id from the available document list.",
+              },
+              reason: {
+                type: "string",
+                description: "For click: why this page chore is needed.",
+              },
+              groundedIn: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "For text you wrote: what you based it on, in plain words.",
+              },
+            },
+            required: ["tool", "ref"],
+          },
+        },
+      },
+      required: ["fields"],
+    },
+  },
+};
+
+export type FillFieldsEntry = Extract<
+  ApplyProposal,
+  { tool: "type" | "select" | "set_checkbox" | "upload" | "click" }
+>;
+
+export function parseFillFields(
+  rawArguments: string,
+):
+  | { ok: true; fields: FillFieldsEntry[]; thenContinue?: string }
+  | { ok: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = rawArguments.trim() ? JSON.parse(rawArguments) : {};
+  } catch {
+    return {
+      ok: false,
+      error: "The arguments for fill_fields were not valid JSON.",
+    };
+  }
+  const record = asRecord(parsed);
+  const thenContinue = record.thenContinue;
+  if (
+    thenContinue !== undefined &&
+    (typeof thenContinue !== "string" || !thenContinue.trim())
+  ) {
+    return {
+      ok: false,
+      error: "thenContinue needs the ref of Continue or Next.",
+    };
+  }
+  const entries = record.fields;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return {
+      ok: false,
+      error: "fill_fields needs a non-empty list of field actions.",
+    };
+  }
+  const fields: FillFieldsEntry[] = [];
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    if (
+      record.tool !== "type" &&
+      record.tool !== "select" &&
+      record.tool !== "set_checkbox" &&
+      record.tool !== "upload" &&
+      record.tool !== "click"
+    ) {
+      return {
+        ok: false,
+        error:
+          "fill_fields accepts only type, select, set_checkbox, upload and page-chore click actions. Use separate tools for navigation and sending.",
+      };
+    }
+    if (record.tool === "set_checkbox" && typeof record.checked !== "boolean") {
+      return {
+        ok: false,
+        error: "A set_checkbox field action needs checked: true or false.",
+      };
+    }
+    const result = parseApplyProposal(record.tool, JSON.stringify(record));
+    if (!result.ok) return result;
+    const proposal = result.proposal;
+    if (
+      proposal.tool === "type" ||
+      proposal.tool === "select" ||
+      proposal.tool === "set_checkbox" ||
+      proposal.tool === "upload" ||
+      proposal.tool === "click"
+    ) {
+      fields.push(proposal);
+    }
+  }
+  return {
+    ok: true,
+    fields,
+    ...(typeof thenContinue === "string"
+      ? { thenContinue: thenContinue.trim() }
+      : {}),
+  };
 }

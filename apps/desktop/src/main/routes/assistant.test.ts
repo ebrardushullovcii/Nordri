@@ -2,8 +2,15 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import { BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from "electron";
 
-vi.mock("electron", () => ({ BrowserWindow: {}, dialog: {} }));
+vi.mock("electron", () => ({
+  BrowserWindow: { fromWebContents: vi.fn() },
+  dialog: {},
+}));
+vi.mock("../services/job-finder/workspace-service", () => ({
+  getJobFinderWorkspaceService: vi.fn(),
+}));
 vi.mock("../services/assistant/assistant-service", () => ({
   getAssistantHost: vi.fn(),
 }));
@@ -12,7 +19,8 @@ vi.mock("../services/job-finder/candidate-asset-library-instance", () => ({
 }));
 
 import { CandidateAssetLibrary } from "../services/job-finder/candidate-asset-library";
-import { inferAssetKind } from "./assistant";
+import { inferAssetKind, registerAssistantRouteHandlers } from "./assistant";
+import { getJobFinderWorkspaceService } from "../services/job-finder/workspace-service";
 
 describe("sidebar file attachment classification", () => {
   test.each([
@@ -64,4 +72,33 @@ describe("sidebar file attachment classification", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+test("saves the batch checkpoint before acknowledging its UI update", async () => {
+  const handle = vi.fn<IpcMain["handle"]>();
+  const saveResumeBatchCheckpoint = vi.fn().mockResolvedValue(undefined);
+  vi.mocked(getJobFinderWorkspaceService).mockResolvedValue({
+    saveResumeBatchCheckpoint,
+  } as unknown as Awaited<ReturnType<typeof getJobFinderWorkspaceService>>);
+  vi.spyOn(BrowserWindow, "fromWebContents").mockReturnValue({
+    webContents: { id: 42 },
+  } as unknown as BrowserWindow);
+  registerAssistantRouteHandlers({ handle } as unknown as IpcMain);
+  const callback = handle.mock.calls.find(
+    ([channel]) => channel === "job-finder:assistant:sync-resume-batch",
+  )![1];
+  const batch = {
+    id: "batch",
+    jobIds: ["unfinished"],
+    activeJobIds: ["unfinished"],
+    completedJobIds: [],
+    done: false,
+    stopRequested: false,
+  };
+  const result: unknown = await callback(
+    { sender: { id: 42, on: vi.fn() } } as unknown as IpcMainInvokeEvent,
+    batch,
+  );
+  expect(saveResumeBatchCheckpoint).toHaveBeenCalledWith(batch);
+  expect(result).toEqual(batch);
 });

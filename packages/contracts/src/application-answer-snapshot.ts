@@ -190,7 +190,7 @@ export function deriveApprovedApplicationAnswerSnapshotContent(
   for (const custom of profile.answerBank.customAnswers) {
     const answer = custom.answer.trim();
     const question = custom.question.trim();
-    if (!answer || !question) {
+    if (custom.needsConfirmation || !answer || !question) {
       continue;
     }
     entries.push({

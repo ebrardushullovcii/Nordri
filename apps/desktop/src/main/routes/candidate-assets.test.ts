@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
@@ -7,8 +7,14 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 vi.mock("electron", () => ({
   BrowserWindow: { fromWebContents: vi.fn(() => null) },
   dialog: { showOpenDialog: vi.fn() },
+  shell: { openPath: vi.fn().mockResolvedValue("") },
 }));
 
+import { shell } from "electron";
+import {
+  ResumeSourceDocumentSchema,
+  CandidateAssetListResultSchema,
+} from "@nordri/contracts";
 import { CandidateAssetLibrary } from "../services/job-finder/candidate-asset-library";
 import { registerCandidateAssetRouteHandlers } from "./candidate-assets";
 
@@ -176,5 +182,59 @@ describe("candidate asset IPC routes", () => {
     expect(onApplicationFileAvailable).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: imported.asset.id, deletedAt: null }),
     );
+  });
+  test("reads original attachment metadata and opens a copy through the existing file action", async () => {
+    temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "resume-route-"));
+    const sourcePath = path.join(temporaryDirectory, "original.docx");
+    await writeFile(sourcePath, "synthetic document bytes");
+    const source = ResumeSourceDocumentSchema.parse({
+      id: "source_resume",
+      fileName: "original.docx",
+      storagePath: sourcePath,
+      uploadedAt: "2026-10-01T12:00:00.000Z",
+    });
+    const handlers = new Map<string, RouteHandler>();
+    const ipcMain = {
+      handle: vi.fn((channel: string, handler: RouteHandler) =>
+        handlers.set(channel, handler),
+      ),
+    } as unknown as IpcMain;
+    registerCandidateAssetRouteHandlers(ipcMain, {
+      library: new CandidateAssetLibrary(
+        path.join(temporaryDirectory, "assets"),
+      ),
+      selectFile: () => Promise.resolve(null),
+      getResumeSource: () => Promise.resolve(source),
+    });
+    const event = {} as IpcMainInvokeEvent;
+    const result = CandidateAssetListResultSchema.parse(
+      await handlers.get("job-finder:candidate-assets:list")!(event, {
+        resumeSourceId: source.id,
+      }),
+    );
+    expect(result.originalResumeFile).toEqual({
+      id: source.id,
+      fileName: source.fileName,
+      fileType: "DOCX",
+      byteSize: 24,
+      importedAt: source.uploadedAt,
+    });
+    expect(JSON.stringify(result)).not.toContain(sourcePath);
+    expect(
+      await handlers.get("job-finder:candidate-assets:open")!(event, {
+        assetId: source.id,
+      }),
+    ).toEqual({ outcome: "opened" });
+    const viewingPath = vi.mocked(shell).openPath.mock.calls.at(-1)![0];
+    expect(viewingPath).not.toBe(sourcePath);
+    expect(await readFile(viewingPath, "utf8")).toBe(
+      "synthetic document bytes",
+    );
+    await rm(path.dirname(viewingPath), { recursive: true, force: true });
+    expect(
+      await handlers.get("job-finder:candidate-assets:open")!(event, {
+        assetId: "other_source",
+      }),
+    ).toEqual({ outcome: "not_found" });
   });
 });

@@ -14,6 +14,7 @@ import {
   areEquivalentRecordCandidates,
   isClearlyResumeDateRange,
   isObject,
+  cleanImportedValue,
   stringifyCandidateTarget,
   toCandidateListValues,
   toNarrativeStringArray,
@@ -53,22 +54,23 @@ function recordFieldText(value: unknown, key: string): string {
   return typeof field === "string" ? normalizeText(field) : "";
 }
 
+/**
+ * Read from the resume's own text: by the model (ADR 0041), or by the regex
+ * pass in runs recorded before the model read every section.
+ */
+function isDocumentTextCandidate(
+  candidate: ResumeImportFieldCandidate,
+): boolean {
+  return (
+    candidate.sourceKind === "parser_literal" ||
+    candidate.sourceKind === "model_identity_summary" ||
+    candidate.sourceKind === "model_experience" ||
+    candidate.sourceKind === "model_background"
+  );
+}
+
 export function candidateScore(candidate: ResumeImportFieldCandidate): number {
-  const sourceBonus = (() => {
-    switch (candidate.sourceKind) {
-      case "parser_literal":
-        return 0.04;
-      case "vision_omni":
-        return 0.015;
-      default:
-        return 0;
-    }
-  })();
-  const deterministicFallbackBonus = candidate.notes.includes(
-    "deterministic_stage_fallback",
-  )
-    ? 0.03
-    : 0;
+  const sourceBonus = candidate.sourceKind === "vision_omni" ? 0.015 : 0;
   const evidenceBonus = candidate.sourceBlockIds.length > 0 ? 0.01 : 0;
   const recommendationBonus =
     candidate.confidenceBreakdown?.recommendation === "auto_apply"
@@ -79,7 +81,6 @@ export function candidateScore(candidate: ResumeImportFieldCandidate): number {
   return (
     candidate.confidence +
     sourceBonus +
-    deterministicFallbackBonus +
     evidenceBonus +
     recommendationBonus
   );
@@ -122,6 +123,12 @@ function existingScalarValueForCandidate(
       return profile.summary;
     case "identity.yearsExperience":
       return profile.yearsExperience;
+    case "location.currentCity":
+      return profile.currentCity;
+    case "location.currentRegion":
+      return profile.currentRegion;
+    case "location.currentCountry":
+      return profile.currentCountry;
     case "location.currentLocation":
       return profile.currentLocation;
     case "location.timeZone":
@@ -351,10 +358,7 @@ export function shouldPreferCandidateOverExistingValue(
     return true;
   }
 
-  if (
-    candidate.sourceKind === "parser_literal" &&
-    hasSufficientEvidence(candidate)
-  ) {
+  if (isDocumentTextCandidate(candidate) && hasSufficientEvidence(candidate)) {
     if (
       typeof currentValue === "string" &&
       typeof candidate.value === "string"
@@ -409,7 +413,7 @@ function normalizeSupportedEducationValue(
 
   const trimmed = value.trim();
   const evidenceText = candidate.evidenceText?.trim();
-  if (evidenceText) {
+  if (evidenceText && kind === "location") {
     const evidenceTokens = new Set(educationEvidenceTokens(evidenceText));
     const valueTokens = educationEvidenceTokens(trimmed);
     if (
@@ -421,15 +425,11 @@ function normalizeSupportedEducationValue(
   }
 
   const normalized = normalizeText(trimmed);
-  const compact = normalized.replace(/\s+/g, "");
   const degreeMarker =
     /\b(?:associate|associates|bachelor|bachelors|master|masters|doctor|doctorate|phd|degree|diploma|certificate|bsc|bba|msc|mba|ba|bs|ma|ms)\b/;
 
   if (kind === "degree") {
-    return degreeMarker.test(normalized) ||
-      ["ba", "bs", "ma", "ms"].some((prefix) => compact.startsWith(prefix))
-      ? trimmed
-      : null;
+    return trimmed;
   }
 
   if (kind === "fieldOfStudy") {
@@ -508,6 +508,7 @@ export function splitCertificationNameYear(name: string | null): {
 function normalizeRecordCandidateValue(
   candidate: ResumeImportFieldCandidate,
   bundle?: ResumeDocumentBundle,
+  readByModel = false,
 ): ResumeImportFieldCandidate["value"] {
   const parsedValue = (() => {
     if (typeof candidate.value !== "string") {
@@ -550,7 +551,11 @@ function normalizeRecordCandidateValue(
         "organization",
         "organisation",
       ]);
-      const splitRole = splitImportedRole(rawTitle ?? "", savedCompany, bundle);
+      // The model splits title from employer itself (ADR 0041); the rule
+      // split only stands in when no model read the resume.
+      const splitRole = readByModel
+        ? { title: rawTitle ?? "", companyName: null }
+        : splitImportedRole(rawTitle ?? "", savedCompany, bundle);
       return {
         companyName:
           readAliasString(value, [
@@ -728,13 +733,14 @@ function normalizeRecordCandidateValue(
     case "project": {
       const value = parsedValue;
       return {
-        name: typeof value.name === "string" ? value.name : null,
-        projectType:
-          typeof value.projectType === "string" ? value.projectType : null,
-        summary: typeof value.summary === "string" ? value.summary : null,
-        role: typeof value.role === "string" ? value.role : null,
-        skills: toStringArray(value.skills),
-        outcome: typeof value.outcome === "string" ? value.outcome : null,
+        name: readAliasString(value, ["name", "title"]),
+        projectType: readAliasString(value, ["projectType", "type", "context"]),
+        summary: readAliasString(value, ["summary", "description"]),
+        role: readAliasString(value, ["role", "contribution"]),
+        skills: toStringArray(
+          value.skills ?? value.technologies ?? value.tools,
+        ),
+        outcome: readAliasString(value, ["outcome", "impact", "results"]),
         projectUrl:
           typeof value.projectUrl === "string" ? value.projectUrl : null,
         repositoryUrl:
@@ -777,6 +783,7 @@ function normalizeRecordCandidateValue(
 function normalizeRecordCandidateForReconciliation(
   candidate: ResumeImportFieldCandidate,
   bundle?: ResumeDocumentBundle,
+  readByModel = false,
 ): ResumeImportFieldCandidate {
   // Some providers emit one named skill object per candidate. Normalize it
   // to the supported single-skill record before ranking and applying it;
@@ -804,7 +811,7 @@ function normalizeRecordCandidateForReconciliation(
     return candidate;
   }
 
-  const value = normalizeRecordCandidateValue(candidate, bundle);
+  const value = normalizeRecordCandidateValue(candidate, bundle, readByModel);
   // The model sometimes keys a structured record by a slug ("experiences",
   // "albanian") instead of "record". Same section, same object shape, same
   // person's job: it must group with the deterministic twin instead of
@@ -1387,8 +1394,7 @@ function promoteImportCandidatesIntoEmptyProfile(
       : freshStart || isListTarget(candidate) || existingIsEmpty;
     if (
       !eligible ||
-      ((candidate.target.key === "employmentTypes" ||
-        candidate.target.key === "compensation") &&
+      (["employmentTypes", "compensation"].includes(candidate.target.key) &&
         scalarValueConflictsWithWorkspace(
           profile,
           searchPreferences,
@@ -1574,8 +1580,7 @@ function isAutoApplyLiteralField(
 function hasSufficientEvidence(candidate: ResumeImportFieldCandidate): boolean {
   return (
     candidate.sourceBlockIds.length > 0 ||
-    (candidate.visualEvidence?.length ?? 0) > 0 ||
-    candidate.sourceKind === "parser_literal"
+    (candidate.visualEvidence?.length ?? 0) > 0
   );
 }
 
@@ -1702,7 +1707,7 @@ function canAutoApplyDespiteWorkspaceConflict(
   // changed; now the difference waits for review, as the import promises.
   return (
     isUntouchedFreshStartProfile(profile) &&
-    candidate.sourceKind === "parser_literal" &&
+    isDocumentTextCandidate(candidate) &&
     isAutoApplyLiteralField(candidate) &&
     hasSufficientEvidence(candidate)
   );
@@ -1716,7 +1721,7 @@ function isStrongLiteralIdentityCandidate(
   candidate: ResumeImportFieldCandidate,
 ): boolean {
   return (
-    candidate.sourceKind === "parser_literal" &&
+    isDocumentTextCandidate(candidate) &&
     candidate.target.section === "identity" &&
     candidate.target.key === "fullName" &&
     typeof candidate.value === "string" &&
@@ -1969,7 +1974,7 @@ function shouldAutoApply(
   // It never replaces one the person saved; that difference waits for review.
   if (candidate.target.section === "work_eligibility") {
     return (
-      candidate.sourceKind === "parser_literal" &&
+      isDocumentTextCandidate(candidate) &&
       hasSufficientEvidence(candidate) &&
       isEmptyWorkEligibilityValue(
         existingScalarValueForCandidate(profile, searchPreferences, candidate),
@@ -2269,53 +2274,6 @@ function shouldMergeRecordCandidate(
     default:
       return false;
   }
-}
-
-function shouldAutoApplyAdditionalFreshStartRecordCandidate(
-  profile: CandidateProfile,
-  candidate: ResumeImportFieldCandidate,
-): boolean {
-  if (
-    !isFreshStartCandidateProfile(profile) ||
-    !isRecordTarget(candidate) ||
-    !isObject(candidate.value)
-  ) {
-    return false;
-  }
-
-  if (
-    candidate.target.section !== "experience" ||
-    profile.experiences.length > 0
-  ) {
-    return false;
-  }
-
-  const value = candidate.value;
-  const hasCompany =
-    typeof value.companyName === "string" &&
-    value.companyName.trim().length > 0;
-  const hasTitle =
-    typeof value.title === "string" && value.title.trim().length > 0;
-  const hasDates =
-    (typeof value.startDate === "string" &&
-      value.startDate.trim().length > 0) ||
-    (typeof value.endDate === "string" && value.endDate.trim().length > 0) ||
-    value.isCurrent === true;
-  const hasSubstantiveDetails =
-    (typeof value.summary === "string" && value.summary.trim().length >= 24) ||
-    toNarrativeStringArray(value.achievements).length > 0 ||
-    toStringArray(value.skills).length > 0;
-  const completeness = scoreExperienceRecordCompleteness(value);
-  const overall = candidateOverallConfidence(candidate);
-
-  return (
-    hasCompany &&
-    hasTitle &&
-    (hasDates || hasSubstantiveDetails) &&
-    completeness >= (hasDates ? 4 : 3) &&
-    overall >= 0.72 &&
-    hasSufficientEvidence(candidate)
-  );
 }
 
 function shouldMergeListCandidate(
@@ -2812,10 +2770,25 @@ export function reconcileCandidates(
   searchPreferences: JobSearchPreferences,
   candidates: readonly ResumeImportFieldCandidate[],
   bundle?: ResumeDocumentBundle,
+  options: {
+    /**
+     * The model read every section (ADR 0041): its values stand, and the
+     * rule checks against the resume text (skill fragments, role splitting,
+     * location-shaped titles, activity sections) are not run over them.
+     */
+    readByModel?: boolean;
+  } = {},
 ): ResumeImportFieldCandidate[] {
   const resolved: ResumeImportFieldCandidate[] = [];
   const { candidates: foldedCandidates, foldedAway } =
-    foldLooseRecordFieldCandidates(candidates);
+    foldLooseRecordFieldCandidates(
+      candidates.map((candidate) => ({
+        ...candidate,
+        value: cleanImportedValue(
+          candidate.value,
+        ) as ResumeImportFieldCandidate["value"],
+      })),
+    );
   for (const candidate of foldedAway) {
     resolved.push(
       applyCandidateResolution(
@@ -2830,7 +2803,11 @@ export function reconcileCandidates(
   const normalizedCandidates: ResumeImportFieldCandidate[] = [];
   const recordCandidates = normalizeCertificationNamesFromSiblings(
     foldedCandidates.map((candidate) =>
-      normalizeRecordCandidateForReconciliation(candidate, bundle),
+      normalizeRecordCandidateForReconciliation(
+        candidate,
+        bundle,
+        options.readByModel === true,
+      ),
     ),
   );
   for (const normalized of recordCandidates) {
@@ -2871,11 +2848,13 @@ export function reconcileCandidates(
       );
       continue;
     }
-    const checked = validateResumeImportSourceCandidate(
-      normalized,
-      bundle,
-      recordCandidates,
-    );
+    const checked = options.readByModel
+      ? { candidate: normalized, reject: false, review: false }
+      : validateResumeImportSourceCandidate(
+          normalized,
+          bundle,
+          recordCandidates,
+        );
     if (checked.reject || checked.review) {
       resolved.push(
         applyCandidateResolution(
@@ -2894,6 +2873,13 @@ export function reconcileCandidates(
     profile,
     normalizedCandidates,
   );
+  // A resume that names someone other than the person whose profile this is
+  // is not theirs to merge: nothing from it, jobs and schools included, is
+  // added until they review it.
+  const differentPersonConflict = normalizedCandidates
+    .filter((candidate) => candidate.target.key === "fullName")
+    .map((candidate) => identityConflicts.get(candidate.id))
+    .find((conflict): conflict is string => Boolean(conflict));
   const candidatesForGrouping: ResumeImportFieldCandidate[] = [];
 
   for (const candidate of normalizedCandidates) {
@@ -3013,18 +2999,12 @@ export function reconcileCandidates(
               )
             : candidate,
         );
-        let hasAutoAppliedCollectionCandidate = false;
         const recordGroupResolved: ResumeImportFieldCandidate[] = [];
 
         rankedGroup.forEach((candidate, index) => {
           const recommendation = recommendationForCandidate(candidate);
           const shouldAutoApplyCollectionCandidate =
-            shouldMergeRecordCandidate(profile, candidate) &&
-            (!hasAutoAppliedCollectionCandidate ||
-              shouldAutoApplyAdditionalFreshStartRecordCandidate(
-                profile,
-                candidate,
-              ));
+            index === 0 && shouldMergeRecordCandidate(profile, candidate);
           const resolution =
             recommendation === "abstain"
               ? "abstained"
@@ -3033,10 +3013,6 @@ export function reconcileCandidates(
                 : index === 0
                   ? "needs_review"
                   : "rejected";
-
-          if (resolution === "auto_applied") {
-            hasAutoAppliedCollectionCandidate = true;
-          }
 
           const resolvedCandidate = applyCandidateResolution(
             profile,
@@ -3113,7 +3089,7 @@ export function reconcileCandidates(
     appendResolvedConflictGroup(resolved, groupResolved);
   }
 
-  return promoteImportCandidatesIntoEmptyProfile(
+  const promoted = promoteImportCandidatesIntoEmptyProfile(
     profile,
     searchPreferences,
     resolveRedundantFreshStartNamePartCandidates(
@@ -3122,5 +3098,36 @@ export function reconcileCandidates(
       resolved,
     ),
     bundle,
+  );
+  const reconciled = promoted.map((candidate) =>
+    options.readByModel &&
+    candidate.resolution === "auto_applied" &&
+    (candidate.target.section === "proof_point" ||
+      (candidate.target.section === "search_preferences" &&
+        ["workModes", "targetRoles"].includes(candidate.target.key)))
+      ? applyCandidateResolution(
+          profile,
+          searchPreferences,
+          candidate,
+          "needs_review",
+          candidate.target.section === "proof_point"
+            ? "confirm_imported_achievement"
+            : "confirm_imported_search_preferences",
+        )
+      : candidate,
+  );
+  if (!differentPersonConflict) {
+    return reconciled;
+  }
+  return reconciled.map((candidate) =>
+    candidate.resolution === "auto_applied"
+      ? applyCandidateResolution(
+          profile,
+          searchPreferences,
+          candidate,
+          "needs_review",
+          `identity_mismatch_requires_review: ${differentPersonConflict}`,
+        )
+      : candidate,
   );
 }

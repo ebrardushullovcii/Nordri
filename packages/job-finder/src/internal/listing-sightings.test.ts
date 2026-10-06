@@ -369,7 +369,7 @@ describe("merging the same job from two sources", () => {
     );
     const job = result.mergedJobs[0]!;
     expect(job.canonicalUrl).toBe(`${HOST}/forms/jobs/9`);
-    expect(job.applicationUrl).toBe(`${HOST}/forms/jobs/9`);
+    expect(job.applicationUrl).toBe(`${HOST}/forms/apply/9`);
   });
 
   test("a later card sighting keeps the record of the earlier page read", () => {
@@ -411,6 +411,13 @@ describe("merging the same job from two sources", () => {
           finalUrl: url,
         });
       },
+      readPage: ({ pageUrl }) =>
+        Promise.resolve({
+          ...job,
+          applicationUrl: pageUrl.includes("/forms/")
+            ? `${HOST}/forms/apply/9`
+            : `${HOST}/employer-a/apply/9`,
+        }),
       now: () => "2026-09-23T10:10:00.000Z",
     });
     expect(requested).toHaveLength(2);
@@ -439,12 +446,33 @@ describe("merging the same job from two sources", () => {
     expect(listUnreadSightings(read.jobs[0]!.provenance)).toHaveLength(2);
   });
 
+  test.each([200, 404])(
+    "a failed route read (HTTP %s) stays unread and keeps its collected destination",
+    async (status) => {
+      const job = mergeInOrder("board", "forms").mergedJobs[0]!;
+      const read = await readSightingApplyRoutes({
+        jobs: [job],
+        fetchHtml: (url) =>
+          Promise.resolve({
+            status,
+            html: "<main>Unread page</main>",
+            finalUrl: url,
+          }),
+        readPage: () => Promise.resolve(null),
+      });
+      expect(read.summary.read).toBe(0);
+      expect(read.jobs[0]?.provenance).toEqual(job.provenance);
+      expect(listUnreadSightings(read.jobs[0]!.provenance)).toHaveLength(2);
+    },
+  );
+
   test("skips a source already handed to the person and keeps its sightings", async () => {
     const job = mergeInOrder("board", "forms").mergedJobs[0]!;
     const requested: string[] = [];
     const read = await readSightingApplyRoutes({
       jobs: [job],
       canReadUrl: (url) => url !== `${HOST}/board/jobs/9`,
+      readPage: () => Promise.resolve({ ...job, applicationUrl: null }),
       fetchHtml: (url) => {
         requested.push(url);
         return Promise.resolve({ status: 200, html: "", finalUrl: url });

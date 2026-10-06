@@ -72,6 +72,8 @@ export interface WorkspaceServiceContext {
   exportFileVerifier?: ResumeExportFileVerifier;
   researchAdapter?: ResumeResearchAdapter;
   repository: JobFinderRepository;
+  listingAssessmentJobIds?: Set<string>;
+  onListingAssessmentFinished?: () => void;
   activeDiscoveryAbortControllerRef: MutableRef<AbortController | null>;
   /**
    * The run id the in-flight discovery pipeline belongs to. A stop request
@@ -100,6 +102,8 @@ export interface WorkspaceServiceContext {
   withIntelligenceTransition<T>(operation: () => Promise<T>): Promise<T>;
   withCampaignTransition<T>(operation: () => Promise<T>): Promise<T>;
   activeResumeVisionRunIds: Set<string>;
+  activeResumeEvidenceRunIds: Set<string>;
+  onResumeEvidenceFinished?: () => void;
   getWorkspaceSnapshot: () => Promise<JobFinderWorkspaceSnapshot>;
   /**
    * Reads the current projection without launching user-action recovery.

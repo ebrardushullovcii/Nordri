@@ -71,7 +71,7 @@ describe("following an application while an answer is put on the form", () => {
     const status = readRunStatus(submitted, run);
     expect(status.done).toBe(true);
     expect(status.pendingHandoffKey).toBeUndefined();
-    expect(status.summary).toContain("1 submitted");
+    expect(status.summary).toContain("1 not confirmed");
   });
 });
 
@@ -98,6 +98,33 @@ it("names a cancelled item and leaves the other item waiting on its own step", (
         state: "cancelled",
         summary: "Cancelled by you",
         blocker: null,
+      },
+    ],
+  });
+});
+
+it("continues an automatic-send timeout with recovery and no permission to resend", () => {
+  const workspace = snapshot("resolved");
+  workspace.applyRuns[0]!.state = "completed";
+  workspace.applyJobResults[0]!.summary =
+    "Send attempted; confirmation timed out";
+  workspace.applyJobResults[0]!.privacyReceipt = {
+    finalSubmitOccurred: false,
+    submissionOutcome: {
+      outcome: "outcome_uncertain",
+      browserAction: { reason: "confirmation_timeout" },
+    },
+  } as unknown as NonNullable<
+    (typeof workspace.applyJobResults)[0]
+  >["privacyReceipt"];
+  const status = readRunStatus(workspace, run);
+  expect(status.done).toBe(true);
+  expect(status.summary).toContain("send unconfirmed");
+  expect(status.details).toMatchObject({
+    results: [
+      {
+        recovery: expect.stringContaining("Do not send again"),
+        sendPermission: "blocked_until_person_checks_outcome",
       },
     ],
   });

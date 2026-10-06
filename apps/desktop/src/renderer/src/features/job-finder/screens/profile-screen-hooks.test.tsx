@@ -487,6 +487,67 @@ describe("useProfileScreenForms background-snapshot durability", () => {
     expect(result.current.backgroundMergeNotice).toBeNull();
   });
 
+  it("keeps a language row added while a profile save is in flight", () => {
+    const { result, rerender } = renderProfileScreenForms(createInput());
+    act(() =>
+      result.current.profileForm.setValue(
+        "identity.headline",
+        "Saved headline",
+        { shouldDirty: true },
+      ),
+    );
+    const saved = buildProfilePayload(
+      profile,
+      result.current.profileForm.getValues(),
+    ).payload!;
+    act(() =>
+      result.current.backgroundArrays.languageArray.append({
+        id: "language_added",
+        language: "",
+        proficiency: "",
+        interviewPreference: false,
+        notes: "",
+      }),
+    );
+    rerender(createInput({ profile: saved }));
+    expect(
+      result.current.profileForm
+        .getValues("languages")
+        .some((row) => row.id === "language_added"),
+    ).toBe(true);
+    expect(
+      result.current.backgroundArrays.languageArray.fields.map((row) => row.id),
+    ).toEqual(
+      result.current.profileForm.getValues("languages").map((row) => row.id),
+    );
+    const keptCount =
+      result.current.backgroundArrays.languageArray.fields.length;
+    act(() =>
+      result.current.backgroundArrays.languageArray.append({
+        id: "language_second",
+        language: "",
+        proficiency: "",
+        interviewPreference: false,
+        notes: "",
+      }),
+    );
+    expect(result.current.backgroundArrays.languageArray.fields).toHaveLength(
+      keptCount + 1,
+    );
+    expect(
+      result.current.backgroundArrays.languageArray.fields.map((row) => row.id),
+    ).toEqual(
+      result.current.profileForm.getValues("languages").map((row) => row.id),
+    );
+    rerender(createInput({ profile: saved }));
+    expect(result.current.backgroundArrays.languageArray.fields).toHaveLength(
+      keptCount + 1,
+    );
+    expect(result.current.profileForm.getValues("identity.headline")).toBe(
+      "Saved headline",
+    );
+  });
+
   it("rebases a resume-text save echo when persistence refreshes resume metadata", () => {
     const { result, rerender } = renderProfileScreenForms(createInput());
     const recoveredResumeText = `${profile.baseResume.textContent}\nRecovered detail`;
@@ -899,4 +960,14 @@ describe("useProfileScreenForms save-state truth on load", () => {
 
     expect(result.current.hasUnsavedChanges).toBe(true);
   });
+});
+
+it("preserves every saved profile value when only job sources are edited", () => {
+  const result = buildCanonicalAwareProfilePayload({
+    profile,
+    draftValues: createProfileEditorValues(profile, []),
+    dirtyFields: {},
+    latestResumeImportReviewCandidates: [],
+  });
+  expect(result.payload).toBe(profile);
 });

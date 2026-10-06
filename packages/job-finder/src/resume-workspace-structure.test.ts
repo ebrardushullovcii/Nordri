@@ -642,6 +642,9 @@ describe("buildResumeRenderDocument", () => {
             dateRange: "Jan 2020 – Present",
             summary: experience.summary,
             bullets: [groundedRewrite],
+            bulletSourceAchievementIds: [
+              [`experience:${experience.id}:achievement:0`],
+            ],
             profileRecordId: experience.id,
           },
         ],
@@ -673,6 +676,7 @@ describe("buildResumeRenderDocument", () => {
       "Led a cross-functional design-system rollout across core product surfaces.";
     const secondClaim =
       "Cut onboarding time for new engineers from three weeks to four days.";
+    experience.achievements = [firstClaim, secondClaim];
     const combined =
       "Led a cross-functional design-system rollout across core product surfaces and cut onboarding time for new engineers from three weeks to four days.";
     const draft = buildResumeDraftFromTailoredDraft({
@@ -696,6 +700,14 @@ describe("buildResumeRenderDocument", () => {
             summary: experience.summary,
             // The provider returned the merged line and both lines it merged.
             bullets: [combined, firstClaim, secondClaim],
+            bulletSourceAchievementIds: [
+              [
+                `experience:${experience.id}:achievement:0`,
+                `experience:${experience.id}:achievement:1`,
+              ],
+              [`experience:${experience.id}:achievement:0`],
+              [`experience:${experience.id}:achievement:1`],
+            ],
             profileRecordId: experience.id,
           },
         ],
@@ -807,7 +819,7 @@ describe("buildResumeRenderDocument", () => {
       entries.find(
         (entry) => entry.profileRecordId === "experience_missing_from_provider",
       )?.included,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("buildResumeDraftFromTailoredDraft preserves imported dates and detail when tailored entries are thin", () => {
@@ -819,7 +831,7 @@ describe("buildResumeRenderDocument", () => {
           ...seed.profile.experiences[0]!,
           id: "experience_full_stack",
           title: "Full-Stack Software Engineer",
-          companyName: "INFOTECH L.L.C",
+          companyName: "BRIDGEWAY L.L.C",
           location: "Hybrid, Kosovo",
           startDate: "2019-08",
           endDate: "2021-10",
@@ -848,7 +860,7 @@ describe("buildResumeRenderDocument", () => {
         experienceEntries: [
           {
             title: "Full-Stack Software Engineer",
-            employer: "INFOTECH L.L.C",
+            employer: "BRIDGEWAY L.L.C",
             location: "Hybrid, Kosovo",
             dateRange: "Hybrid, Kosovo",
             summary: null,
@@ -952,6 +964,7 @@ describe("buildResumeRenderDocument", () => {
       ?.entries.find((entry) => entry.profileRecordId === "cert_aws");
 
     expect(education).toMatchObject({
+      subtitle: "MA, Design Products",
       dateRange: "Sep 2012 – Jun 2014",
       startDate: "2012-09",
       endDate: "2014-06",
@@ -963,7 +976,7 @@ describe("buildResumeRenderDocument", () => {
     });
   });
 
-  test("buildResumeDraftFromTailoredDraft canonicalizes profile-backed metadata and splits dense imported descriptions", () => {
+  test("buildResumeDraftFromTailoredDraft canonicalizes profile-backed metadata and preserves complete imported facts", () => {
     const seed = createSeed();
     const profile = {
       ...seed.profile,
@@ -972,7 +985,7 @@ describe("buildResumeRenderDocument", () => {
           ...seed.profile.experiences[0]!,
           id: "experience_operations_system",
           title: "Operations Systems Engineer",
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           location: "Remote, Kosovo",
           startDate: "01/07/2023",
           endDate: null,
@@ -1005,7 +1018,7 @@ describe("buildResumeRenderDocument", () => {
             employer: "Generated Employer Name",
             location: "Generated Location",
             dateRange: "Remote, Kosovo | Present",
-            summary: "AUTOMATEDPROS Remote Kosovo Present",
+            summary: "NORTHLANE Remote Kosovo Present",
             bullets: ["React and WebSockets"],
             profileRecordId: "experience_operations_system",
           },
@@ -1029,7 +1042,7 @@ describe("buildResumeRenderDocument", () => {
 
     expect(entry?.dateRange).toBe("Jul 2023 – Present");
     expect(entry?.title).toBe("Operations Systems Engineer");
-    expect(entry?.subtitle).toBe("AUTOMATEDPROS");
+    expect(entry?.subtitle).toBe("NORTHLANE");
     expect(entry?.location).toBe("Remote, Kosovo");
     expect(entry?.startDate).toBe("01/07/2023");
     expect(entry?.endDate).toBeNull();
@@ -1039,8 +1052,7 @@ describe("buildResumeRenderDocument", () => {
     );
     expect(entry?.bullets.map((bullet) => bullet.text)).toEqual([
       "React and WebSockets",
-      "Engineered a real-time restaurant order platform with React, Next.js, TailwindCSS & WebSockets, synchronizing POS and kitchen screens and eliminating manual order calls.",
-      "Improved release confidence across kitchen workflows.",
+      ...profile.experiences[0]!.achievements,
     ]);
   });
 
@@ -1464,3 +1476,321 @@ describe("buildResumeDraftFromTailoredDraft work-history acknowledgment carry-fo
     expect(draft.workHistoryReviewAcknowledgments).toEqual([]);
   });
 });
+
+test("education graduation-only dates keep unknown starts empty", () => {
+  const seed = createSeed();
+  const education = {
+    ...seed.profile.education[0]!,
+    id: "student",
+    schoolName: "Example University",
+    degree: "MSc",
+    startDate: null,
+    endDate: "2027-03",
+    summary: "Expected graduation March 2027",
+    isDraft: false,
+  };
+  const draft = buildResumeDraftFromTailoredDraft({
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+    createdAt: "2026-10-02T10:00:00.000Z",
+    generationMethod: "ai",
+    profile: { ...seed.profile, education: [education] },
+    draft: {
+      label: "Tailored Resume",
+      summary: "",
+      experienceHighlights: [],
+      coreSkills: [],
+      targetedKeywords: [],
+      experienceEntries: [],
+      projectEntries: [],
+      educationEntries: [
+        {
+          school: education.schoolName,
+          degree: education.degree,
+          fieldOfStudy: null,
+          location: null,
+          dateRange: "March 2027",
+          summary: education.summary,
+          profileRecordId: education.id,
+        },
+      ],
+      certificationEntries: [],
+      coverageMetadata: [],
+      additionalSkills: [],
+      languages: [],
+      fullText: "",
+      compatibilityScore: 80,
+      notes: [],
+    },
+  });
+  const entry = draft.sections.find((section) => section.kind === "education")
+    ?.entries[0];
+  expect(entry?.startDate).toBeNull();
+  expect(entry?.endDate).toBe("2027-03");
+  expect(entry?.summary).toBe("Expected graduation March 2027");
+});
+
+test("a source-linked model restatement keeps its wording without adding the source again", () => {
+  const seed = createSeed();
+  const edited =
+    "Redesigned pension-app onboarding, lifting activation 23% in eight weeks.";
+  const old =
+    "Redesigned onboarding for a pensions app; activation up 23% in eight weeks.";
+  const experience = {
+    ...seed.profile.experiences[0]!,
+    id: "designer",
+    summary: old,
+    achievements: [edited],
+  };
+  const profile = { ...seed.profile, experiences: [experience] };
+  const draft = buildResumeDraftFromTailoredDraft({
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+    createdAt: "2026-10-02T10:00:00.000Z",
+    generationMethod: "ai",
+    profile,
+    draft: {
+      label: "Tailored Resume",
+      summary: "",
+      experienceHighlights: [],
+      coreSkills: [],
+      targetedKeywords: [],
+      experienceEntries: [
+        {
+          title: experience.title,
+          employer: experience.companyName,
+          location: null,
+          dateRange: null,
+          summary: null,
+          bullets: [old],
+          bulletSourceAchievementIds: [
+            [`experience:${experience.id}:achievement:0`],
+          ],
+          profileRecordId: experience.id,
+        },
+      ],
+      projectEntries: [],
+      educationEntries: [],
+      certificationEntries: [],
+      coverageMetadata: [],
+      additionalSkills: [],
+      languages: [],
+      fullText: "",
+      compatibilityScore: 80,
+      notes: [],
+    },
+  });
+  const entry = draft.sections.find((section) => section.kind === "experience")
+    ?.entries[0];
+  expect(entry?.bullets.map((bullet) => bullet.text)).toEqual([old]);
+});
+
+test("a degree that already names its field does not repeat it", () => {
+  const seed = createSeed();
+  const draft = buildResumeDraftFromTailoredDraft({
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+    createdAt: "2026-03-20T10:04:00.000Z",
+    generationMethod: "ai",
+    profile: seed.profile,
+    draft: {
+      label: "Tailored Resume",
+      summary: "Grounded design summary.",
+      experienceHighlights: [],
+      coreSkills: ["Figma"],
+      targetedKeywords: [],
+      experienceEntries: [],
+      projectEntries: [],
+      educationEntries: [
+        {
+          school: "Central Saint Martins",
+          degree: "BA (Hons) Graphic Communication Design",
+          fieldOfStudy: "Graphic Communication Design",
+          location: null,
+          dateRange: "2015",
+          summary: null,
+          profileRecordId: null,
+        },
+      ],
+      certificationEntries: [],
+      coverageMetadata: [],
+      additionalSkills: [],
+      languages: [],
+      fullText: "Grounded design summary.",
+      compatibilityScore: 80,
+      notes: [],
+    },
+  });
+
+  expect(
+    draft.sections.find((section) => section.kind === "education")?.entries[0]
+      ?.subtitle,
+  ).toBe("BA (Hons) Graphic Communication Design");
+});
+
+test.each([false, true])(
+  "German restatements cover each source once even with overlapping combined lines (%s)",
+  async (overlap) => {
+    const { completeTailoredResumeDraft } =
+      await import("@nordri/ai-providers");
+    const { applyResumeLanguage, collectResumeLanguageFields } =
+      await import("./internal/resume-workspace-language");
+    const seed = createSeed();
+    const experience = seed.profile.experiences[0]!;
+    experience.achievements = [
+      "Reduced picking errors by 38%.",
+      "Trained 12 colleagues.",
+    ];
+    seed.profile.spokenLanguages = [
+      {
+        id: "de",
+        language: "German",
+        proficiency: "C1",
+        interviewPreference: false,
+        notes: null,
+      },
+      {
+        id: "en",
+        language: "English",
+        proficiency: "B1",
+        interviewPreference: false,
+        notes: null,
+      },
+    ];
+    seed.profile.certifications = [
+      {
+        id: "first_aid",
+        name: "First aid",
+        issuer: "Example Training",
+        issueDate: "2025",
+        expiryDate: null,
+        credentialUrl: null,
+        isDraft: false,
+      },
+    ];
+    const tailored = completeTailoredResumeDraft(
+      {
+        experienceEntries: [
+          {
+            profileRecordId: experience.id,
+            bullets: [
+              {
+                text: "Kommissionierfehler um 38 % reduziert.",
+                evidenceRefs: [`experience:${experience.id}:achievement:0`],
+                sourceAchievementIds: [
+                  `experience:${experience.id}:achievement:0`,
+                ],
+              },
+              ...(overlap
+                ? [
+                    {
+                      text: "Kommissionierfehler um 38 % reduziert und 12 Kollegen geschult.",
+                      evidenceRefs: [
+                        `experience:${experience.id}:achievement:0`,
+                        `experience:${experience.id}:achievement:1`,
+                      ],
+                      sourceAchievementIds: [
+                        `experience:${experience.id}:achievement:0`,
+                        `experience:${experience.id}:achievement:1`,
+                      ],
+                    },
+                  ]
+                : []),
+            ],
+          },
+        ],
+      },
+      {
+        profile: seed.profile,
+        job: seed.savedJobs[0]!,
+        settings: seed.settings,
+        searchPreferences: seed.searchPreferences,
+        resumeText: null,
+      },
+    );
+    const draft = buildResumeDraftFromTailoredDraft({
+      job: seed.savedJobs[0]!,
+      profile: seed.profile,
+      templateId: seed.settings.resumeTemplateId,
+      createdAt: "2026-03-20T10:04:00.000Z",
+      generationMethod: "ai",
+      draft: tailored,
+    });
+    const role = draft.sections
+      .find((section) => section.kind === "experience")!
+      .entries.find((entry) => entry.profileRecordId === experience.id)!;
+    expect(role.bullets.map((bullet) => bullet.text)).toEqual([
+      "Kommissionierfehler um 38 % reduziert.",
+      "Trained 12 colleagues.",
+    ]);
+    expect(
+      role.bullets.flatMap((bullet) =>
+        bullet.sourceRefs.map((ref) => ref.sourceId),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        `experience:${experience.id}:achievement:0`,
+        `experience:${experience.id}:achievement:1`,
+      ]),
+    );
+    const fields = collectResumeLanguageFields(draft);
+    expect(fields.map((field) => field.text)).toEqual(
+      expect.arrayContaining([
+        "German — C1",
+        "English — B1",
+        "Trained 12 colleagues.",
+      ]),
+    );
+    expect(fields.some((field) => field.id.startsWith("certification_"))).toBe(
+      true,
+    );
+    const retained = fields.find(
+      (field) => field.text === "Trained 12 colleagues.",
+    )!;
+    const translated = applyResumeLanguage(draft, {
+      language: "German",
+      translations: [
+        { id: retained.id, text: "12 Kollegen geschult." },
+        { id: "section_languages:label", text: "Sprachen" },
+        {
+          id: draft.sections.find(
+            (section) => section.id === "section_languages",
+          )!.bullets[0]!.id,
+          text: "Deutsch — C1",
+        },
+        {
+          id: draft.sections.find(
+            (section) => section.id === "section_languages",
+          )!.bullets[1]!.id,
+          text: "Englisch — B1",
+        },
+        { id: "certification_first_aid:title", text: "Erste Hilfe" },
+      ],
+    });
+    const { sanitizeResumeDraft } =
+      await import("./internal/resume-workspace-helpers");
+    const sanitized = sanitizeResumeDraft({
+      draft: translated,
+      job: seed.savedJobs[0]!,
+      profile: seed.profile,
+    });
+    expect(
+      sanitized.sections
+        .find((section) => section.id === "section_languages")
+        ?.bullets.map((bullet) => bullet.text),
+    ).toEqual(["Deutsch — C1", "Englisch — B1"]);
+    expect(
+      sanitized.sections.find((section) => section.kind === "certifications")
+        ?.entries[0]?.title,
+    ).toBe("Erste Hilfe");
+    expect(
+      translated.sections
+        .find((section) => section.kind === "experience")!
+        .entries.find((entry) => entry.id === role.id)!
+        .bullets.map((bullet) => bullet.text),
+    ).toEqual([
+      "Kommissionierfehler um 38 % reduziert.",
+      "12 Kollegen geschult.",
+    ]);
+  },
+);

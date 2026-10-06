@@ -49,7 +49,7 @@ describe("getEmbeddedBrowserFocusAction", () => {
     ).toEqual({ type: "take_tab", operationIds: ["apply"] });
   });
 
-  test("a tab no run claims stops only runs that have not said where they work", () => {
+  test("reading a separate tab leaves active and unclaimed work running", () => {
     expect(
       getEmbeddedBrowserFocusAction({
         ...base,
@@ -59,7 +59,7 @@ describe("getEmbeddedBrowserFocusAction", () => {
           { id: "reading", tabIds: [] },
         ],
       }),
-    ).toEqual({ type: "take_tab", operationIds: ["reading"] });
+    ).toEqual({ type: "none" });
     expect(
       getEmbeddedBrowserFocusAction({
         ...base,

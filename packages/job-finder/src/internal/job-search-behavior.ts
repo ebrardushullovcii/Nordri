@@ -19,6 +19,10 @@ export function withSavedJobSearchBehavior(
   ).jobSearch;
   const discovery = { ...searchPreferences.discovery };
   delete discovery.remoteCountsAsAnyLocation;
+  if (searchPreferences.searchSelectivity !== undefined) {
+    discovery.collectOnlyHardCriteriaMatches =
+      searchPreferences.searchSelectivity === "best_matches";
+  }
   if (!remoteCountsAsAnyLocation) {
     discovery.remoteCountsAsAnyLocation = false;
   }

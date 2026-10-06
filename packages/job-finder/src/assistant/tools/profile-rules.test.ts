@@ -367,6 +367,7 @@ describe("profile editing rules", () => {
         service: workspaceService,
         session: {
           assertCurrent: () => undefined,
+          assertPersonAnswerAuthority: () => Promise.resolve(),
           recordChange: () =>
             Promise.resolve({
               receipt: {
@@ -579,7 +580,7 @@ describe("sidebar resume import outcomes", () => {
       )
       .catch((caught: unknown) => caught as Error);
     expect((error as Error).message).toContain("read_profile section review");
-    expect((error as Error).message).toContain("PDF, DOCX and TXT");
+    expect((error as Error).message).toContain("PDF, DOCX, TXT and Markdown");
     expect((error as Error).message).toContain(
       "PNG/JPG images are unsupported",
     );
@@ -946,7 +947,9 @@ describe("sidebar resume import outcomes", () => {
       outcome: "completed",
       savedDetailCount: 1,
       reviewSuggestionCount: 0,
+      savedCollections: { spokenLanguages: snapshot.profile.spokenLanguages },
     });
+    expect(JSON.stringify(result.data)).toContain("add any missing languages");
   });
 
   it("does not credit existing facts or older import candidates to an empty new file", async () => {

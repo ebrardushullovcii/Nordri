@@ -2,13 +2,62 @@
 
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
+import {
+  UserActionRequestSchema,
+  PREPARED_PAGE_CLOSED_SUMMARY,
+  ApplyRunSchema,
+  type JobFinderWorkspaceSnapshot,
+} from "@nordri/contracts";
+import { ApplicationAnswerStepCard } from "./applications-answer-step";
 import {
   ApplicationsDetailPanelRecoveryActionsSection,
   type FinishInBrowserHandler,
 } from "./applications-detail-panel-recovery-actions-section";
 
 afterEach(cleanup);
+
+it.each([false, true])(
+  "answer progress distinguishes waiting from insertion with elapsed time (%s)",
+  (waitingForTurn) => {
+    const at = new Date(Date.now() - 125_000).toISOString();
+    const request = UserActionRequestSchema.parse({
+      id: "request-answer",
+      revision: 1,
+      dedupeKey: "answer",
+      kind: "manual_answer",
+      state: "verifying",
+      scope: {
+        type: "application",
+        runId: "run_1",
+        jobId: "job_1",
+        applicationRecordId: "application_1",
+        source: "target_site",
+      },
+      verification: {
+        type: "page_blocker_absent",
+        blockerFingerprint: "question",
+      },
+      title: "Answer",
+      summary: "Continue",
+      createdAt: at,
+      updatedAt: at,
+    });
+    const view = render(
+      <ApplicationAnswerStepCard
+        step={{
+          request,
+          questions: [],
+          isPending: false,
+          waitingForTurn,
+          onCommand: vi.fn(),
+        }}
+      />,
+    );
+    expect(view.getByRole("status").textContent).toContain(
+      `${waitingForTurn ? "Waiting its turn" : "Inserting your answer"} (2 min)`,
+    );
+  },
+);
 
 type ApplyResult = JobFinderWorkspaceSnapshot["applyJobResults"][number];
 
@@ -302,6 +351,39 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
     expect(onOpenNeedsYou).not.toHaveBeenCalled();
   });
 
+  it("offers one cleanup action while capacity is full instead of claiming it is filling", () => {
+    const previous = window.nordri;
+    const command = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: { browser: { command } },
+    });
+    try {
+      const { container, getByRole, queryByTestId } = renderSection({
+        visibleApplyResult: buildResult({
+          state: "filling",
+          completedAt: null,
+          summary: "Waiting for a free browser tab",
+          detail:
+            "Browser tab limit reached. Prepared, unsent forms stay open.",
+        }),
+      });
+      expect(primaryButtonLabels(container)).toEqual(["Close finished tabs"]);
+      expect(
+        queryByTestId("applications-recovery-progress-spinner"),
+      ).toBeNull();
+      fireEvent.click(getByRole("button", { name: "Close finished tabs" }));
+      expect(command).toHaveBeenCalledExactlyOnceWith({
+        type: "close_finished_tabs",
+      });
+    } finally {
+      Object.defineProperty(window, "nordri", {
+        configurable: true,
+        value: previous,
+      });
+    }
+  });
+
   it("shows a progress sentence with a spinner and no button while preparing", () => {
     const { getByTestId, container } = renderSection({
       isApplyPending: true,
@@ -479,4 +561,216 @@ describe("ApplicationsDetailPanelRecoveryActionsSection", () => {
       "Checking this step in the Job Finder browser… When it is complete, Job Finder continues in your chosen apply mode.",
     );
   });
+});
+
+it("a rejected original format opens PDF review instead of retrying the same upload", () => {
+  const onReviewResumePdf = vi.fn();
+  const onStartApplyCopilot = vi.fn();
+  const view = renderSection({
+    onReviewResumePdf,
+    onStartApplyCopilot,
+    visibleApplyResult: buildResult({
+      state: "failed",
+      summary: "Resume upload failed",
+      detail: "Upload a nonempty TXT, PDF, DOC or DOCX file.",
+    }),
+  });
+  fireEvent.click(view.getByRole("button", { name: "Review a PDF" }));
+  expect(onReviewResumePdf).toHaveBeenCalledWith("job_1");
+  expect(onStartApplyCopilot).not.toHaveBeenCalled();
+});
+
+it("drops the browser-finish instruction as soon as the same application is submitted", () => {
+  const baseProps = {
+    canRestageAutoRun: false,
+    canRestageQueueRun: false,
+    dailyPreparationCapacity: null,
+    excludedQueueRecoveryEntries: [],
+    isApplyPending: false,
+    onStartApplyCopilot: vi.fn(),
+    onStartAutoApplyQueue: vi.fn(),
+    selectedQueueOutcomeEntries: [],
+    selectedQueueRecoveryEntries: [],
+    selectedQueueRecoveryJobIds: [],
+    selectedRecordJobId: "job_1",
+    selectedApplicationRecordId: "application_1",
+    selectedRun: null,
+    onFinishInBrowser: () => ({ kind: "opened_application_page" as const }),
+  };
+  const result = buildResult({ state: "awaiting_review" });
+  const view = render(
+    <ApplicationsDetailPanelRecoveryActionsSection
+      {...baseProps}
+      visibleApplyResult={result}
+    />,
+  );
+  fireEvent.click(
+    view.getByRole("button", { name: "Open the Job Finder browser" }),
+  );
+  expect(view.getByTestId("manual-field-finish-status")).toBeTruthy();
+  view.rerender(
+    <ApplicationsDetailPanelRecoveryActionsSection
+      {...baseProps}
+      visibleApplyResult={{ ...result, state: "submitted" }}
+      personSendReceiptSummary="The site confirmed receipt of the application."
+    />,
+  );
+  expect(view.queryByTestId("manual-field-finish-status")).toBeNull();
+  expect(
+    view.getByTestId("applications-recovery-status-line").textContent,
+  ).toBe("Application submitted");
+});
+
+it("prints each current batch outcome only once without duplicate recovery lists", () => {
+  const result = buildResult({
+    summary: "submitted via Submit button",
+    state: "blocked",
+    latestQuestionCount: 1,
+    blockerReason: "required_human_input",
+    blockerSummary: "Answer dates",
+  });
+  const entry = {
+    jobId: "job_1",
+    label: "Synthetic nurse",
+    runResult: result,
+    includeInRecovery: false,
+  };
+  const view = renderSection({
+    visibleApplyResult: result,
+    selectedRun: ApplyRunSchema.parse({
+      id: "run_1",
+      mode: "queue_auto",
+      state: "paused_for_user_review",
+      jobIds: ["job_1"],
+      createdAt: result.startedAt,
+      updatedAt: result.updatedAt,
+      summary: "Waiting",
+      detail: "Waiting",
+      totalJobs: 1,
+    }),
+    selectedQueueOutcomeEntries: [entry],
+    excludedQueueRecoveryEntries: [entry],
+  });
+  expect(view.getAllByText("Synthetic nurse")).toHaveLength(1);
+  expect(view.queryByText("submitted via Submit button")).toBeNull();
+  expect(
+    view.queryByText("No jobs from this run still need recovery."),
+  ).toBeNull();
+  expect(view.container.textContent).toContain(
+    "0 sent. 1 application needs your answers or review.",
+  );
+});
+
+it("a missing prepared page uses Prepare again on its primary button", () => {
+  const view = renderSection({
+    visibleApplyResult: buildResult({
+      state: "failed",
+      summary: PREPARED_PAGE_CLOSED_SUMMARY,
+    }),
+  });
+  expect(primaryButtonLabels(view.container)).toEqual(["Prepare again"]);
+  expect(view.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+it.each([
+  ["planned", "Waiting its turn", "Application queued", 0],
+  ["planned", "Waiting for a browser tab", "Waiting for a free browser tab", 0],
+  ["awaiting_review", "Needs your answers", "Needs your answers", 2],
+  ["failed", "Could not apply", PREPARED_PAGE_CLOSED_SUMMARY, 0],
+] as const)(
+  "per-job run outcome uses the actual %s standing: %s",
+  (state, label, summary, latestQuestionCount) => {
+    const result = buildResult({
+      state,
+      summary,
+      latestQuestionCount,
+      blockerReason: latestQuestionCount ? "required_human_input" : null,
+      applicationPreparationStartedAt: "2026-09-01T10:00:00.000Z",
+    });
+    const run = ApplyRunSchema.parse({
+      id: "run_1",
+      state: "running",
+      mode: "queue_auto",
+      jobIds: ["job_1"],
+      totalJobs: 1,
+      createdAt: "2026-09-01T10:00:00.000Z",
+      updatedAt: "2026-09-01T10:00:00.000Z",
+      summary: "Preparing",
+      detail: "Preparing",
+    });
+    const view = renderSection({
+      visibleApplyResult: result,
+      selectedRun: run,
+      selectedQueueOutcomeEntries: [
+        {
+          jobId: "job_1",
+          label: "Synthetic role",
+          runResult: result,
+          includeInRecovery: false,
+        },
+      ],
+    });
+    const entry = view.getByText("Synthetic role").closest("div.grid");
+    expect(entry?.textContent).toContain(label);
+    expect(entry?.textContent).not.toContain(
+      "Ready for you to finish and send",
+    );
+    expect(entry?.textContent).not.toContain("Filling in");
+  },
+);
+
+it("shows the site's captured confirmation reference on the submitted record", () => {
+  const result = buildResult({
+    state: "submitted",
+    summary: "Application received. Reference NW-2048.",
+    privacyReceipt: {
+      finalSubmitOccurred: true,
+      submissionOutcome: {
+        outcome: "submitted",
+        evidence: [
+          {
+            id: "confirmation",
+            summary: "Application received. Reference NW-2048.",
+          },
+        ],
+      },
+    } as unknown as NonNullable<
+      Parameters<typeof buildResult>[0]["privacyReceipt"]
+    >,
+  });
+  const view = renderSection({ visibleApplyResult: result });
+  expect(
+    view.getAllByText("Application received. Reference NW-2048."),
+  ).toHaveLength(1);
+});
+
+it("shows a person's captured confirmation once", () => {
+  const view = renderSection({
+    personSendReceiptSummary: "The site confirmed receipt. Reference SYN-1.",
+  });
+  expect(
+    view.getAllByText("The site confirmed receipt. Reference SYN-1."),
+  ).toHaveLength(1);
+});
+
+it("uses captured receipt evidence once when the run detail says the same confirmation differently", () => {
+  const result = buildResult({
+    state: "submitted",
+    detail: "The employer site confirmed receipt.",
+    privacyReceipt: {
+      finalSubmitOccurred: true,
+      submissionOutcome: {
+        outcome: "submitted",
+        evidence: [
+          { id: "one", summary: "Application received. Reference SYN-2." },
+          { id: "two", summary: "Application received. Reference SYN-2." },
+        ],
+      },
+    } as unknown as NonNullable<ApplyResult["privacyReceipt"]>,
+  });
+  const view = renderSection({ visibleApplyResult: result });
+  expect(view.queryByText("The employer site confirmed receipt.")).toBeNull();
+  expect(
+    view.getAllByText("Application received. Reference SYN-2."),
+  ).toHaveLength(1);
 });

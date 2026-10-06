@@ -9,6 +9,7 @@ import type {
   AppearanceTheme,
   CampaignRuleFunnelProjection,
   CandidateAnswerKind,
+  CandidateReusableAnswer,
   CandidateLinkKind,
   CandidateProfile,
   ClearApplicationAnswerCommandInput,
@@ -125,6 +126,7 @@ export interface JobFinderShellActions {
   ) => Promise<JobFinderWorkspaceSnapshot>;
   refreshWorkspace: () => Promise<JobFinderWorkspaceSnapshot>;
   resetWorkspace: () => Promise<JobFinderWorkspaceSnapshot>;
+  resetBrowser: () => Promise<JobFinderWorkspaceSnapshot>;
   runAgentDiscovery: (
     onActivity?: (event: DiscoveryActivityEvent) => void,
     targetId?: string,
@@ -300,6 +302,7 @@ export interface JobFinderShellActions {
   undoProfileRevision: (
     revisionId: string,
   ) => Promise<JobFinderWorkspaceSnapshot>;
+  assessJobListing: (jobId: string) => Promise<JobFinderWorkspaceSnapshot>;
   queueJobForReview: (jobId: string) => Promise<JobFinderWorkspaceSnapshot>;
   setJobResumeApplicationMode: (
     jobId: string,
@@ -519,6 +522,8 @@ export type ProofBankEntryFormEntry = {
 };
 
 export type ReusableAnswerFormEntry = {
+  needsConfirmation?: boolean;
+  applicationScope?: CandidateReusableAnswer["applicationScope"];
   id: string;
   label: string;
   question: string;
@@ -561,6 +566,14 @@ export type BadgeTone =
 
 export interface ActionState {
   message: string | null;
+  /**
+   * What the message reports: `success` (the action finished as asked),
+   * `failure` (it was refused or failed and the person may need to act), or
+   * `progress` (still running). A success may become a toast; a failure and
+   * a message without a tone always stay inline (ADR 0042).
+   */
+  tone?: "success" | "failure" | "progress" | null;
+  toastTone?: "success" | "warning";
   /**
    * A file this action just wrote, when the message names its path. The
    * surface that prints the message offers "Open folder" beside it, so the

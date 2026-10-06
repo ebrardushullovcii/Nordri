@@ -154,6 +154,8 @@ export const JobSearchCampaignSchema = z.object({
   updatedAt: IsoDateTimeSchema,
   searchPreferences: JobSearchPreferencesSchema,
   sourceTargetIds: z.array(NonEmptyStringSchema).default([]),
+  // Missing on older plans: an empty include list inherited Profile.
+  sourceSelectionMode: z.enum(["profile", "selected"]).optional(),
   jobIds: z.array(NonEmptyStringSchema).default([]),
   minimumFitScore: z.number().int().min(0).max(100).nullable().default(null),
   limits: JobSearchCampaignLimitsSchema,
@@ -166,6 +168,24 @@ export const JobSearchCampaignSchema = z.object({
   history: z.array(JobSearchCampaignHistoryEntrySchema).default([]),
 });
 export type JobSearchCampaign = z.infer<typeof JobSearchCampaignSchema>;
+
+/** The source IDs every plan card, editor and run uses. */
+export function resolveCampaignSourceTargetIds(
+  campaign: Pick<
+    JobSearchCampaign,
+    "searchPreferences" | "sourceTargetIds" | "sourceSelectionMode"
+  >,
+): string[] {
+  const selectedIds = campaign.sourceTargetIds ?? [];
+  const followsProfile =
+    campaign.sourceSelectionMode === "profile" ||
+    (campaign.sourceSelectionMode === undefined && selectedIds.length === 0);
+  return campaign.searchPreferences.discovery.targets
+    .filter((target) =>
+      followsProfile ? target.enabled : selectedIds.includes(target.id),
+    )
+    .map((target) => target.id);
+}
 
 export const JobSearchCampaignCollectionSchema = z
   .object({
@@ -198,6 +218,7 @@ export const SaveJobSearchCampaignInputSchema = JobSearchCampaignSchema.omit({
   jobIds: true,
 }).extend({
   id: NonEmptyStringSchema.nullable().default(null),
+  expectedUpdatedAt: IsoDateTimeSchema.optional(),
 });
 export type SaveJobSearchCampaignInput = z.infer<
   typeof SaveJobSearchCampaignInputSchema

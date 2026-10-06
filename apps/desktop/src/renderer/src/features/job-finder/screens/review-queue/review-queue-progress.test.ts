@@ -1,4 +1,6 @@
+import { RESUME_DRAFT_LONG_RUNNING_MS } from "@renderer/features/job-finder/lib/wait-state";
 import { describe, expect, it } from "vitest";
+import { isWaitLongRunning } from "../../lib/wait-state";
 import * as reviewQueueProgress from "./review-queue-progress";
 import {
   formatResumeOperationElapsed,
@@ -23,10 +25,10 @@ describe("review queue progress helpers", () => {
     );
   });
 
-  it("states a tailored-draft expectation grounded in measured wall-clocks", () => {
+  it("does not give every resume level the optimistic tailored timing", () => {
     // Measured full draft-and-PDF runs: 39.1s, 57.7s, 63.7s.
     expect(RESUME_DRAFT_EXPECTED_WAIT_LABEL).toBe(
-      "Usually 40-70 seconds for a tailored draft.",
+      "Writing and checking the facts can take a few minutes, especially for Aggressive resumes.",
     );
     expect(RESUME_DRAFT_EXPECTED_WAIT_LABEL).not.toBe(
       RESUME_ASSISTANT_EXPECTED_WAIT_LABEL,
@@ -39,4 +41,10 @@ describe("review queue progress helpers", () => {
     expect(formatResumeOperationElapsed(69)).toBe("1:09");
     expect(formatResumeOperationElapsed(-4)).toBe("0:00");
   });
+});
+
+it("does not call a draft late before the displayed 70-second range ends", () => {
+  expect(isWaitLongRunning(36, RESUME_DRAFT_LONG_RUNNING_MS)).toBe(false);
+  expect(isWaitLongRunning(69, RESUME_DRAFT_LONG_RUNNING_MS)).toBe(false);
+  expect(isWaitLongRunning(70, RESUME_DRAFT_LONG_RUNNING_MS)).toBe(true);
 });

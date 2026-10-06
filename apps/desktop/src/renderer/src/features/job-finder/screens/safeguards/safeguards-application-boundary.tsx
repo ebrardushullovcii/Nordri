@@ -1,5 +1,5 @@
 import type { ApplicationAuthorityEnvelope } from "@nordri/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { StatusBadge } from "@renderer/features/job-finder/components/status-badge";
 import { APPLY_MODE_OPTIONS } from "@renderer/features/job-finder/components/choice-cards";
@@ -25,7 +25,7 @@ export function describeEnvelopeMode(
  * being split across a configuration screen.
  */
 export const APPLICATION_BOUNDARY_SENTENCE =
-  "Job Finder fills applications and sends them only with your permission. It never asks for your password or solves CAPTCHA or MFA.";
+  "Job Finder fills applications and sends them only with your permission. It never asks for a password. If you provide sign-in details and authorize their use, it may use them for that task without saving them. You control account creation; CAPTCHA and MFA stay with you.";
 
 type AuthorityApi = Window["nordri"]["jobFinder"];
 
@@ -52,7 +52,11 @@ function describeEnvelope(envelope: ApplicationAuthorityEnvelope): string {
  * the boundary they are bounded by. Revoking asks twice, because it is the
  * one control on this page that changes what the app is allowed to do.
  */
-export function SafeguardsApplicationBoundary() {
+export function SafeguardsApplicationBoundary({
+  children,
+}: {
+  children?: ReactNode;
+}) {
   const [envelopes, setEnvelopes] = useState<
     readonly ApplicationAuthorityEnvelope[]
   >([]);
@@ -214,12 +218,8 @@ export function SafeguardsApplicationBoundary() {
             {message}
           </p>
         ) : null}
-        <p className="text-(length:--text-tiny) leading-5 text-foreground-muted">
-          You control the apply mode, declarations and account creation. If you
-          supply sign-in details and authorize their use, Job Finder can use
-          them for that task. Security checks stay with you.
-        </p>
       </div>
+      {children}
     </section>
   );
 }

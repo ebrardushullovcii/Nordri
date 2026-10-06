@@ -36,6 +36,8 @@ import {
   SourceInstructionArtifactSchema,
   TailoredAssetSchema,
   UserActionEventSchema,
+  SaveUserActionAnswerDraftInputSchema,
+  mergeUserActionAnswerDraft,
   UserActionRequestSchema,
   type ApplicationAnswerRecord,
   type ApplicationQuestionRecord,
@@ -179,6 +181,7 @@ export function createInMemoryJobFinderRepository(
     close() {
       return Promise.resolve();
     },
+    exportState: () => Promise.resolve(cloneValue(state)),
     reset(nextSeed) {
       const normalizedSeed = JobFinderRepositoryStateSchema.parse(
         cloneValue(nextSeed),
@@ -1368,6 +1371,44 @@ export function createInMemoryJobFinderRepository(
       const request = state.userActionRequests.find((entry) => entry.id === id);
       return Promise.resolve(request ? cloneValue(request) : null);
     },
+    saveUserActionAnswerDraft(input) {
+      const command = SaveUserActionAnswerDraftInputSchema.parse(input);
+      const request = state.userActionRequests.find(
+        (entry) => entry.id === command.requestId,
+      );
+      if (
+        !request ||
+        request.kind !== "manual_answer" ||
+        request.scope.type !== "application" ||
+        request.revision !== command.expectedRevision ||
+        !(
+          command.draft === null
+            ? [
+                "pending",
+                "awaiting_user",
+                "still_blocked",
+                "verifying",
+                "resolved",
+              ]
+            : ["pending", "awaiting_user", "still_blocked"]
+        ).includes(request.state)
+      ) {
+        throw new Error(
+          "This question has changed. Reopen it before editing your answer.",
+        );
+      }
+      Object.assign(
+        request,
+        cloneValue(
+          mergeUserActionAnswerDraft(
+            request,
+            command.draft,
+            command.editedAt ?? Date.now(),
+          ),
+        ),
+      );
+      return Promise.resolve();
+    },
     createUserActionRequest(request) {
       const normalizedRequest = UserActionRequestSchema.parse(
         cloneValue(request),
@@ -1495,6 +1536,10 @@ export function createInMemoryJobFinderRepository(
         transition.request,
         transition.event,
       );
+      // Lifecycle transitions cannot replace edits saved while the command waited.
+      transition.request.answerDraft = currentRequest.answerDraft;
+      transition.request.answerDraftFieldUpdatedAt =
+        currentRequest.answerDraftFieldUpdatedAt;
       state.userActionRequests = [
         ...state.userActionRequests.filter(
           (request) => request.id !== transition.request.id,

@@ -219,7 +219,7 @@ export function ResumeClaimTrustPanel(props: {
 
       {props.hasUnsavedChanges ? (
         <p
-          className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3 text-sm leading-6 text-(--warning-text)"
+          className="text-(length:--text-small) leading-6 text-foreground-muted"
           role="status"
         >
           These checks describe the last saved draft. Save your edits to refresh

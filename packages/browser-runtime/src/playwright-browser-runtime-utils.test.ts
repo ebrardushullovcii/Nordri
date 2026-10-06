@@ -141,12 +141,12 @@ describe("playwright browser runtime utils", () => {
   test("parses running Chrome debug sessions from command lines", () => {
     expect(
       parseRunningChromeDebugSession(
-        '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9333 --user-data-dir="C:\\Users\\ebrar\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default" --new-window about:blank',
+        '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9333 --user-data-dir="C:\\Users\\elian\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default" --new-window about:blank',
       ),
     ).toEqual({
       debugPort: 9333,
       userDataDir:
-        "C:\\Users\\ebrar\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default",
+        "C:\\Users\\elian\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default",
     });
 
     expect(
@@ -174,19 +174,19 @@ describe("playwright browser runtime utils", () => {
     expect(
       findRunningChromeDebugPortInCommandLines(
         [
-          '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9333 --user-data-dir="C:\\Users\\ebrar\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default"',
-          '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9555 --user-data-dir="C:\\Users\\ebrar\\AppData\\Local\\Temp\\other-profile"',
+          '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9333 --user-data-dir="C:\\Users\\elian\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default"',
+          '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9555 --user-data-dir="C:\\Users\\elian\\AppData\\Local\\Temp\\other-profile"',
         ],
-        "C:\\Users\\ebrar\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default",
+        "C:\\Users\\elian\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default",
       ),
     ).toBe(9333);
 
     expect(
       findRunningChromeDebugPortInCommandLines(
         [
-          '"chrome.exe" --remote-debugging-port=9555 --user-data-dir="C:\\Users\\ebrar\\AppData\\Local\\Temp\\other-profile"',
+          '"chrome.exe" --remote-debugging-port=9555 --user-data-dir="C:\\Users\\elian\\AppData\\Local\\Temp\\other-profile"',
         ],
-        "C:\\Users\\ebrar\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default",
+        "C:\\Users\\elian\\AppData\\Roaming\\@nordri\\desktop\\browser-agent\\default",
       ),
     ).toBeNull();
   });

@@ -1,0 +1,276 @@
+import {
+  JobFinderRepositoryStateSchema,
+  PersonalWorkspaceExportSchema,
+  AssistantConversationSchema,
+  AssistantMessageSchema,
+  ApplicationRecordSchema,
+  ApplicationQuestionRecordSchema,
+  ApplicationAnswerRecordSchema,
+  SavedJobSchema,
+} from "@nordri/contracts";
+import { createInMemoryJobFinderRepository } from "@nordri/db";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { expect, test, vi } from "vitest";
+import {
+  parsePersonalWorkspaceExport,
+  restorePersonalWorkspace,
+} from "./personal-workspace-restore";
+import { buildPersonalWorkspaceExport } from "./build-diagnostic-export";
+import type {
+  JobFinderWorkspaceSnapshot,
+  PersonalWorkspaceExport,
+} from "@nordri/contracts";
+
+vi.mock("electron", () => ({ app: { getPath: () => "/synthetic" } }));
+
+const at = "2026-10-05T10:00:00.000Z";
+function state(directory: string) {
+  return JobFinderRepositoryStateSchema.parse({
+    profile: {
+      id: "synthetic",
+      fullName: "Synthetic Example",
+      yearsExperience: 2,
+      baseResume: {
+        id: "resume",
+        fileName: "resume.txt",
+        uploadedAt: at,
+        storagePath: path.join(directory, "resume.txt"),
+        textContent: "Synthetic resume",
+      },
+      answerBank: {
+        customAnswers: [
+          {
+            id: "answer",
+            label: "Hours",
+            question: "Hours?",
+            answer: "20",
+            kind: "other",
+          },
+        ],
+      },
+    },
+    searchPreferences: {
+      workModes: ["remote"],
+      minimumSalaryUsd: null,
+      approvalMode: "review_before_submit",
+      tailoringMode: "balanced",
+    },
+    settings: {
+      resumeFormat: "pdf",
+      resumeTemplateId: "classic_ats",
+      fontPreset: "inter_requisite",
+      preferPdfResume: true,
+      keepSessionAlive: true,
+      humanReviewRequired: true,
+      allowAutoSubmitOverride: false,
+    },
+  });
+}
+
+test("export round trip restores profile, jobs, applications, answers, documents and chats", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "restore-roundtrip-"));
+  try {
+    const source = path.join(directory, "source");
+    const target = path.join(directory, "target");
+    await mkdir(source);
+    await mkdir(target);
+    await writeFile(path.join(source, "resume.txt"), "Synthetic resume");
+    await writeFile(path.join(target, "old.txt"), "Current document");
+    const original = state(source);
+    original.savedJobs = [
+      SavedJobSchema.parse({
+        id: "job",
+        source: "target_site",
+        sourceJobId: "job",
+        canonicalUrl: "https://example.test/job",
+        title: "Analyst",
+        company: "Synthetic",
+        location: "Canada",
+        discoveredAt: at,
+        firstSeenAt: at,
+        lastSeenAt: at,
+        workMode: ["remote"],
+        applyPath: "external_redirect",
+        easyApplyEligible: false,
+        salaryText: null,
+        description: "Synthetic role",
+        status: "discovered",
+        matchAssessment: { score: 80 },
+      }),
+    ];
+    original.applicationRecords = [
+      ApplicationRecordSchema.parse({
+        id: "app",
+        jobId: "job",
+        title: "Analyst",
+        company: "Synthetic",
+        status: "discovered",
+        lastActionLabel: "Saved",
+        nextActionLabel: null,
+        lastUpdatedAt: at,
+      }),
+    ];
+    original.applicationQuestionRecords = [
+      ApplicationQuestionRecordSchema.parse({
+        id: "question",
+        runId: "run",
+        jobId: "job",
+        prompt: "Hours?",
+        detectedAt: at,
+      }),
+    ];
+    original.applicationAnswerRecords = [
+      ApplicationAnswerRecordSchema.parse({
+        id: "answer",
+        questionId: "question",
+        runId: "run",
+        jobId: "job",
+        text: "20",
+        sourceKind: "user",
+        createdAt: at,
+      }),
+    ];
+    const chats = [
+      {
+        conversation: AssistantConversationSchema.parse({
+          id: "chat",
+          title: "Synthetic chat",
+          createdAt: at,
+          updatedAt: at,
+        }),
+        messages: [
+          AssistantMessageSchema.parse({
+            id: "message",
+            conversationId: "chat",
+            role: "user",
+            origin: "sidebar",
+            parts: [],
+            createdAt: at,
+          }),
+        ],
+      },
+    ];
+    const content = await buildPersonalWorkspaceExport({
+      repositoryState: original,
+      workspace: { profile: original.profile } as JobFinderWorkspaceSnapshot,
+      directories: [{ name: "resumes", directory: source }],
+      assistantHistory: chats,
+      generatedAt: at,
+    });
+    const backup = parsePersonalWorkspaceExport(content);
+    const current = state(target);
+    const repository = createInMemoryJobFinderRepository(current);
+    let restoredChats: PersonalWorkspaceExport["assistantHistory"] = [];
+    const safety = path.join(directory, "safety.json");
+    await restorePersonalWorkspace({
+      backup,
+      repository,
+      roots: new Map([["resumes", target]]),
+      safetyExportPath: safety,
+      buildSafetyExport: () => Promise.resolve("current safety export"),
+      readChats: () => Promise.resolve([]),
+      restoreChats: (history) => {
+        restoredChats = history;
+        return Promise.resolve();
+      },
+    });
+    const restored = await repository.exportState();
+    expect(restored.profile.fullName).toBe(original.profile.fullName);
+    expect(restored.profile.baseResume.storagePath).toBe(
+      path.join(target, "resume.txt"),
+    );
+    expect(restored.savedJobs).toEqual(original.savedJobs);
+    expect(restored.applicationRecords).toEqual(original.applicationRecords);
+    expect(restored.applicationAnswerRecords).toEqual(
+      original.applicationAnswerRecords,
+    );
+    expect(restored.profile.answerBank).toEqual(original.profile.answerBank);
+    expect(restored.activityControl.paused).toBe(true);
+    expect(restoredChats).toEqual(chats);
+    expect(await readFile(path.join(target, "resume.txt"), "utf8")).toBe(
+      "Synthetic resume",
+    );
+    expect(await readFile(safety, "utf8")).toBe("current safety export");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("refuses unknown versions, older incomplete exports, traversal and damaged bytes", () => {
+  expect(() => parsePersonalWorkspaceExport('{"schemaVersion":99}')).toThrow(
+    "version Nordri cannot restore",
+  );
+  expect(() => parsePersonalWorkspaceExport('{"schemaVersion":1}')).toThrow(
+    "older export",
+  );
+  const backup = {
+    schemaVersion: 1,
+    exportedAt: at,
+    repositoryState: state("/synthetic"),
+    fileRoots: [{ name: "resumes", directory: "/synthetic" }],
+    assistantHistory: [],
+    files: [
+      { path: "resumes/../outside", encoding: "base64", content: "eA==" },
+    ],
+  };
+  expect(() => parsePersonalWorkspaceExport(JSON.stringify(backup))).toThrow(
+    "unsafe",
+  );
+  backup.files[0]!.path = "resumes/file.txt";
+  backup.files[0]!.content = "invalid";
+  expect(() => parsePersonalWorkspaceExport(JSON.stringify(backup))).toThrow(
+    "damaged",
+  );
+});
+
+test("safety export failure makes no changes, and chat failure rolls every store back", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "restore-rollback-"));
+  try {
+    const target = path.join(directory, "resumes");
+    await mkdir(target);
+    await writeFile(path.join(target, "old.txt"), "Kept");
+    const current = state(target);
+    const repository = createInMemoryJobFinderRepository(current);
+    const backup = PersonalWorkspaceExportSchema.parse({
+      schemaVersion: 1,
+      exportedAt: at,
+      repositoryState: {
+        ...current,
+        profile: { ...current.profile, fullName: "Replaced" },
+      },
+      fileRoots: [],
+      files: [],
+      assistantHistory: [],
+    });
+    const common = {
+      backup,
+      repository,
+      roots: new Map([["resumes", target]]),
+      readChats: () => Promise.resolve([]),
+      restoreChats: vi.fn().mockResolvedValue(undefined),
+    };
+    await expect(
+      restorePersonalWorkspace({
+        ...common,
+        safetyExportPath: path.join(directory, "missing", "safety.json"),
+        buildSafetyExport: () => Promise.resolve("backup"),
+      }),
+    ).rejects.toThrow();
+    expect(await repository.exportState()).toEqual(current);
+    expect(await readFile(path.join(target, "old.txt"), "utf8")).toBe("Kept");
+    common.restoreChats.mockRejectedValueOnce(new Error("Chat write failed"));
+    await expect(
+      restorePersonalWorkspace({
+        ...common,
+        safetyExportPath: path.join(directory, "safety.json"),
+        buildSafetyExport: () => Promise.resolve("backup"),
+      }),
+    ).rejects.toThrow("Chat write failed");
+    expect(await repository.exportState()).toEqual(current);
+    expect(await readFile(path.join(target, "old.txt"), "utf8")).toBe("Kept");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

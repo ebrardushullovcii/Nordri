@@ -51,6 +51,12 @@ function tiedJob(
     discoveryMethod: "browser_agent",
     matchAssessment: {
       score: 26,
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-10-02T10:00:00.000Z",
+        score: 26,
+        recommendation: "review_before_applying",
+      },
       ...boundFingerprints,
       dimensions: {
         roleSuitability: { state: "adjacent" },

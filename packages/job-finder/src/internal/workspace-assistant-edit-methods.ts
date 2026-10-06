@@ -27,12 +27,14 @@ import {
   buildResumeDraftRevision,
   buildResumeDraftStateHash,
   buildTailoredAssetBridge,
-  sanitizeResumeDraft,
   validateResumeDraft,
 } from "./resume-workspace-helpers";
 import { hasResumeAffectingProfileChange } from "./resume-workspace-staleness";
 import { createUniqueId } from "./shared";
-import { ensureResumeDraft } from "./workspace-application-resume-support";
+import {
+  ensureResumeDraft,
+  sanitizeAndCheckResumeDraft,
+} from "./workspace-application-resume-support";
 import { resolveJobResumeApplicationMode } from "./job-resume-application-mode";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 import {
@@ -455,7 +457,7 @@ export function createWorkspaceAssistantEditMethods(input: {
     reason: string;
   }): Promise<ResumeDraft | null> {
     const state = await ensureResumeDraft(ctx, request.jobId);
-    const sanitized = sanitizeResumeDraft({
+    const sanitized = await sanitizeAndCheckResumeDraft(ctx, {
       draft: request.next,
       job: state.job,
       profile: state.profile,

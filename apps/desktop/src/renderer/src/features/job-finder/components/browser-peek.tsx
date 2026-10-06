@@ -1,3 +1,8 @@
+import { useToast } from "@renderer/components/ui/toast";
+import {
+  describeBrowserJobFailure,
+  describeFailure,
+} from "../lib/describe-failure";
 import {
   useCallback,
   useEffect,
@@ -30,6 +35,7 @@ import {
 } from "lucide-react";
 import {
   resolveBrowserAddress,
+  type AddBrowserJobResult,
   type DesktopBrowserCommand,
   type DesktopBrowserImportSource,
   type DesktopBrowserState,
@@ -100,6 +106,7 @@ function BrowserBrandMark({
 
 export function BrowserPeek(props: {
   hasUnresolvedAttention?: boolean;
+  onRecordSend?: () => void;
   /**
    * Width the expanded browser's toolbar keeps clear at its leading edge, for
    * the native macOS traffic lights that paint above every overlay. Undefined
@@ -108,7 +115,73 @@ export function BrowserPeek(props: {
   chromeInsetStart?: string | undefined;
 }) {
   const bridge = window.nordri?.browser;
+  const { showToast } = useToast();
+  const lastSendNotice = useRef<string | null>(null);
+  const [addingJob, setAddingJob] = useState(false);
+  const [savedJob, setSavedJob] = useState<AddBrowserJobResult | null>(null);
+  const [shortlisting, setShortlisting] = useState(false);
+  const addJob = async () => {
+    if (!bridge || !state.activeTabId || addingJob) return;
+    setMenuOpen(false);
+    setAddingJob(true);
+    setMessage(null);
+    setSavedJob(null);
+    try {
+      const saved = await bridge.addCurrentJob({ tabId: state.activeTabId });
+      setSavedJob(saved);
+      setMessage(
+        `Saved ${saved.title}${saved.company ? ` at ${saved.company}` : ""}.`,
+      );
+    } catch (error) {
+      setMessage(describeBrowserJobFailure(error));
+    } finally {
+      setAddingJob(false);
+    }
+  };
+  const shortlistSavedJob = async () => {
+    if (!savedJob || shortlisting) return;
+    setShortlisting(true);
+    try {
+      await window.nordri.jobFinder.queueJobForReview(savedJob.jobId);
+      setMessage(
+        `${savedJob.title}${savedJob.company ? ` at ${savedJob.company}` : ""} added to Shortlisted.`,
+      );
+      setSavedJob(null);
+    } catch (error) {
+      setSavedJob(null);
+      setMessage(
+        describeFailure(error, {
+          unknownSentence: "Could not shortlist this job. Try again.",
+        }).userMessage,
+      );
+    } finally {
+      setShortlisting(false);
+    }
+  };
   const [state, setState] = useState(initialState);
+  useEffect(() => {
+    const notice = state.unboundSendNotice;
+    if (!notice || lastSendNotice.current === notice.id) return;
+    lastSendNotice.current = notice.id;
+    showToast({
+      id: "unbound-application-send",
+      title: "This page is not linked to an application",
+      description:
+        "After the site confirms receipt, record which application you sent.",
+      duration: 15_000,
+      ...(props.onRecordSend
+        ? {
+            action: {
+              label: "Record it in Applications",
+              onClick: () => {
+                void bridge?.command({ type: "minimize" });
+                props.onRecordSend?.();
+              },
+            },
+          }
+        : {}),
+    });
+  }, [state.unboundSendNotice, showToast, props.onRecordSend, bridge]);
   const [address, setAddress] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -156,6 +229,7 @@ export function BrowserPeek(props: {
       try {
         accept(await bridge.command(input));
         setMessage(null);
+        setSavedJob(null);
       } catch {
         setMessage(
           "The browser couldn’t complete that action. Try again or close and reopen it.",
@@ -387,7 +461,7 @@ export function BrowserPeek(props: {
   const importableBrowsers = [
     ...new Set(importable.map((source) => source.browserLabel)),
   ];
-  const showNotice = !!message || (!!state.attention && !blank);
+  const showNotice = addingJob || !!message || (!!state.attention && !blank);
   const isSecure = !!active?.url.startsWith("https://");
   const currentAddress = blank ? "" : (active?.url ?? "");
   const typing = address.trim() !== "" && address !== currentAddress;
@@ -566,6 +640,15 @@ export function BrowserPeek(props: {
                         <button
                           type="button"
                           role="menuitem"
+                          disabled={blank || busy || addingJob}
+                          onClick={() => void addJob()}
+                        >
+                          <Plus size={14} />{" "}
+                          {addingJob ? "Adding job…" : "Add this job"}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
                           disabled={state.tabs.length >= 8}
                           onClick={() => {
                             setMenuOpen(false);
@@ -573,6 +656,16 @@ export function BrowserPeek(props: {
                           }}
                         >
                           <Plus size={14} /> New tab
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void command({ type: "close_finished_tabs" });
+                          }}
+                        >
+                          <X size={14} /> Close finished tabs
                         </button>
                         <button
                           type="button"
@@ -691,16 +784,31 @@ export function BrowserPeek(props: {
                   role="status"
                 >
                   <span className="browser-notice-text">
-                    {!message && state.attention && (
+                    {!addingJob && !message && state.attention && (
                       <strong>{state.attention.title}. </strong>
                     )}
-                    {message ?? state.attention?.detail}
+                    {addingJob
+                      ? "Adding this job…"
+                      : (message ?? state.attention?.detail)}
                   </span>
-                  {message ? (
+                  {savedJob && !addingJob ? (
+                    <button
+                      type="button"
+                      className="browser-notice-action"
+                      disabled={shortlisting}
+                      onClick={() => void shortlistSavedJob()}
+                    >
+                      {shortlisting ? "Shortlisting…" : "Shortlist"}
+                    </button>
+                  ) : null}
+                  {message && !addingJob ? (
                     <button
                       type="button"
                       aria-label="Dismiss browser message"
-                      onClick={() => setMessage(null)}
+                      onClick={() => {
+                        setMessage(null);
+                        setSavedJob(null);
+                      }}
                     >
                       <X size={14} />
                     </button>

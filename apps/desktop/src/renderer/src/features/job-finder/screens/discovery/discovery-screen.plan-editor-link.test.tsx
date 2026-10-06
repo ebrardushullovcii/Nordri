@@ -6,7 +6,10 @@ import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
+import {
+  campaignPlanEditorHref,
+  JOB_FINDER_ROUTE_PATHS,
+} from "../../lib/job-finder-route-hrefs";
 
 vi.mock(
   "@renderer/features/job-finder/components/locked-screen-layout",
@@ -137,8 +140,7 @@ describe("Find jobs links to the selected plan's editor", () => {
     );
   }
 
-  // Search plans are no longer a person-facing surface: places and work
-  // modes live on Profile, so both links land there.
+  // General setup lives on Profile; result recovery edits this plan's places.
   it("points the search-setup panel's places link at Profile preferences", () => {
     renderScreen([]);
     fireEvent.click(screen.getByRole("button", { name: "Roles, places & sources" }));
@@ -148,11 +150,11 @@ describe("Find jobs links to the selected plan's editor", () => {
     ).toBe(JOB_FINDER_ROUTE_PATHS.profileWorkModes);
   });
 
-  it("points the results panel's places link at Profile preferences", () => {
+  it("points the results panel's places link at this plan's editor", () => {
     renderScreen([job]);
 
     expect(
       screen.getByTestId("results-plan-editor-link").getAttribute("href"),
-    ).toBe(JOB_FINDER_ROUTE_PATHS.profileWorkModes);
+    ).toBe(campaignPlanEditorHref("plan_chicago"));
   });
 });

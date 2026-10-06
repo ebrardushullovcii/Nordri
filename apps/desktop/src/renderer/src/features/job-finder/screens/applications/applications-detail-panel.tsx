@@ -1,8 +1,11 @@
+import type { QuestionAnswerDraft } from "../actions/actions-screen";
+import { isSameSiteApplicationActive } from "../actions/actions-screen";
 import {
+  applicationCrmStageLabelForView,
   inferApplicationCrmStageForView,
   trackedHiringStageBadge,
 } from "./applications-crm-model";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import {
   isApplicationTrackedAsSentByPerson,
   type ApplicationCrmStageDefinition,
@@ -38,6 +41,7 @@ import {
   buildQueueEntries,
   applicationNeedsPrimaryRecovery,
   findActionableApplicationAnswerRequest,
+  getApplyResultDestinationUrl,
 } from "./applications-detail-panel-helpers";
 import { ApplicationsDetailPanelOverviewSections } from "./applications-detail-panel-overview-sections";
 import type {
@@ -94,6 +98,10 @@ function buildLiveAssistantApplicationHref(input: {
 }
 
 interface ApplicationsDetailPanelProps {
+  progressNow?: number | undefined;
+  answerDraft?: QuestionAnswerDraft | undefined;
+  answerDraftRestored?: boolean;
+  onAnswerDraftChange?: (draft: QuestionAnswerDraft) => void | Promise<void>;
   activeFilter: ApplicationsViewFilter;
   /** Stages the person named in the tracker, shown by those names. */
   customStages?: readonly ApplicationCrmStageDefinition[];
@@ -152,6 +160,7 @@ interface ApplicationsDetailPanelProps {
   onRevokeApplyRunApproval: (input: JobFinderApplyRunActionInput) => void;
   onSelectApplyRun: (runId: string) => void;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
+  onReviewResumePdf?: (jobId: string) => void;
   onStartAutoApplyQueue: (jobIds: string[]) => void;
   /** The mode chosen in Settings; decides what a finished fill means. */
   applyMode?: ApplyMode;
@@ -182,6 +191,7 @@ interface ApplicationsDetailPanelProps {
 }
 
 export function ApplicationsDetailPanel({
+  progressNow,
   activeFilter,
   customStages,
   readApplyRunContext,
@@ -210,10 +220,14 @@ export function ApplicationsDetailPanel({
   onResolveApplyConsentRequest,
   onSelectApplyRun,
   onStartApplyCopilot,
+  onReviewResumePdf,
   onStartAutoApplyQueue,
   onOpenSafeguards,
   onOpenNeedsYou,
   userActionRequests,
+  answerDraft,
+  answerDraftRestored,
+  onAnswerDraftChange,
   onPerformUserAction,
   isUserActionPending,
   onAllowSiteSaves,
@@ -254,12 +268,28 @@ export function ApplicationsDetailPanel({
           run: answerRun,
         })
       : null;
+  const selectedRecordJob = selectedRecord
+    ? (discoveryJobs.find((job) => job.id === selectedRecord.jobId) ?? null)
+    : null;
   const answerStep: ApplicationAnswerStep | null =
     answerRequest && onPerformUserAction && pendingQuestions.length > 0
       ? {
           request: answerRequest,
+          ...(answerDraft ? { draft: answerDraft } : {}),
+          ...(onAnswerDraftChange
+            ? { onDraftChange: onAnswerDraftChange }
+            : {}),
+          draftRestored: answerDraftRestored ?? false,
+          jobLocation: selectedRecordJob?.location,
           questions: pendingQuestions,
           isPending: isUserActionPending?.(answerRequest.id) ?? false,
+          waitingForTurn: selectedRecordJob
+            ? isSameSiteApplicationActive(
+                selectedRecordJob,
+                applyJobResults,
+                new Map(discoveryJobs.map((job) => [job.id, job])),
+              )
+            : false,
           onCommand: onPerformUserAction,
         }
       : null;
@@ -330,7 +360,9 @@ export function ApplicationsDetailPanel({
   const selectedApplyState =
     selectedRecord && visibleApplyResult
       ? resolveApplyStatePresentation({
+          ...(progressNow === undefined ? {} : { now: progressNow }),
           recordCrm: selectedRecord.crm,
+          recordLatestBlocker: selectedRecord.latestBlocker,
           mode:
             selectedRecord.automationMode === "autonomous_submit"
               ? "apply_for_me"
@@ -371,9 +403,6 @@ export function ApplicationsDetailPanel({
       ? getApplicationStagePresentation(selectedRecord)
       : null;
   const selectedStage = selectedHiringStage ?? selectedApplyStage;
-  const selectedRecordJob = selectedRecord
-    ? (discoveryJobs.find((job) => job.id === selectedRecord.jobId) ?? null)
-    : null;
   // Prepare-only runs never reach a "submitted" status, so the tracker stage
   // the user records by hand is the path that actually enables this.
   const canPrepareInterview = selectedRecord
@@ -409,26 +438,38 @@ export function ApplicationsDetailPanel({
         }
       : null;
 
-  // While the user is being sent to the browser to finish this application,
-  // an optional cover-letter block advertised a feature its own copy says to
-  // come back for later. It returns once the application is unblocked.
-  const documentsSection =
-    selectedRecord && !needsPrimaryRecovery ? (
-      <ApplicationsApplicationDocuments
-        applicationRecord={selectedRecord}
-        applyRunDetails={selectedApplyRunDetails}
-      />
-    ) : null;
+  // Existing drafts remain accessible while the form waits for answers.
+  const documentsSection = selectedRecord ? (
+    <ApplicationsApplicationDocuments
+      applicationRecord={selectedRecord}
+      applyRunDetails={selectedApplyRunDetails}
+      demoteAsSecondary={needsPrimaryRecovery}
+    />
+  ) : null;
 
+  const reviewTargetRef = useRef<HTMLDivElement>(null);
   const recoverySection = selectedRecord ? (
     <ApplicationsDetailPanelRecoverySections
+      progressNow={progressNow}
       canRestageAutoRun={canRestageAutoRun}
       canRestageQueueRun={canRestageQueueRun}
       dailyPreparationCapacity={dailyPreparationCapacity}
       excludedQueueRecoveryEntries={excludedQueueRecoveryEntries}
       isApplyPending={isApplyPending}
       onStartApplyCopilot={onStartApplyCopilot}
+      {...(onReviewResumePdf ? { onReviewResumePdf } : {})}
       onStartAutoApplyQueue={onStartAutoApplyQueue}
+      {...(applyPresentation?.state === "awaiting_your_review"
+        ? {
+            onReviewBeforeSending: () => {
+              reviewTargetRef.current?.scrollIntoView({
+                block: "start",
+                behavior: "smooth",
+              });
+              reviewTargetRef.current?.focus({ preventScroll: true });
+            },
+          }
+        : {})}
       {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
       {...(onOpenNeedsYou ? { onOpenNeedsYou } : {})}
       answerStep={answerStep}
@@ -450,6 +491,9 @@ export function ApplicationsDetailPanel({
       selectedRecordJobId={selectedRecord.jobId}
       selectedApplicationRecordId={selectedRecord.id}
       selectedRecordLastActionLabel={selectedRecord.lastActionLabel}
+      personSendReceiptSummary={
+        selectedRecord.personSendReceipt?.summary ?? null
+      }
       selectedRecordTrackedAsApplied={isApplicationTrackedAsSentByPerson(
         selectedRecord.crm,
       )}
@@ -572,12 +616,22 @@ export function ApplicationsDetailPanel({
               data-testid="applications-not-submitted-pill"
               tone="muted"
             >
-              Not submitted
+              Not sent
             </StatusBadge>
           ) : null}
-          <StatusBadge tone={selectedStage ? selectedStage.tone : "muted"}>
-            {selectedRecord ? selectedStage?.label : "Nothing selected"}
-          </StatusBadge>
+          {!showNotSubmittedPill ? (
+            <StatusBadge tone={selectedStage ? selectedStage.tone : "muted"}>
+              {selectedRecord
+                ? (selectedHiringStage?.label ??
+                  (visibleApplyResult
+                    ? selectedApplyStage?.label
+                    : applicationCrmStageLabelForView(
+                        selectedRecord,
+                        customStages,
+                      )))
+                : "Nothing selected"}
+            </StatusBadge>
+          ) : null}
         </div>
       </div>
       {selectedRecord ? (
@@ -646,37 +700,67 @@ export function ApplicationsDetailPanel({
           {applyPresentation?.state === "awaiting_your_review"
             ? null
             : documentsSection}
-          <ApplicationsDetailPanelActivitySections
-            applyRunDetailsError={applyRunDetailsError}
-            applyRunDetailsStatus={applyRunDetailsStatus}
-            applyRunHistory={applyRunHistory}
-            isApplyRequestPending={isApplyRequestPending}
-            onResolveApplyConsentRequest={onResolveApplyConsentRequest}
-            onExportApplicationPacket={onExportApplicationPacket}
-            {...(onResolveSubmissionOutcome
-              ? { onResolveSubmissionOutcome }
-              : {})}
-            onSaveApplicationAnswer={onSaveApplicationAnswer}
-            onClearApplicationAnswer={onClearApplicationAnswer}
-            onSelectApplyRun={onSelectApplyRun}
-            {...(onSubmitPreparedApplication
-              ? { onSubmitPreparedApplication }
-              : {})}
-            awaitsYourReview={
-              applyPresentation?.state === "awaiting_your_review"
-            }
-            {...(onPrepareApplicationAgain
-              ? { onPrepareApplicationAgain }
-              : {})}
-            applicationPageClosed={
-              selectedRecord?.nextActionLabel === "Prepare again"
-            }
-            selectedApplyRunDetails={selectedApplyRunDetails}
-            selectedApplyRunId={selectedApplyRunId}
-            selectedAttempt={selectedAttempt}
-            selectedRecord={selectedRecord}
-            visibleApplyResult={visibleApplyResult}
-          />
+          <div
+            data-application-review-target
+            ref={reviewTargetRef}
+            tabIndex={-1}
+          >
+            <ApplicationsDetailPanelActivitySections
+              applyRunDetailsError={applyRunDetailsError}
+              applyRunDetailsStatus={applyRunDetailsStatus}
+              applyRunHistory={applyRunHistory}
+              isApplyRequestPending={isApplyRequestPending}
+              onResolveApplyConsentRequest={onResolveApplyConsentRequest}
+              onExportApplicationPacket={onExportApplicationPacket}
+              {...(onResolveSubmissionOutcome
+                ? { onResolveSubmissionOutcome }
+                : {})}
+              onSaveApplicationAnswer={onSaveApplicationAnswer}
+              onClearApplicationAnswer={onClearApplicationAnswer}
+              onSelectApplyRun={onSelectApplyRun}
+              {...(onSubmitPreparedApplication
+                ? { onSubmitPreparedApplication }
+                : {})}
+              onOpenApplicationPage={
+                onFinishInBrowser && visibleApplyResult
+                  ? async () => {
+                      const outcome = await onFinishInBrowser({
+                        jobId: visibleApplyResult.jobId,
+                        resultId: visibleApplyResult.id,
+                        runId: visibleApplyResult.runId,
+                        applicationRecordId: selectedRecord.id,
+                        destinationUrl:
+                          selectedApplyRunDetails?.reviewCard?.pageUrl ??
+                          getApplyResultDestinationUrl(
+                            visibleApplyResult.privacyReceipt,
+                          ),
+                      });
+                      if (outcome?.kind !== "opened_application_page")
+                        throw new Error(
+                          "The application page could not be opened. Prepare it again.",
+                        );
+                      // The page is focused, but the browser may be minimized:
+                      // show it, as Open the Job Finder browser does.
+                      void window.nordri?.browser?.command({ type: "open" });
+                    }
+                  : undefined
+              }
+              awaitsYourReview={
+                applyPresentation?.state === "awaiting_your_review"
+              }
+              {...(onPrepareApplicationAgain
+                ? { onPrepareApplicationAgain }
+                : {})}
+              applicationPageClosed={
+                selectedRecord?.nextActionLabel === "Prepare again"
+              }
+              selectedApplyRunDetails={selectedApplyRunDetails}
+              selectedApplyRunId={selectedApplyRunId}
+              selectedAttempt={selectedAttempt}
+              selectedRecord={selectedRecord}
+              visibleApplyResult={visibleApplyResult}
+            />
+          </div>
           {applyPresentation?.state === "awaiting_your_review"
             ? documentsSection
             : null}

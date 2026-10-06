@@ -65,3 +65,14 @@ export async function withJobFinderWorkspaceUpdates<T>(
     publishJobFinderWorkspaceUpdate(target);
   }
 }
+
+let draftUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Persist keystrokes immediately, but coalesce the workspace refresh. */
+export function scheduleAnswerDraftWorkspaceUpdate(): void {
+  if (draftUpdateTimer) clearTimeout(draftUpdateTimer);
+  draftUpdateTimer = setTimeout(() => {
+    draftUpdateTimer = undefined;
+    publishJobFinderWorkspaceUpdate();
+  }, 150);
+}

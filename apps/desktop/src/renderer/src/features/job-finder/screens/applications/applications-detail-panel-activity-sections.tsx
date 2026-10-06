@@ -1,3 +1,4 @@
+import { withPersonAnswerSources } from "./application-review-source";
 import { ApplicationsDisclosureSummary } from "./applications-disclosure-summary";
 import type {
   ApplicationAttempt,
@@ -50,6 +51,7 @@ export function ApplicationsDetailPanelActivitySections(props: {
   onPrepareApplicationAgain?: (jobId: string) => Promise<void>;
   /** True when this application is filled in and waiting on their decision. */
   awaitsYourReview?: boolean;
+  onOpenApplicationPage?: (() => Promise<void>) | undefined;
   /** True when the browser no longer holds the page this was filled in on. */
   applicationPageClosed?: boolean;
   selectedApplyRunDetails: ApplyRunDetails | null;
@@ -92,20 +94,31 @@ export function ApplicationsDetailPanelActivitySections(props: {
 
   // What the run that filled this in actually recorded, rather than a later
   // reconstruction from the individual records.
-  const reviewCard = selectedApplyRunDetails?.reviewCard ?? null;
+  const reviewCard = selectedApplyRunDetails?.reviewCard
+    ? withPersonAnswerSources(
+        selectedApplyRunDetails.reviewCard,
+        selectedApplyRunDetails,
+      )
+    : null;
   const reviewCardMatchesVisibleResult =
     selectedApplyRunDetails?.result?.id === visibleApplyResult?.id;
 
   return (
     <>
-      {awaitsYourReview &&
+      {(visibleApplyResult?.automaticSendPending !== true ||
+        visibleApplyResult?.privacyReceipt?.submissionOutcome != null) &&
+      (awaitsYourReview || visibleApplyResult?.state === "awaiting_review") &&
       reviewCard &&
       reviewCardMatchesVisibleResult &&
-      onSubmitPreparedApplication &&
       visibleApplyResult ? (
         <ApplicationsReviewCard
           card={reviewCard}
-          onSubmit={() => onSubmitPreparedApplication(visibleApplyResult.jobId)}
+          onOpenPage={props.onOpenApplicationPage}
+          onSubmit={
+            awaitsYourReview && onSubmitPreparedApplication
+              ? () => onSubmitPreparedApplication(visibleApplyResult.jobId)
+              : undefined
+          }
           {...(onPrepareApplicationAgain
             ? {
                 onPrepareAgain: () =>

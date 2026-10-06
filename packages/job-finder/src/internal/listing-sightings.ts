@@ -159,7 +159,9 @@ export function classifySightingRoute(
     sighting.applicationUrl && sighting.applicationUrl !== sighting.listingUrl
       ? parseHttpUrl(sighting.applicationUrl)
       : null;
-  const evidence = parseHttpUrl(sighting.pageApplyUrl) ?? collected;
+  const evidence = sighting.routeReadAt
+    ? parseHttpUrl(sighting.pageApplyUrl)
+    : (parseHttpUrl(sighting.pageApplyUrl) ?? collected);
   if (!evidence) {
     // A read page with no separate apply link is still not proof either way.
     return "unknown";
@@ -281,7 +283,17 @@ export function attributeLegacySighting(
   provenance: readonly SavedJobDiscoveryProvenance[],
   job: Pick<
     SavedJob,
-    "canonicalUrl" | "applicationUrl" | "sourceJobId" | "applyPath"
+    | "canonicalUrl"
+    | "applicationUrl"
+    | "sourceJobId"
+    | "applyPath"
+    | "title"
+    | "company"
+    | "location"
+    | "salaryText"
+    | "seniority"
+    | "description"
+    | "summary"
   >,
 ): SavedJobDiscoveryProvenance[] {
   if (provenance.some((entry) => entry.listingUrl === job.canonicalUrl)) {
@@ -295,6 +307,15 @@ export function attributeLegacySighting(
     entry === legacy
       ? {
           ...entry,
+          listingFacts: {
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            salaryText: job.salaryText,
+            seniority: job.seniority,
+            description: job.description,
+            summary: job.summary,
+          },
           listingUrl: job.canonicalUrl,
           applicationUrl: job.applicationUrl,
           sourceJobId: job.sourceJobId,

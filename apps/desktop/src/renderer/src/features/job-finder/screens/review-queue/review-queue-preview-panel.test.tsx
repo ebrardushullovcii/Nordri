@@ -160,7 +160,9 @@ describe("ReviewQueuePreviewPanel", () => {
     expect(progress.contains(elapsed)).toBe(false);
 
     expect(
-      screen.getByText("Usually 40-70 seconds for a tailored draft."),
+      screen.getByText(
+        "Writing and checking the facts can take a few minutes, especially for Aggressive resumes.",
+      ),
     ).toBeTruthy();
     expect(screen.getByText(/The resume keeps writing/i)).toBeTruthy();
   });

@@ -24,6 +24,9 @@ export function safeguardMutationKey(input: SafeguardMutationInput): string {
     case "apply_company_application_evidence":
       reference = input.config.companyId;
       break;
+    case "decide_same_company_send_pair":
+      reference = `${input.conflictId}:${input.jobIds.join(":")}:${input.allow}`;
+      break;
     case "record_simultaneous_application_conflict":
     case "resolve_simultaneous_application_conflict":
       reference = input.conflictId;
@@ -172,8 +175,13 @@ function jobLabel(
   workspace: JobFinderWorkspaceSnapshot,
   jobId: string,
 ): string {
-  const job = workspace.discoveryJobs.find((entry) => entry.id === jobId);
-  if (job) return `${job.title} · ${job.company ?? "Unknown company"}`;
+  const job = [
+    ...workspace.discoveryJobs,
+    ...(workspace.companyJobs ?? []),
+    ...(workspace.dismissedDiscoveryJobs ?? []),
+  ].find((entry) => entry.id === jobId);
+  if (job)
+    return [job.title, job.location, job.company].filter(Boolean).join(" · ");
   const record = workspace.applicationRecords.find(
     (entry) => entry.jobId === jobId,
   );
@@ -198,7 +206,9 @@ function applicationRecordLabel(
   const record = workspace.applicationRecords.find(
     (entry) => entry.id === applicationRecordId,
   );
-  return record ? `${record.title} · ${record.company}` : applicationRecordId;
+  return record
+    ? jobLabel(workspace, record.jobId)
+    : "Application no longer saved";
 }
 
 function dismissalReferenceLabel(
@@ -393,6 +403,86 @@ export function buildSafeguardsPresentationModel(
   }
 
   for (const conflict of safeguards.simultaneousApplicationConflicts) {
+    if (conflict.companyKey && conflict.jobIds) {
+      const jobIds = conflict.jobIds;
+      const label = (id: string) => {
+        const job = [
+          ...workspace.discoveryJobs,
+          ...workspace.companyJobs,
+          ...workspace.dismissedDiscoveryJobs,
+        ].find((job) => job.id === id);
+        const record = workspace.applicationRecords.find(
+          (record) => record.jobId === id,
+        );
+        return `${job?.title ?? record?.title ?? "Application"} (${job?.location || "place not listed"})`;
+      };
+      const controls: SafeguardControl[] = [];
+      let blocked = false;
+      for (let i = 0; i < jobIds.length; i++) {
+        for (let j = i + 1; j < jobIds.length; j++) {
+          const pair: [string, string] = [jobIds[i]!, jobIds[j]!];
+          const allowed =
+            conflict.allowedPairs?.some(
+              (decision) =>
+                decision.revokedAt === null &&
+                pair.every((id) => decision.jobIds.includes(id)),
+            ) ?? false;
+          const bothSent = pair.every((id) =>
+            workspace.applicationRecords.some(
+              (record) =>
+                record.jobId === id && record.lastAttemptState === "submitted",
+            ),
+          );
+          if (!allowed && bothSent) continue;
+          if (!allowed) blocked = true;
+          controls.push({
+            id: `${conflict.id}-${i}-${j}`,
+            label: `${allowed ? "Revoke Send both anyway" : "Send both anyway"}: ${pair.map(label).join(" and ")}`,
+            kind: allowed ? "restore" : "resolve",
+            mutation: {
+              type: "decide_same_company_send_pair",
+              conflictId: conflict.id,
+              jobIds: pair,
+              allow: !allowed,
+            },
+          });
+        }
+      }
+      pushRow({
+        key: `conflict-${conflict.id}`,
+        kind: "conflicts",
+        title: conflict.companyName ?? "Same employer",
+        subtitle: jobIds.map(label).join("; "),
+        explanation:
+          "These applications share an employer. Your choice applies to each pair, and you can revoke it.",
+        recoveryGuidance: blocked
+          ? "Choose Send both anyway for a pair you want sent, then return to the application. Sending still needs your permission."
+          : controls.length
+            ? "Your choices are saved. Return to the applications to send them, or revoke a choice here."
+            : "These applications have already been sent.",
+        statusLabel: blocked
+          ? "Needs your choice"
+          : controls.length
+            ? "Pairs allowed by you"
+            : "Past overlap",
+        statusTone: blocked
+          ? "critical"
+          : controls.length
+            ? "positive"
+            : "neutral",
+        active: blocked,
+        blocked,
+        dismissed: false,
+        lineage: baseLineage(jobIds, []),
+        tags: [],
+        controls,
+        recoveryLink: RECOVERY_LINKS.conflicts,
+        searchText: [conflict.companyName, ...jobIds.map(label)]
+          .join(" ")
+          .toLowerCase(),
+      });
+      continue;
+    }
     const dismissal = findDismissal(
       safeguards,
       "simultaneous_application_conflict",
@@ -402,11 +492,11 @@ export function buildSafeguardsPresentationModel(
     const jobIds = [
       conflict.applicationRecordId,
       conflict.conflictingApplicationRecordId,
-    ].map((recordId) => {
+    ].flatMap((id) => {
       const record = workspace.applicationRecords.find(
-        (entry) => entry.id === recordId,
+        (record) => record.id === id,
       );
-      return record?.jobId ?? recordId;
+      return record ? [record.jobId] : [];
     });
     const controls: SafeguardControl[] = [];
     if (active && !dismissal) {
@@ -451,8 +541,10 @@ export function buildSafeguardsPresentationModel(
         conflict.status === "detected"
           ? "Two applications overlapped in time"
           : "Conflict resolved",
-      explanation: conflict.explanation,
-      recoveryGuidance: conflict.recoveryGuidance,
+      explanation:
+        "These applications were recorded close together at the same employer. Review them before starting more work for this company.",
+      recoveryGuidance:
+        "Review the two applications, then resolve or dismiss this hold. Applications already sent stay sent.",
       statusLabel: active ? "Detected" : "Resolved",
       statusTone: active ? (dismissal ? "muted" : "critical") : "positive",
       active,
@@ -625,10 +717,10 @@ export function buildSafeguardsPresentationModel(
       run.summary?.trim() ||
       "Job Finder stopped preparing this batch because one of your safety limits was reached.";
     const recoveryGuidance = hasPendingSampleReview(workspace, run.id)
-      ? "It will not carry on by itself. Review the prepared sample below, then press Prepare remaining jobs in Applications to finish the ones it did not get to. Nothing is sent or submitted."
+      ? "It will not carry on by itself. Review the prepared sample below, then open Applications to prepare the remaining jobs."
       : remainingJobs > 0
-        ? "It will not carry on by itself. Settle the limit above, then press Prepare remaining jobs in Applications to finish the ones it did not get to. Nothing is sent or submitted."
-        : "It will not carry on by itself. Open Applications to review what it prepared. Nothing is sent or submitted.";
+        ? "It will not carry on by itself. Check the limit named here. Daily limits reset tomorrow; search-plan limits can be changed in Search plans. Then open Applications and press Try again on an unstarted job."
+        : "It will not carry on by itself. Open Applications to review each outcome.";
     pushRow({
       key: `apply-run-pause-${run.id}`,
       kind: "pauses",

@@ -253,7 +253,10 @@ describe("resume import finalize concurrency", () => {
     // for review because a field was saved meanwhile.
     expect(profile.answerBank.customAnswers).toEqual([REUSABLE_ANSWER]);
     expect(profile.fullName).toBe("Jamie Rivers");
-    expect(run?.status).toBe("applied");
+    // The persisted run reflects suggestions still waiting for review after
+    // the retry; timing telemetry must not restore the earlier run status.
+    expect(run?.status).toBe("review_ready");
+    expect(run?.candidateCounts.needsReview).toBeGreaterThan(0);
     expect(run?.warnings).not.toContain(RESUME_IMPORT_SUPERSEDED_MESSAGE);
   });
 

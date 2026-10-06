@@ -1374,6 +1374,7 @@ describe("playwright browser runtime", () => {
       const launchedChromeProcess = createMockChildProcess({ pid: 54545 });
 
       const fakePage = {
+        close: vi.fn().mockResolvedValue(undefined),
         bringToFront: vi.fn().mockResolvedValue(undefined),
         isClosed: () => false,
         url: () => "https://example.com/jobs",
@@ -1829,12 +1830,15 @@ describe("playwright browser runtime", () => {
       );
       vi.doMock("@nordri/browser-agent", async (importOriginal) => ({
         ...(await importOriginal<typeof browserAgent>()),
-        runJobSearchAgent: vi.fn().mockResolvedValue({
+        runJobSearchAgent: vi.fn((input: browserAgent.JobSearchAgentInput) => {
+          const result = {
           jobs: [createTestJob()],
           steps: 3,
           incomplete: false,
           transcriptMessageCount: 4,
-          warning: null,
+          };
+          input.resultCache?.write(input.config, result);
+          return Promise.resolve(result);
         }),
       }));
 
@@ -1898,6 +1902,7 @@ describe("playwright browser runtime", () => {
           navigationHostnames: ["example.com"],
           siteLabel: "Catalog Jobs",
           sourceCatalog: [createTestJob()],
+          sourceCatalogComplete: true,
           dedicatedPage,
           onAutomationPage: (claimedPage) => claimed.push(claimedPage),
         });
@@ -1907,6 +1912,24 @@ describe("playwright browser runtime", () => {
         expect(result.jobs[0]?.title).toBe("Senior Engineer");
         expect(page.goto).not.toHaveBeenCalled();
         expect(page.close).toHaveBeenCalledOnce();
+        expect(claimed).toEqual([page]);
+        const readCount = page.evaluate.mock.calls.length;
+        const repeated = await runtime.runAgentDiscovery!("target_site", {
+          maxSteps: 3,
+          targetJobCount: 1,
+          userProfile: createTestProfile(),
+          searchPreferences: { targetRoles: [], locations: [] },
+          startingUrls: ["https://example.com/jobs"],
+          navigationHostnames: ["example.com"],
+          siteLabel: "Catalog Jobs",
+          sourceCatalog: [createTestJob()],
+          sourceCatalogComplete: true,
+          dedicatedPage,
+          onAutomationPage: (claimedPage) => claimed.push(claimedPage),
+        });
+        expect(repeated.jobs).toEqual(result.jobs);
+        expect(repeated.agentMetadata?.steps).toBe(0);
+        expect(page.evaluate.mock.calls.length).toBe(readCount);
         expect(claimed).toEqual([page]);
       } finally {
         vi.doUnmock("@nordri/browser-agent");
@@ -2028,7 +2051,7 @@ describe("playwright browser runtime", () => {
       // The matching page becomes the one working tab for this source.
       expect(blankPage.goto).not.toHaveBeenCalled();
       expect(blankPage.close).toHaveBeenCalledTimes(1);
-      expect(backgroundTargetPage.close).not.toHaveBeenCalled();
+      expect(backgroundTargetPage.close).toHaveBeenCalledOnce();
       expect(backgroundTargetPage.bringToFront).not.toHaveBeenCalled();
       expect(blankPage.bringToFront).not.toHaveBeenCalled();
 
@@ -3003,6 +3026,7 @@ describe("managed context service worker blocking", () => {
       const debugPort = await reserveFreePort();
       const launchedChromeProcess = createMockChildProcess({ pid: 63636 });
       const fakePage = {
+        close: vi.fn().mockResolvedValue(undefined),
         bringToFront: vi.fn().mockResolvedValue(undefined),
         goto: vi.fn().mockResolvedValue(undefined),
         isClosed: () => false,
@@ -3521,6 +3545,74 @@ describe("managed context active service worker gate", () => {
     }
   });
 
+  test("discovery waits for capacity, resumes after cleanup, and preserves the occupied forms", async () => {
+    const userDataDir = await mkdtemp(
+      join(tmpdir(), "nordri-discovery-capacity-"),
+    );
+    vi.doMock("@nordri/browser-agent", async (importOriginal) => ({
+      ...(await importOriginal<typeof browserAgent>()),
+      runJobSearchAgent: vi.fn().mockResolvedValue({
+        jobs: [],
+        steps: 1,
+        incomplete: false,
+        transcriptMessageCount: 1,
+      }),
+    }));
+    try {
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      await harness.fakePage.goto("https://prepared.example/form");
+      let occupied = 8;
+      const forms = Array.from({ length: 7 }, () => ({
+        isClosed: () => false,
+        url: () => "https://prepared.example/form",
+        close: vi.fn(),
+      }));
+      Object.assign(harness.fakeContext, { pages: () => forms });
+      const { createBrowserAgentRuntime } =
+        await import("./playwright-browser-runtime");
+      const runtime = createBrowserAgentRuntime({
+        userDataDir,
+        jobExtractor: vi.fn().mockResolvedValue([]),
+        browserHost: {
+          connect: () => Promise.resolve(harness.fakeBrowser as never),
+          getOpenBrowser: () => Promise.resolve(harness.fakeBrowser as never),
+          close: () => Promise.resolve(),
+          assertAutomationSafe: () => undefined,
+          openTabCount: () => occupied,
+        },
+      });
+      const onWaiting = vi.fn();
+      const controller = new AbortController();
+      const run = runtime.runAgentDiscovery!("target_site", {
+        maxSteps: 1,
+        targetJobCount: 1,
+        userProfile: createTestProfile(),
+        searchPreferences: { targetRoles: [], locations: [] },
+        startingUrls: ["https://jobs.example/list"],
+        navigationHostnames: ["jobs.example"],
+        siteLabel: "Example Jobs",
+        dedicatedPage: true,
+        signal: controller.signal,
+        onWaitingForBrowserTab: onWaiting,
+      });
+      await vi.waitFor(() => expect(onWaiting).toHaveBeenCalledOnce(), {
+        timeout: 5000,
+      });
+      expect(harness.fakeContext.newPage).not.toHaveBeenCalled();
+      occupied = 6;
+      forms.splice(0, 1);
+      const result = await run;
+      expect(result.warning).not.toContain("Target.createTarget");
+      expect(harness.fakeContext.newPage).toHaveBeenCalledOnce();
+      expect(forms.every((page) => page.close.mock.calls.length === 0)).toBe(
+        true,
+      );
+    } finally {
+      vi.doUnmock("@nordri/browser-agent");
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   test("embedded tab headroom waits abortably without closing existing tabs", async () => {
     const userDataDir = await mkdtemp(join(tmpdir(), "nordri-runtime-tab-headroom-"));
     try {
@@ -3810,6 +3902,199 @@ describe("managed context active service worker gate", () => {
       await rm(userDataDir, { recursive: true, force: true });
     }
   });
+
+  test.each(["submitted", "failed", "unsupported"] as const)(
+    "closes a %s application's bound page immediately",
+    async (state) => {
+      const userDataDir = await mkdtemp(
+        join(tmpdir(), "nordri-terminal-page-"),
+      );
+      try {
+        const harness = createGateHarness({ activeServiceWorkers: () => [] });
+        const runtime = await createGatedRuntime({
+          userDataDir,
+          debugPort: await reserveFreePort(),
+          browser: harness.fakeBrowser,
+        });
+        const { approvedResumePath, prepareInput } = createPrepareInput({
+          userDataDir,
+        });
+        await writeFile(approvedResumePath, "synthetic resume");
+        const result = await runtime.executeApplicationFlow("target_site", {
+          ...prepareInput,
+          applicationPageBindingKey: "terminal_result",
+          prepareApplicationForm: async (args) => ({
+            ...(await prepareInput.prepareApplicationForm(args)),
+            state,
+          }),
+        });
+        expect(result.state).toBe(state);
+        expect(harness.fakePage.close).toHaveBeenCalledOnce();
+        expect(harness.secondaryPage.close).not.toHaveBeenCalled();
+        await expect(
+          runtime.hasApplicationPageBinding!("target_site", "terminal_result"),
+        ).resolves.toBe(false);
+      } finally {
+        await rm(userDataDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("a retry transfers and reuses its filled wizard page without another navigation", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "nordri-retry-page-"));
+    try {
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      Object.assign(harness.fakePage, {
+        evaluate: vi.fn().mockResolvedValue(undefined),
+      });
+      const runtime = await createGatedRuntime({
+        userDataDir,
+        debugPort: await reserveFreePort(),
+        browser: harness.fakeBrowser,
+      });
+      const { approvedResumePath, prepareInput } = createPrepareInput({
+        userDataDir,
+      });
+      await writeFile(approvedResumePath, "synthetic resume");
+      await runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "previous_result",
+      });
+      expect(harness.fakePage.close).not.toHaveBeenCalled();
+      await harness.fakePage.goto(
+        "https://example.com/apply/job_visual_runtime?step=2",
+      );
+      harness.fakePage.goto.mockClear();
+      await expect(
+        runtime.transferApplicationPageBinding!(
+          "target_site",
+          "previous_result",
+          "retry_result",
+        ),
+      ).resolves.toBe(true);
+      await runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "retry_result",
+      });
+      expect(harness.fakePage.goto).not.toHaveBeenCalled();
+      expect(harness.fakeContext.newPage).not.toHaveBeenCalled();
+      await expect(
+        runtime.hasApplicationPageBinding!("target_site", "previous_result"),
+      ).resolves.toBe(false);
+      await expect(
+        runtime.hasApplicationPageBinding!("target_site", "retry_result"),
+      ).resolves.toBe(true);
+      expect(harness.fakePage.close).not.toHaveBeenCalled();
+      await runtime.releaseApplicationPageBinding!(
+        "target_site",
+        "retry_result",
+      );
+      expect(harness.fakePage.close).toHaveBeenCalledOnce();
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a form the person opened to finish stays open when its application ends", async () => {
+    const userDataDir = await mkdtemp(join(tmpdir(), "nordri-handed-page-"));
+    try {
+      const harness = createGateHarness({ activeServiceWorkers: () => [] });
+      Object.assign(harness.fakePage, {
+        evaluate: vi.fn().mockResolvedValue(undefined),
+      });
+      const runtime = await createGatedRuntime({
+        userDataDir,
+        debugPort: await reserveFreePort(),
+        browser: harness.fakeBrowser,
+      });
+      const { approvedResumePath, prepareInput } = createPrepareInput({
+        userDataDir,
+      });
+      await writeFile(approvedResumePath, "synthetic resume");
+      await runtime.executeApplicationFlow("target_site", {
+        ...prepareInput,
+        applicationPageBindingKey: "handed_result",
+      });
+      await runtime.handApplicationPageToPerson!(
+        "target_site",
+        "handed_result",
+      );
+      await expect(
+        runtime.releaseApplicationPageBinding!("target_site", "handed_result"),
+      ).resolves.toBe(false);
+      expect(harness.fakePage.close).not.toHaveBeenCalled();
+      await expect(
+        runtime.hasApplicationPageBinding!("target_site", "handed_result"),
+      ).resolves.toBe(false);
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["finished", "failed", "aborted", "parked"] as const)(
+    "releases a shared search page when %s, except a person handoff",
+    async (ending) => {
+      const userDataDir = await mkdtemp(join(tmpdir(), "nordri-search-page-"));
+      const controller = new AbortController();
+      vi.doMock("@nordri/browser-agent", async (importOriginal) => ({
+        ...(await importOriginal<typeof browserAgent>()),
+        runJobSearchAgent: vi.fn(() => {
+          if (ending === "failed") throw new Error("synthetic search failure");
+          if (ending === "aborted") {
+            controller.abort();
+            throw new DOMException("Stopped", "AbortError");
+          }
+          return Promise.resolve({
+            jobs: [],
+            steps: 1,
+            incomplete: false,
+            transcriptMessageCount: 1,
+            ...(ending === "parked"
+              ? { parkedPageUrl: "https://jobs.example/login" }
+              : {}),
+          });
+        }),
+      }));
+      try {
+        const harness = createGateHarness({ activeServiceWorkers: () => [] });
+        Object.assign(harness.fakePage, {
+          evaluate: vi.fn().mockResolvedValue(null),
+        });
+        const { createBrowserAgentRuntime } =
+          await import("./playwright-browser-runtime");
+        const runtime = createBrowserAgentRuntime({
+          userDataDir,
+          jobExtractor: vi.fn().mockResolvedValue([]),
+          browserHost: {
+            connect: () => Promise.resolve(harness.fakeBrowser as never),
+            getOpenBrowser: () => Promise.resolve(harness.fakeBrowser as never),
+            close: () => Promise.resolve(),
+            assertAutomationSafe: () => undefined,
+          },
+        });
+        const run = runtime.runAgentDiscovery!("target_site", {
+          maxSteps: 1,
+          targetJobCount: 1,
+          userProfile: createTestProfile(),
+          searchPreferences: { targetRoles: [], locations: [] },
+          startingUrls: ["https://jobs.example/list"],
+          navigationHostnames: ["jobs.example"],
+          siteLabel: "Synthetic Jobs",
+          signal: controller.signal,
+        });
+        if (ending === "aborted")
+          await expect(run).rejects.toMatchObject({ name: "AbortError" });
+        else await run;
+        if (ending === "parked")
+          expect(harness.fakePage.close).not.toHaveBeenCalled();
+        else expect(harness.fakePage.close).toHaveBeenCalled();
+        expect(harness.secondaryPage.close).not.toHaveBeenCalled();
+      } finally {
+        vi.doUnmock("@nordri/browser-agent");
+        await rm(userDataDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("continuation keeps the exact bound wizard page instead of a stale listing checkpoint", async () => {
     const userDataDir = await mkdtemp(

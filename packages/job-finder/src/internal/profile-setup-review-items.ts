@@ -632,7 +632,7 @@ function buildMissingFieldDrafts(
   }
 
   if (
-    profile.yearsExperience <= 0 &&
+    (profile.yearsExperience === null || profile.yearsExperience <= 0) &&
     !hasDraftForTarget(candidateDrafts, "identity", "yearsExperience")
   ) {
     // Recommended, never blocking: zero is a true answer for a first job.

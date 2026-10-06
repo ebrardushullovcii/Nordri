@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ResumeBatchCheckpointSchema } from "./resume";
 
 import { IsoDateTimeSchema, NonEmptyStringSchema } from "./base";
 
@@ -247,6 +248,7 @@ export const assistantChangeTargetValues = [
   "search_preferences",
   "settings",
   "resume_draft",
+  "search_plan",
 ] as const;
 export const AssistantChangeTargetSchema = z.enum(assistantChangeTargetValues);
 export type AssistantChangeTarget = z.infer<typeof AssistantChangeTargetSchema>;
@@ -293,7 +295,7 @@ export const AssistantMessagePartSchema = z.discriminatedUnion("type", [
             .object({
               id: IdSchema,
               label: NonEmptyStringSchema.max(400),
-              detail: z.string().max(2000).nullable().default(null),
+              detail: z.string().max(100_000).nullable().default(null),
             })
             .strict(),
         )
@@ -586,6 +588,7 @@ export const AssistantProposalSchema = z
           .object({
             id: IdSchema,
             label: NonEmptyStringSchema.max(400),
+            detail: z.string().max(100_000).nullable().optional(),
             payload: z.unknown(),
           })
           .strict(),
@@ -875,6 +878,7 @@ export const AssistantEventPayloadSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("open_route"),
+      navigationRequestId: IdSchema.nullable().default(null),
       route: NonEmptyStringSchema.max(400),
     })
     .strict(),
@@ -938,6 +942,27 @@ export const AssistantConversationViewSchema = z
   .strict();
 export type AssistantConversationView = z.infer<
   typeof AssistantConversationViewSchema
+>;
+
+export const AssistantNavigationDisplaySchema = z
+  .object({
+    displayedRoute: z.string().max(400).nullable(),
+    section: z.string().max(80).nullable(),
+    overlay: z.enum(["none", "browser", "dialog", "chat"]),
+    status: z.enum(["displayed", "blocked"]),
+    reason: z.string().max(400).nullable(),
+  })
+  .strict();
+export type AssistantNavigationDisplay = z.infer<
+  typeof AssistantNavigationDisplaySchema
+>;
+export const AssistantNavigationAcknowledgmentSchema =
+  AssistantNavigationDisplaySchema.extend({
+    conversationId: IdSchema,
+    navigationRequestId: IdSchema,
+  }).strict();
+export type AssistantNavigationAcknowledgment = z.infer<
+  typeof AssistantNavigationAcknowledgmentSchema
 >;
 
 export const AssistantConversationIdInputSchema = z
@@ -1101,8 +1126,28 @@ export type AssistantMentionSearchResult = z.infer<
   typeof AssistantMentionSearchResultSchema
 >;
 
+/** Transient resume work owned by the UI; never resumed after restart. */
+export const AssistantResumeBatchStateSchema =
+  ResumeBatchCheckpointSchema.extend({
+    id: IdSchema,
+    jobIds: z.array(IdSchema),
+    completedJobIds: z.array(IdSchema),
+    activeJobIds: z.array(IdSchema).max(2),
+  }).strict();
+export type AssistantResumeBatchState = z.infer<
+  typeof AssistantResumeBatchStateSchema
+>;
+
 /** The typed preload bridge the sidebar uses (`window.nordri.assistant`). */
 export interface DesktopAssistantBridge {
+  acknowledgeNavigation(
+    input: AssistantNavigationAcknowledgment,
+  ): Promise<void>;
+  stopResumeBatch(): Promise<void>;
+  syncResumeBatch(
+    state: AssistantResumeBatchState,
+  ): Promise<AssistantResumeBatchState>;
+  onResumeBatchStop(listener: (batchId: string) => void): () => void;
   getStatus(): Promise<AssistantStatus>;
   listConversations(): Promise<AssistantConversationList>;
   createConversation(): Promise<AssistantConversation>;

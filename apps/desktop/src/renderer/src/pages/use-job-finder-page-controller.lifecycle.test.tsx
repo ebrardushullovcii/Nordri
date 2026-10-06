@@ -2,7 +2,8 @@
 
 import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 import { StrictMode } from "react";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { ToastProvider } from "@renderer/components/ui/toast";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import {
   afterAll,
@@ -90,6 +91,10 @@ function createBatchHarness(options: { parkFirstCall?: boolean } = {}) {
     configurable: true,
     value: {
       ping: vi.fn(() => Promise.resolve({ platform: "darwin" as const })),
+      assistant: {
+        syncResumeBatch: (state: unknown) => Promise.resolve(state),
+        onResumeBatchStop: () => () => undefined,
+      },
       jobFinder: {
         getWorkspaceBootstrap: vi.fn(() => Promise.resolve(workspace)),
         generateResume,
@@ -307,11 +312,16 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
       configurable: true,
       value: {
         ping: vi.fn(() => Promise.resolve({ platform: "darwin" as const })),
+        assistant: {
+          syncResumeBatch: (state: unknown) => Promise.resolve(state),
+          onResumeBatchStop: () => () => undefined,
+        },
         jobFinder: {
           getWorkspaceBootstrap: vi.fn(() => Promise.resolve(workspace)),
           mutateWorkspaceEntities,
           startApplyCopilotRun:
             options.startApplyCopilotRun ?? (() => Promise.resolve(workspace)),
+          setActivityControl: vi.fn(() => Promise.resolve(workspace)),
         },
       } as unknown as Window["nordri"],
     });
@@ -330,7 +340,11 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
       { initialEntries: [options.initialEntry] },
     );
 
-    const view = render(<RouterProvider router={router} />);
+    const view = render(
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>,
+    );
 
     return {
       get current() {
@@ -349,22 +363,66 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
     });
   }
 
-  it("keeps a completed status on its owning route and never leaks it to a sibling route", async () => {
+  it("reports Activity resumed through the toast and clears the route status", async () => {
+    const harness = mountStatusHarness({
+      initialEntry: "/job-finder/discovery",
+    });
+    await waitForReady(harness);
+    await act(async () => {
+      await harness.current?.context?.onSetActivityControl({ paused: false });
+    });
+    expect(screen.getByRole("status").textContent).toContain(
+      "Activity resumed.",
+    );
+    expect(
+      screen.getByText("Activity resumed.").closest("[data-toast]"),
+    ).toBeTruthy();
+    expect(harness.current?.context?.actionState.message).toBeNull();
+    await act(async () => {
+      await harness.router.navigate("/job-finder/applications");
+    });
+    expect(harness.current?.context?.actionState.message).toBeNull();
+    expect(screen.getAllByText("Activity resumed.")).toHaveLength(1);
+  });
+
+  it("reports a finished shortlist on Find jobs as a toast, not a route status", async () => {
     const harness = mountStatusHarness({
       initialEntry: "/job-finder/discovery",
     });
     await waitForReady(harness);
 
-    // Awaiting inside act pins the tested lifecycle: the status write lands
-    // before the shortlist promise resolves.
     await act(async () => {
       await harness.current?.context?.onQueueJob("job_discovery_1");
     });
-    await waitFor(() => {
-      expect(harness.current?.context?.actionState.message).toBe(
-        "Job added to Shortlisted.",
-      );
+    // ADR 0044: a success on Find jobs is news, so it is a toast with its
+    // link, and nothing is left behind to replay on a later visit.
+    expect(await screen.findByText("Job added to Shortlisted.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Shortlisted" })).toBeTruthy();
+    expect(harness.current?.context?.actionState.message).toBeNull();
+  });
+
+  it("keeps a failed status on its owning route and never leaks it to a sibling route", async () => {
+    const harness = mountStatusHarness({
+      initialEntry: "/job-finder/discovery",
+      mutateWorkspaceEntities: () =>
+        Promise.reject(new Error("The shortlist could not be saved.")),
     });
+    await waitForReady(harness);
+
+    let failure: string | null = null;
+    // Awaiting inside act pins the tested lifecycle: the status write lands
+    // before the shortlist promise resolves.
+    await act(async () => {
+      const outcome =
+        await harness.current?.context?.onQueueJob("job_discovery_1");
+      failure = outcome?.message ?? null;
+    });
+    expect(failure).not.toBeNull();
+    // A failure never becomes a toast.
+    await waitFor(() => {
+      expect(harness.current?.context?.actionState.message).toBe(failure);
+    });
+    expect(harness.current?.context?.actionState.tone).toBe("failure");
 
     act(() => {
       harness.current?.context?.onNavigateSafely("/job-finder/applications");
@@ -384,9 +442,7 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
       harness.current?.context?.onNavigateSafely("/job-finder/discovery");
     });
     await waitFor(() => {
-      expect(harness.current?.context?.actionState.message).toBe(
-        "Job added to Shortlisted.",
-      );
+      expect(harness.current?.context?.actionState.message).toBe(failure);
     });
   });
 
@@ -408,11 +464,16 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
         "/job-finder/applications",
       );
     });
-    await waitFor(() => {
-      expect(harness.current?.context?.actionState.message).toContain(
-        "Applications updated",
-      );
-    });
+    // The finished action is reported once, as a toast, on the screen it
+    // led to; no route status is left above the Applications list.
+    expect(
+      await screen.findByText(
+        "Applications updated. Check the latest attempt and next step there.",
+      ),
+    ).toBeTruthy();
+    expect(
+      harness.current?.context?.actionState.message ?? "",
+    ).not.toContain("Applications updated");
   });
 
   it("keeps a status written after a sibling navigation on the route that owns it", async () => {
@@ -421,15 +482,13 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
     const harness = mountStatusHarness({
       initialEntry: "/job-finder/discovery",
       mutateWorkspaceEntities: () =>
-        new Promise((resolve) => {
+        new Promise((resolve, reject) => {
           if (!hasParked) {
+            // The late completion fails, so its status stays on the route
+            // that owns it (a success would be a toast, ADR 0044).
             releaseQueue = () => {
               hasParked = true;
-              resolve({
-                kind: "snapshot" as const,
-                currentRevision: 1,
-                snapshot: createBatchWorkspace(),
-              });
+              reject(new Error("The shortlist could not be saved."));
             };
             return;
           }
@@ -442,11 +501,12 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
     });
     await waitForReady(harness);
 
+    let lateOutcome: Promise<{ message: string } | undefined> | undefined;
     act(() => {
       // Intentionally un-awaited: this first shortlist stays parked until
-      // `releaseQueue` resolves it after the navigation below, which is the
+      // `releaseQueue` settles it after the navigation below, which is the
       // exact late-completion lifecycle under test.
-      void harness.current?.context?.onQueueJob("job_discovery_1");
+      lateOutcome = harness.current?.context?.onQueueJob("job_discovery_1");
     });
     await waitFor(() => {
       expect(harness.mutateWorkspaceEntities).toHaveBeenCalledTimes(1);
@@ -468,6 +528,8 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
     await waitFor(() => {
       expect(hasParked).toBe(true);
     });
+    const failure = (await lateOutcome)?.message ?? null;
+    expect(failure).not.toBeNull();
     await waitFor(() => {
       expect(harness.current?.context?.actionState.message).toBeNull();
     });
@@ -478,9 +540,7 @@ describe("useJobFinderPageController cross-route status lifetime", () => {
       harness.current?.context?.onNavigateSafely("/job-finder/discovery");
     });
     await waitFor(() => {
-      expect(harness.current?.context?.actionState.message).toBe(
-        "Job added to Shortlisted.",
-      );
+      expect(harness.current?.context?.actionState.message).toBe(failure);
     });
   });
 });

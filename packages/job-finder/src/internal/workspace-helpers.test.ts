@@ -4,7 +4,7 @@ import type { ApplicationEvent } from "@nordri/contracts";
 
 import {
   MAX_APPLICATION_EVENT_HISTORY,
-  buildDiscoveryInstructionGuidance,
+  buildInstructionGuidance,
   enrichSearchPreferencesFromProfile,
   invalidateChangedSourceGuidance,
   mergeEvents,
@@ -117,7 +117,7 @@ describe("workspace source guidance invalidation", () => {
 });
 
 describe("workspace discovery instruction guidance", () => {
-  test("filters LinkedIn broad query examples while keeping detail/apply behavior", () => {
+  test("passes the reviewed guidance through as written, by category", () => {
     const artifact = createSourceInstructionArtifact({
       id: "instruction_linkedin_discovery_guidance_filtering",
       targetId: "target_linkedin_default",
@@ -192,10 +192,13 @@ describe("workspace discovery instruction guidance", () => {
       verification: null,
     });
 
-    expect(buildDiscoveryInstructionGuidance(artifact)).toEqual([
-      "[Search] Apply button appears on job detail side panels",
-      "[Detail] Job listings are clickable and open detail side panels/modals",
-      '[Apply] LinkedIn jobs expose a stable apply path: click a job listing to open the side detail panel, then click the "Apply" button on that panel.',
+    // The final review decided what to keep (ADR 0041); no keyword list
+    // drops lines on the way to the agent.
+    expect(buildInstructionGuidance(artifact)).toEqual([
+      ...artifact.navigationGuidance.map((line) => `[Navigation] ${line}`),
+      ...artifact.searchGuidance.map((line) => `[Search] ${line}`),
+      ...artifact.detailGuidance.map((line) => `[Detail] ${line}`),
+      ...artifact.applyGuidance.map((line) => `[Apply] ${line}`),
     ]);
   });
 });

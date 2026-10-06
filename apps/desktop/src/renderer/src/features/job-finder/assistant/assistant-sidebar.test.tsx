@@ -94,6 +94,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   delete (window as { nordri?: unknown }).nordri;
 });
 
@@ -194,4 +195,25 @@ describe("assistant composer keeps what the person wrote", () => {
       screen.getByRole("button", { name: "Remove portfolio.pdf" }),
     ).toBeTruthy();
   });
+});
+
+it("shrinks the cleared composer and keeps the narrow switch outside the form", async () => {
+  vi.stubGlobal("innerWidth", 592);
+  const bridge = fakeBridge(() => new Promise(() => undefined));
+  const textarea = await renderSidebar(bridge);
+  Object.defineProperty(textarea, "scrollHeight", { value: 300 });
+  fireEvent.change(textarea, {
+    target: { value: "A long request\nwith several lines" },
+  });
+  expect(textarea.style.height).not.toBe("auto");
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(textarea.value).toBe(""));
+  expect(textarea.style.height).toBe("auto");
+  expect(textarea.className).toContain("25vh");
+  const panel = document.querySelector("aside[data-assistant-sidebar]")!;
+  expect(panel.className).toContain("bg-background");
+  const toggle = panel.querySelector("[data-assistant-narrow-switch]");
+  expect(toggle).not.toBeNull();
+  expect(toggle!.closest("form")).toBeNull();
+  expect(toggle!.className).not.toContain("fixed");
 });

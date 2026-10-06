@@ -21,6 +21,7 @@ import {
   createPrimaryPageActions,
   describeAutoApplyQueueStart,
   describePreparedApplicationSubmitResult,
+  preparedApplicationsToastTone,
   clearJobFinderNavigationHint,
   noteJobFinderNavigation,
   setJobFinderStatusRoute,
@@ -29,6 +30,27 @@ import {
 } from "./use-job-finder-page-controller-actions";
 
 describe("describeAutoApplyQueueStart", () => {
+  it("explains an Apply to all press containing only receipt-confirmed jobs", () => {
+    const snapshot = {
+      applyRuns: [],
+      reviewQueue: [],
+      applyJobResults: [
+        {
+          jobId: "sent",
+          privacyReceipt: {
+            finalSubmitOccurred: true,
+            submissionOutcome: { outcome: "submitted" },
+          },
+        },
+      ],
+    } as unknown as Parameters<typeof describeAutoApplyQueueStart>[0];
+    expect(
+      describeAutoApplyQueueStart(snapshot, ["sent"], {
+        onlyWhenHeldBack: true,
+      }),
+    ).toBe("These applications are already sent. Nothing was started.");
+  });
+
   it("counts the jobs the new batch took and names the one held back", () => {
     const snapshot = {
       applyRuns: [
@@ -317,6 +339,8 @@ describe("createActionRunners", () => {
     expect(actionState.message).toBe(
       "The approved tailored CV changed after it was saved.",
     );
+    // A failure carries its tone so it never becomes a toast (ADR 0042).
+    expect(actionState.tone).toBe("failure");
     expect(pendingActionState).toEqual({});
     expect(succeeded).toBe(false);
   });
@@ -551,6 +575,42 @@ describe("createDiscoveryWorkspaceRefreshCoordinator", () => {
 });
 
 describe("createPrimaryPageActions", () => {
+  it("removes a shortlisted job and stays on Shortlisted with the next job selected", async () => {
+    const navigate = vi.fn();
+    const setSelectedReviewJobId = vi.fn();
+    const runAction = vi.fn(
+      async (action: () => Promise<unknown>, success: () => void) => {
+        await action();
+        success();
+        return true;
+      },
+    );
+    const pageActions = createPrimaryPageActions({
+      actions: { removeJobFromReview: vi.fn(() => Promise.resolve({})) },
+      confirmLeaveDirtyResumeWorkspace: () => Promise.resolve(true),
+      clearResumeWorkspaceState: vi.fn(),
+      navigate,
+      runAction,
+      setSelectedReviewJobId,
+      workspace: {
+        activeCampaignId: "plan",
+        campaigns: [{ id: "plan", jobIds: ["a", "b", "c"] }],
+        reviewQueue: [
+          { jobId: "a" },
+          { jobId: "b" },
+          { jobId: "other_plan" },
+          { jobId: "c" },
+        ],
+      },
+    } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+    pageActions.onRemoveReviewJob("b");
+    await vi.waitFor(() =>
+      expect(setSelectedReviewJobId).toHaveBeenCalledWith("c"),
+    );
+    expect(navigate).toHaveBeenCalledWith("/job-finder/review-queue", {
+      replace: true,
+    });
+  });
   const completeSetupProfile = CandidateProfileSchema.parse({
     id: "candidate_setup_ready",
     firstName: "Alex",
@@ -705,6 +765,7 @@ describe("createPrimaryPageActions", () => {
       status: "edited",
     });
     expect(typeof persisted?.reviewItems[0]?.resolvedAt).toBe("string");
+    expect(persisted?.reviewedSteps).toContain("answers");
 
     // A still-pending recommended suggestion must not block finishing.
     const finish = createSetupActions({
@@ -733,6 +794,7 @@ describe("createPrimaryPageActions", () => {
     // The workspace the handler closed over predates the source the person
     // just added on this step; only the saved snapshot has it.
     const staleWorkspace = {
+      activeCampaignId: "setup_plan",
       profile: completeSetupProfile,
       searchPreferences: {
         ...completeSetupPreferences,
@@ -790,7 +852,9 @@ describe("createPrimaryPageActions", () => {
         replace: true,
       }),
     );
-    expect(consumeFirstSearchRequest()).toBe(true);
+    expect(consumeFirstSearchRequest(savedSnapshot.activeCampaignId)).toBe(
+      true,
+    );
   });
 
   it("hands off to Find jobs before the completed setup state is persisted", async () => {
@@ -1421,6 +1485,61 @@ describe("createPrimaryPageActions", () => {
     );
     expect(importResume).toHaveBeenCalledTimes(2);
     expect(pendingActionState).toEqual({});
+  });
+
+  it("R3-231 clears a cancelled-picker notice when the next import starts and succeeds", async () => {
+    let state: ActionState = { message: null };
+    let pending: PendingActionState = {};
+    const setActionState = (next: SetStateAction<ActionState>) => {
+      state = typeof next === "function" ? next(state) : next;
+    };
+    const { runAction } = createActionRunners({
+      setActionState,
+      setPendingActionState: (next) => {
+        pending = typeof next === "function" ? next(pending) : next;
+      },
+    });
+    let finish!: (snapshot: JobFinderWorkspaceSnapshot) => void;
+    const importResume = vi
+      .fn<JobFinderShellActions["importResume"]>()
+      .mockResolvedValueOnce({
+        profile: completeSetupProfile,
+      } as JobFinderWorkspaceSnapshot)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    const actions = createPrimaryPageActions({
+      actions: { importResume } as unknown as JobFinderShellActions,
+      canImportResume: true,
+      importResumeGuardMessage: null,
+      runAction,
+      setActionState,
+      workspace: { profile: completeSetupProfile },
+    } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+    actions.onImportResume();
+    await vi.waitFor(() =>
+      expect(state.message).toContain("No resume selected"),
+    );
+    actions.onImportResume();
+    expect(state.message).toBeNull();
+    finish({
+      profile: {
+        ...completeSetupProfile,
+        baseResume: {
+          ...completeSetupProfile.baseResume,
+          id: "resume_new",
+          fileName: "fatima-noor.md",
+          extractionStatus: "ready",
+        },
+      },
+    } as JobFinderWorkspaceSnapshot);
+    await vi.waitFor(() =>
+      expect(state.message).toContain("fatima-noor.md was imported"),
+    );
+    expect(state.message).not.toContain("No resume selected");
   });
 
   it("classifies resolved imports by extraction status instead of claiming extracted details", async () => {
@@ -2240,9 +2359,11 @@ describe("createPrimaryPageActions", () => {
         source: "manual",
         reason: "Picked by the user.",
       });
+      // A finished action reports a success tone (ADR 0044).
       expect(setActionState).toHaveBeenLastCalledWith({
         message:
           "Strategy chosen for this job. The job's resume still needs its own review and approval before it can be used.",
+        tone: "success",
       });
     });
   });
@@ -2282,6 +2403,7 @@ describe("createPrimaryPageActions", () => {
       expect(queueJobForReview).toHaveBeenCalledWith("job_find_results");
       expect(setActionState).toHaveBeenLastCalledWith({
         message: "Job added to Shortlisted.",
+        tone: "success",
         actionLink: {
           label: "Open Shortlisted",
           route: "/job-finder/review-queue",
@@ -2862,6 +2984,16 @@ describe("createPrimaryPageActions auto-apply queue outcomes", () => {
     };
   }
 
+  it("does not navigate away from a review when a background batch finishes", async () => {
+    setJobFinderStatusRoute("/job-finder/applications");
+    try {
+      const harness = createQueueHarness();
+      await harness.startQueue(["job_a"]);
+      expect(harness.navigate).not.toHaveBeenCalled();
+    } finally {
+      setJobFinderStatusRoute(null);
+    }
+  });
   it("refuses a batch start with a visible status when the daily limit is reached", async () => {
     const harness = createQueueHarness({ capacity: exhaustedCapacity });
 
@@ -3002,4 +3134,135 @@ describe("resume save revision acknowledgment", () => {
     expect(onSaved).not.toHaveBeenCalled();
     expect(refreshResumeWorkspace).not.toHaveBeenCalled();
   });
+});
+
+it.each([true, false])(
+  "resume-format recovery opens review and selects only this job's approved PDF (%s)",
+  async (approved) => {
+    type Args = Parameters<typeof createPrimaryPageActions>[0];
+    const navigate = vi.fn();
+    const setJobResumeApplicationMode = vi.fn().mockResolvedValue({});
+    const startApplyCopilotRun = vi.fn();
+    const runAction = vi.fn(
+      async (action: () => Promise<unknown>, onSuccess: () => void) => {
+        await action();
+        onSuccess();
+        return true;
+      },
+    );
+    const workspace = {
+      resumeExportArtifacts: [
+        { jobId: approved ? "job_pdf" : "another_job", isApproved: true },
+      ],
+    } as unknown as JobFinderWorkspaceSnapshot;
+    const pageActions = createPrimaryPageActions({
+      workspace,
+      latestWorkspaceRef: { current: workspace },
+      navigate,
+      runAction,
+      setActionState: vi.fn(),
+      actions: { setJobResumeApplicationMode, startApplyCopilotRun },
+    } as unknown as Args);
+    pageActions.onReviewResumePdf("job_pdf");
+    await vi.waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith(
+        "/job-finder/review-queue/job_pdf/resume",
+      ),
+    );
+    expect(setJobResumeApplicationMode).toHaveBeenCalledTimes(approved ? 1 : 0);
+    if (approved)
+      expect(setJobResumeApplicationMode).toHaveBeenCalledWith(
+        "job_pdf",
+        "tailored_per_job",
+      );
+    expect(startApplyCopilotRun).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps a language rewrite outage out of the global resume save notice", async () => {
+  const saveResumeDraft = vi
+    .fn()
+    .mockRejectedValue(new Error("Synthetic AI outage"));
+  const runSaveAction = vi.fn();
+  const setActionState = vi.fn();
+  const setPendingActionState = vi.fn();
+  const runners = createActionRunners({
+    setActionState,
+    setPendingActionState,
+  });
+  const pageActions = createPrimaryPageActions({
+    ...runners,
+    runSaveAction,
+    setActionState,
+    setPendingActionState,
+    actions: { saveResumeDraft },
+    activeRouteResumeWorkspace: { draft: { language: "English" } },
+  } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+  pageActions.onSaveResumeDraftAndThen(
+    { jobId: "job_synthetic", language: "German" } as ResumeDraft,
+    vi.fn(),
+  );
+  await vi.waitFor(() => expect(saveResumeDraft).toHaveBeenCalledOnce());
+  await vi.waitFor(() =>
+    expect(setActionState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "The writing assistant did not answer. Try again in a few minutes.",
+      }),
+    ),
+  );
+  expect(runSaveAction).not.toHaveBeenCalled();
+});
+
+it("uses warning toast tone unless every selected send has site confirmation", () => {
+  const result = {
+    jobId: "job",
+    state: "ready",
+    updatedAt: "2026-10-05T10:00:00Z",
+    privacyReceipt: { submissionOutcome: { outcome: "not_submitted" } },
+  };
+  const snapshot = {
+    applyJobResults: [result],
+  } as unknown as JobFinderWorkspaceSnapshot;
+  expect(preparedApplicationsToastTone(snapshot, ["job"])).toBe("warning");
+  snapshot.applyJobResults[0]!.state = "submitted";
+  expect(preparedApplicationsToastTone(snapshot, ["job"])).toBe("warning");
+  snapshot.applyJobResults[0]!.privacyReceipt!.submissionOutcome!.outcome =
+    "submitted";
+  expect(preparedApplicationsToastTone(snapshot, ["job"])).toBe("success");
+});
+
+it("names only Job sources when that Profile section is saved", () => {
+  const runSaveAction = vi.fn().mockResolvedValue(true);
+  const pageActions = createPrimaryPageActions({
+    actions: { saveWorkspaceInputs: vi.fn() },
+    runSaveAction,
+  } as unknown as Parameters<typeof createPrimaryPageActions>[0]);
+  pageActions.onSaveAll(
+    CandidateProfileSchema.parse({
+      id: "synthetic",
+      fullName: "Synthetic Applicant",
+      yearsExperience: 0,
+      baseResume: {
+        id: "resume",
+        fileName: "synthetic.txt",
+        uploadedAt: "2026-10-05T10:00:00Z",
+        extractionStatus: "ready",
+      },
+    }),
+    JobSearchPreferencesSchema.parse({
+      minimumSalaryUsd: 0,
+      approvalMode: "review_before_submit",
+      tailoringMode: "balanced",
+    }),
+    "sources",
+  );
+  expect(runSaveAction).toHaveBeenCalledWith(
+    expect.objectContaining({
+      label: "Job sources",
+      savedMessage: "Job sources saved.",
+      failedFallback:
+        "Job sources were not saved. Retry before leaving this page.",
+    }),
+  );
 });

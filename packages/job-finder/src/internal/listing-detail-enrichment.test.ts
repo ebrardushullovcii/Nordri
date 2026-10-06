@@ -11,7 +11,10 @@ import {
   describeListingDetailEnrichment,
   enrichSavedJobListingDetails,
   jobNeedsListingDetail,
+  namesDifferentRole,
+  readListingDetail,
   type ListingHtmlFetcher,
+  type ListingPageReader,
 } from "./listing-detail-enrichment";
 
 const NOW = "2026-09-05T10:00:00.000Z";
@@ -99,6 +102,46 @@ const assess = vi.fn(
 );
 
 describe("jobNeedsListingDetail", () => {
+  it("treats reworded titles as the same role and other roles as a conflict", () => {
+    expect(
+      namesDifferentRole(
+        "Werkstudent Data Analyst",
+        "Werkstudent Data Analyst (m/w/d)",
+      ),
+    ).toBe(false);
+    expect(
+      namesDifferentRole("Data Engineer", "Data Engineer, Meadow Pipelines"),
+    ).toBe(false);
+    expect(
+      namesDifferentRole(
+        "Lead Operations Planner",
+        "Intern Operations Planner",
+      ),
+    ).toBe(true);
+    expect(
+      namesDifferentRole(
+        "Junior Instructional Designer",
+        "Lead Learning Coordinator",
+      ),
+    ).toBe(true);
+  });
+
+  it("records a structured title conflict without attaching the other role's facts", async () => {
+    const job = cardOnlyJob({ title: "Junior Instructional Designer" });
+    const result = await enrichSavedJobListingDetails({
+      jobs: [job],
+      assess,
+      fetchHtml: fakeFetcher({ [job.canonicalUrl]: { html: RECORD_PAGE } }),
+      now: () => NOW,
+    });
+    expect(result.jobs[0]?.title).toBe(job.title);
+    expect(result.jobs[0]?.listingDetailFetch?.identityConflict).toEqual({
+      expectedTitle: job.title,
+      observedTitle: "Senior Software Engineer",
+    });
+    expect(result.jobs[0]?.description).toBe(job.description);
+  });
+
   it("reads a rate-limited page as soon as the site's own wait has passed", () => {
     const rateLimited = (attemptedAt: string, retryAfterAt: string) =>
       cardOnlyJob({
@@ -238,7 +281,7 @@ describe("enrichSavedJobListingDetails", () => {
     expect(result.jobs[0]?.listingDetailFetch).toMatchObject({
       outcome: "partial",
       detail:
-        "Read partial listing text; the page response ended before the description was complete.",
+        "Read partial listing text; some page text was omitted or the response was incomplete.",
     });
   });
 
@@ -273,7 +316,8 @@ describe("enrichSavedJobListingDetails", () => {
     expect(next.normalizedCompensation.minAnnualUsd).toBe(180000);
     expect(next.postedAt).toBe("2026-08-30T00:00:00.000Z");
     expect(next.employmentType).toBe("Full-Time");
-    expect(next.workMode).toContain("remote");
+    // Work mode comes from the record's own fields, not from words in the body.
+    expect(next.workMode).toEqual(job.workMode);
     expect(next.summary).toMatch(/^Garner is building tools/u);
     expect(next.summary?.length ?? 0).toBeLessThan(430);
     expect(next.matchAssessment.score).toBe(82);
@@ -287,8 +331,78 @@ describe("enrichSavedJobListingDetails", () => {
     expect(result.summary).toMatchObject({ attempted: 1, enriched: 1 });
   });
 
-  it("uses the salary stated in the body when a separate cell doubled the floor", () => {
-    const applied = applyListingDetailToJob({
+  it("has the model read a page that publishes no record", async () => {
+    const job = cardOnlyJob();
+    const html = `<html><head><title>Senior Software Engineer | Garner</title></head><body><main><h1>Senior Software Engineer</h1><p>${"Design and ship .NET services. ".repeat(30)}</p></main></body></html>`;
+    const fetchHtml = fakeFetcher({ [job.canonicalUrl]: { html } });
+    const body = `Garner is building tools that make healthcare affordable.\n\n${"Design and ship .NET services with the provider platform team. ".repeat(6)}\n\nRequirements\n\n• 5+ years with .NET Core and REST APIs.`;
+    const readPage = vi.fn<ListingPageReader>(() =>
+      Promise.resolve({
+        ...job,
+        title: "Senior Software Engineer",
+        company: "Garner Health",
+        location: "New York, NY, United States",
+        description: body,
+        workMode: ["hybrid" as const],
+        keySkills: [".NET Core", "REST APIs"],
+        minimumQualifications: ["5+ years with .NET Core and REST APIs"],
+      }),
+    );
+
+    const result = await enrichSavedJobListingDetails({
+      jobs: [job],
+      fetchHtml,
+      readPage,
+      assess,
+      now: () => NOW,
+    });
+
+    expect(readPage).toHaveBeenCalledTimes(1);
+    const pageRead = readPage.mock.calls[0]?.[0];
+    expect(pageRead?.pageUrl).toBe(job.canonicalUrl);
+    expect(pageRead?.pageText).toContain(
+      "Page title: Senior Software Engineer | Garner",
+    );
+    const next = result.jobs[0]!;
+    expect(next.listingDetailFetch).toMatchObject({
+      outcome: "enriched",
+      method: "page_text",
+    });
+    expect(next.description).toContain("5+ years with .NET Core");
+    expect(next.company).toBe("Garner Health");
+    expect(next.location).toBe("New York, NY, United States");
+    expect(next.workMode).toContain("hybrid");
+    expect(next.keySkills).toEqual([".NET Core", "REST APIs"]);
+    expect(next.minimumQualifications).toEqual([
+      "5+ years with .NET Core and REST APIs",
+    ]);
+  });
+
+  it("records no detail when the model finds no listing on the page", async () => {
+    const job = cardOnlyJob();
+    const fetchHtml = fakeFetcher({
+      [job.canonicalUrl]: {
+        html: "<html><body><main><p>Sign in to view this listing.</p></main></body></html>",
+      },
+    });
+
+    const result = await enrichSavedJobListingDetails({
+      jobs: [job],
+      fetchHtml,
+      readPage: () => Promise.resolve(null),
+      assess,
+      now: () => NOW,
+    });
+
+    expect(result.jobs[0]?.listingDetailFetch).toMatchObject({
+      outcome: "no_detail",
+      detail:
+        "The listing could not be read from this page. Open the listing and try again.",
+    });
+  });
+
+  it("uses the salary stated in the body when a separate cell doubled the floor", async () => {
+    const applied = await applyListingDetailToJob({
       job: cardOnlyJob({ salaryText: "$200000 - 500000" }),
       detail: {
         method: "page_text",
@@ -313,7 +427,7 @@ describe("enrichSavedJobListingDetails", () => {
     expect(applied.job.normalizedCompensation.maxAnnualUsd).toBe(500_000);
   });
 
-  it("keeps a real employer and location the card already carried", async () => {
+  it("corrects a plausible but wrong card employer and location from the listing (R3-013)", async () => {
     const job = cardOnlyJob({ company: "Garner", location: "Austin, TX" });
     const fetchHtml = fakeFetcher({
       [job.canonicalUrl]: { html: RECORD_PAGE },
@@ -326,8 +440,8 @@ describe("enrichSavedJobListingDetails", () => {
       now: () => NOW,
     });
 
-    expect(result.jobs[0]?.company).toBe("Garner");
-    expect(result.jobs[0]?.location).toBe("Austin, TX");
+    expect(result.jobs[0]?.company).toBe("Garner Health");
+    expect(result.jobs[0]?.location).toBe("New York, NY, US");
   });
 
   it("records what happened when a page will not read, without failing the batch", async () => {
@@ -633,9 +747,9 @@ describe("enrichSavedJobListingDetails", () => {
 });
 
 describe("applyListingDetailToJob", () => {
-  it("reports partial when the page text is thin but still better than the card", () => {
+  it("reports partial when the page text is thin but still better than the card", async () => {
     const job = cardOnlyJob();
-    const applied = applyListingDetailToJob({
+    const applied = await applyListingDetailToJob({
       job,
       detail: {
         method: "page_text",
@@ -660,4 +774,195 @@ describe("applyListingDetailToJob", () => {
     expect(applied.job.listingDetailFetch?.method).toBe("page_text");
     expect(applied.job.workMode).toEqual(["remote"]);
   });
+});
+
+describe("complete model page reads", () => {
+  it("includes requirements outside main and after sparse JSON-LD (R3-036)", async () => {
+    const job = cardOnlyJob();
+    const html = `<html><head><script type="application/ld+json">${JSON.stringify({ "@type": "JobPosting", title: job.title, description: "Search card only" })}</script></head><body><main><h1>${job.title}</h1><p>About the employer</p></main><section><h2>What you bring</h2><p>Portfolio required. Variable hours. German C1.</p></section></body></html>`;
+    const readPage = vi.fn<ListingPageReader>(({ pageText }) => {
+      expect(pageText).toContain("What you bring");
+      expect(pageText).toContain("German C1");
+      expect(pageText).toContain("Published JobPosting record");
+      return Promise.resolve({
+        ...job,
+        description: "Portfolio required. Variable hours. German C1.",
+        minimumQualifications: ["Portfolio", "German C1"],
+      });
+    });
+    const detail = await readListingDetail({
+      html,
+      url: job.canonicalUrl,
+      expectedTitle: job.title,
+      readPage,
+    });
+    expect(readPage).toHaveBeenCalledOnce();
+    expect(detail?.minimumQualifications).toEqual(["Portfolio", "German C1"]);
+  });
+  it("preserves model-read work mode, pay scale, start date and application restriction (R3-104)", async () => {
+    const job = cardOnlyJob({ title: "Class Teacher" });
+    const description =
+      "MPS/UPS. Start as soon as possible. No CVs: use our application form. Teach KS2, prepare lessons, track progress and support pupils. ".repeat(
+        8,
+      );
+    const result = await enrichSavedJobListingDetails({
+      jobs: [job],
+      fetchHtml: (url) =>
+        Promise.resolve({
+          status: 200,
+          finalUrl: url,
+          html: `<body>${description}<a href="/apply/teacher">Apply</a></body>`,
+        }),
+      readPage: () =>
+        Promise.resolve({
+          ...job,
+          description,
+          salaryText: "MPS/UPS",
+          workMode: ["onsite"],
+          applicationUrl: "https://jobs.example.test/apply/teacher",
+          minimumQualifications: [
+            "Available as soon as possible",
+            "Application form only; no CVs",
+          ],
+        }),
+      assess,
+      now: () => NOW,
+    });
+    expect(result.jobs[0]).toMatchObject({
+      salaryText: "MPS/UPS",
+      workMode: ["onsite"],
+      minimumQualifications: [
+        "Available as soon as possible",
+        "Application form only; no CVs",
+      ],
+    });
+    expect(result.jobs[0]?.description).toContain("No CVs");
+  });
+  it("uses the model's vacancy route rather than an apply-labelled article (R3-014)", async () => {
+    const job = cardOnlyJob({
+      applicationUrl: "https://jobs.example.test/blog/applying-for-citizenship",
+    });
+    const html = `<body><h1>${job.title}</h1><a href="/blog/applying-for-citizenship">Apply for citizenship</a><a href="https://employer.example.test/apply/42">Apply to this role</a></body>`;
+    const readPage = vi.fn<ListingPageReader>(({ pageText }) => {
+      expect(pageText).toContain("https://employer.example.test/apply/42");
+      return Promise.resolve({
+        ...job,
+        description: job.description,
+        applicationUrl: "https://employer.example.test/apply/42",
+      });
+    });
+    const detail = await readListingDetail({
+      html,
+      url: job.canonicalUrl,
+      expectedTitle: job.title,
+      readPage,
+    });
+    expect(detail?.directApplyUrl).toBe(
+      "https://employer.example.test/apply/42",
+    );
+    const next = await applyListingDetailToJob({
+      job,
+      detail: detail!,
+      attemptedAt: NOW,
+      assess,
+    });
+    expect(next.job.applicationUrl).toBe(
+      "https://employer.example.test/apply/42",
+    );
+    const unknown = await applyListingDetailToJob({
+      job,
+      detail: { ...detail!, directApplyUrl: null },
+      attemptedAt: NOW,
+      assess,
+    });
+    expect(unknown.job.applicationUrl).toBeNull();
+  });
+});
+
+describe("partial listing corrections", () => {
+  it.each(["Wrong employer", "Employer not stated"])(
+    "keeps confirmed employer, city and work mode over %s without losing the full body",
+    async (company) => {
+      const job = cardOnlyJob({
+        company,
+        description: "Stored full listing evidence. ".repeat(100),
+        detailQuality: "detail_enriched",
+      });
+      const result = await applyListingDetailToJob({
+        job,
+        attemptedAt: NOW,
+        assess,
+        detail: {
+          method: "page_text",
+          title: job.title,
+          company: "Confirmed employer",
+          location: "Confirmed city",
+          workModeHints: ["hybrid"],
+          description: "Only this part of the page was readable.",
+          salaryText: null,
+          employmentType: null,
+          postedAt: null,
+          validThrough: null,
+          directApplyUrl: null,
+        },
+      });
+      expect(result.job).toMatchObject({
+        company: "Confirmed employer",
+        location: "Confirmed city",
+        workMode: ["hybrid"],
+        description: job.description,
+      });
+    },
+  );
+});
+
+it("keeps an omitted page read explicitly partial even when the model returns a long description", async () => {
+  const job = cardOnlyJob();
+  const detail = await readListingDetail({
+    html: `<main>${"Navigation and body ".repeat(10000)}</main>`,
+    url: job.canonicalUrl,
+    expectedTitle: job.title,
+    readPage: () =>
+      Promise.resolve({
+        ...job,
+        description: "Readable requirements. ".repeat(100),
+      }),
+  });
+  expect(detail?.descriptionLikelyTruncated).toBe(true);
+  const result = await applyListingDetailToJob({
+    job,
+    detail: detail!,
+    attemptedAt: NOW,
+    assess,
+  });
+  expect(result.outcome).toBe("partial");
+  expect(result.job.listingDetailFetch?.detail).toContain(
+    "partial listing text",
+  );
+});
+
+it("publishes listing progress after every read including a failure", async () => {
+  const jobs = [
+    cardOnlyJob(),
+    cardOnlyJob({
+      id: "second",
+      canonicalUrl: "https://jobs.example.test/second",
+    }),
+  ];
+  const progress: number[] = [];
+  await enrichSavedJobListingDetails({
+    jobs,
+    maxJobs: 2,
+    concurrency: 1,
+    fetchHtml: (url) =>
+      Promise.resolve({ status: 404, html: "", finalUrl: url }),
+    assess: (posting) =>
+      jobs.find((job) => job.canonicalUrl === posting.canonicalUrl)!
+        .matchAssessment,
+    onProgress: (completed, total) => {
+      expect(total).toBe(2);
+      progress.push(completed);
+    },
+  });
+  expect(progress).toEqual([1, 2]);
 });

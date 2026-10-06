@@ -2,7 +2,6 @@ import type { BrowserSessionRuntime } from "@nordri/browser-runtime";
 import {
   SourceDebugPhaseSummarySchema,
   type JobDiscoveryTarget,
-  type JobSearchPreferences,
   type SourceDebugPhase,
   type SourceDebugPhaseCompletionMode,
   type SourceDebugPhaseEvidence,
@@ -12,57 +11,16 @@ import {
 } from "@nordri/contracts";
 import {
   formatStatusLabel,
-  isExplicitSearchProbeDisproof,
   splitCustomDiscoveryInstructions,
 } from "./source-instructions";
 import { warningSuggestsAuthRestriction } from "./source-instruction-evidence";
 import { normalizeText, uniqueStrings } from "./shared";
 import {
-  buildEvidenceDrivenDiscoverySearchUrl,
   canonicalizeRouteForReuse,
   resolveRouteKindForReuse,
-  shouldKeepRouteForReuse,
 } from "./workspace-source-intelligence";
 import type { ResolvedDiscoveryAdapter } from "./workspace-defaults";
 import { buildInstructionGuidance } from "./workspace-helpers";
-
-function canonicalizeSourceDebugRouteHint(candidateUrl: URL): string {
-  const normalized = new URL(candidateUrl.toString());
-
-  normalized.searchParams.delete("currentJobId");
-  normalized.searchParams.delete("selectedJobId");
-
-  normalized.hash = "";
-  return normalized.toString();
-}
-
-function classifySourceDebugHintUrl(
-  url: string,
-): "collection" | "search" | "listing" | "other" {
-  const kind = resolveRouteKindForReuse(url);
-
-  if (kind === "collection" || kind === "search" || kind === "listing") {
-    return kind;
-  }
-
-  return "other";
-}
-
-function shouldReadRouteHintSection(
-  line: string,
-  phase: SourceDebugPhase,
-): boolean {
-  const trimmedLine = line.trim();
-
-  if (trimmedLine.startsWith("[Navigation]")) {
-    return true;
-  }
-
-  return (
-    trimmedLine.startsWith("[Search]") &&
-    !phase.includes("auth")
-  );
-}
 
 export function buildSourceDebugPhasePacket(
   phase: SourceDebugPhase,
@@ -204,11 +162,16 @@ export function composeSourceDebugInstructions(
   ]);
 }
 
+/**
+ * Where each source-check phase starts (ADR 0041): the routes the last review
+ * recorded, grouped by the kind the model gave each one. No phrase in the
+ * learned notes and no rule-picked search keyword decides it; from there the
+ * agent searches and moves around the site itself.
+ */
 export function deriveSourceDebugStartingUrls(
   target: JobDiscoveryTarget,
   instructionArtifact: SourceInstructionArtifact | null,
   phase: SourceDebugPhase,
-  searchPreferences?: JobSearchPreferences | null,
 ): string[] {
   if (phase === "access_auth_probe") {
     return [target.startingUrl];
@@ -220,190 +183,42 @@ export function deriveSourceDebugStartingUrls(
   } catch {
     return [target.startingUrl];
   }
-  const synthesizedSearchUrl =
-    phase === "search_filter_probe" || phase === "site_structure_mapping"
-      ? buildEvidenceDrivenDiscoverySearchUrl(
-          target,
-          instructionArtifact,
-          searchPreferences,
-        )
-      : null;
-  const routeHints = buildInstructionGuidance(instructionArtifact);
-  const normalizeRouteHint = (value: string) =>
-    canonicalizeRouteForReuse(value, targetUrl);
-  const collectionUrls: string[] = [];
-  const searchUrls: string[] = [];
-  const landingUrls: string[] = [];
-  const otherUrls: string[] = [];
-  for (const line of routeHints) {
-    if (!shouldReadRouteHintSection(line, phase)) {
-      continue;
-    }
-
-    const normalizedLine = normalizeText(line);
-    const absoluteUrlMatches = line.match(/https?:\/\/[^\s)\]>",]+/gi) ?? [];
-    const relativePathMatches =
-      line.match(
-        /(?:^|[\s(])((?:\/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)+(?:\/)?(?:\?[^\s)\]>",]+)?)/g,
-      ) ?? [];
-
-    const candidateInputs = uniqueStrings([
-      ...absoluteUrlMatches,
-      ...relativePathMatches.map((match) => {
-        const trimmedMatch = match.trim();
-        return trimmedMatch.startsWith("/")
-          ? trimmedMatch
-          : trimmedMatch.slice(trimmedMatch.indexOf("/"));
-      }),
-    ])
-      .map((value) => value.replace(/[.,;:!?]+$/g, ""))
-      .filter(
-        (value) =>
-          !value.includes("*") &&
-          !value.includes("{") &&
-          !value.includes("}") &&
-          !value.includes("...") &&
-          !/\/:[A-Za-z0-9_-]+/.test(value) &&
-          !/[?&][^=]+=:[A-Za-z0-9_-]+/.test(value),
-      );
-    const parsedCandidates = candidateInputs.flatMap((value) => {
-      try {
-        const candidateUrl = new URL(value, targetUrl);
-
-        if (candidateUrl.hostname !== targetUrl.hostname) {
-          return [];
-        }
-
-        return [candidateUrl];
-      } catch {
-        return [];
-      }
-    });
-    const hasSingleCandidate = parsedCandidates.length === 1;
-    const lineHasCollectionSignal =
-      normalizedLine.includes("collection") ||
-      normalizedLine.includes("recommended") ||
-      normalizedLine.includes("recommendation") ||
-      normalizedLine.includes("show all");
-    const lineHasSearchSignal =
-      normalizedLine.includes("search") ||
-      normalizedLine.includes("results") ||
-      normalizedLine.includes("filter") ||
-      normalizedLine.includes("keyword") ||
-      normalizedLine.includes("location");
-    const lineHasLandingSignal =
-      normalizedLine.includes("homepage") ||
-      normalizedLine.includes("jobs page") ||
-      normalizedLine.includes("jobs route") ||
-      normalizedLine.includes("jobs hub") ||
-      normalizedLine.includes("job list") ||
-      normalizedLine.includes("careers");
-    const lineHasSearchDisproof =
-      isExplicitSearchProbeDisproof(line) ||
-      normalizedLine.includes("no visible search filter controls") ||
-      normalizedLine.includes("has no visible search filter controls") ||
-      normalizedLine.includes("no visible search filter ui") ||
-      normalizedLine.includes("no search filter ui");
-
-    for (const candidateUrl of parsedCandidates) {
-      const candidate = normalizeRouteHint(
-        canonicalizeSourceDebugRouteHint(candidateUrl),
-      );
-      if (!candidate) {
-        continue;
-      }
-
-      const candidateKind = resolveRouteKindForReuse(candidate);
-      if (
-        !shouldKeepRouteForReuse({
-          url: candidate,
-          kind: candidateKind,
-          targetStartingUrl: target.startingUrl,
-        })
-      ) {
-        continue;
-      }
-
-      const candidateClassification = classifySourceDebugHintUrl(candidate);
-
-      if (
-        candidateClassification === "collection" ||
-        (hasSingleCandidate &&
-          lineHasCollectionSignal &&
-          candidateClassification !== "other")
-      ) {
-        collectionUrls.push(candidate);
-        continue;
-      }
-
-      if (
-        !lineHasSearchDisproof &&
-        (candidateClassification === "search" ||
-          (hasSingleCandidate &&
-            lineHasSearchSignal &&
-            candidateClassification !== "other"))
-      ) {
-        searchUrls.push(candidate);
-        continue;
-      }
-
-      if (
-        candidateClassification === "listing" ||
-        (hasSingleCandidate &&
-          lineHasLandingSignal &&
-          candidateClassification !== "other")
-      ) {
-        landingUrls.push(candidate);
-        continue;
-      }
-
-      otherUrls.push(candidate);
-    }
-  }
+  const collection = instructionArtifact?.intelligence.collection;
+  const routes = [
+    ...(collection?.startingRoutes ?? []),
+    ...(collection?.searchRouteTemplates ?? []),
+  ].flatMap((route) => {
+    const url = canonicalizeRouteForReuse(route.url, targetUrl);
+    return url
+      ? [{ url, kind: resolveRouteKindForReuse(url, route.kind) }]
+      : [];
+  });
+  const ofKind = (...kinds: readonly string[]) =>
+    routes
+      .filter((route) => kinds.includes(route.kind))
+      .map((route) => route.url);
+  const collectionUrls = ofKind("collection");
+  const searchUrls = ofKind("search");
+  const landingUrls = ofKind("listing", "anchor");
 
   const preferredUrls =
     phase === "site_structure_mapping"
-      ? [
-          ...collectionUrls,
-          ...landingUrls,
-          target.startingUrl,
-          ...(synthesizedSearchUrl ? [synthesizedSearchUrl] : []),
-          ...searchUrls,
-          ...otherUrls,
-        ]
+      ? [...collectionUrls, ...landingUrls, target.startingUrl, ...searchUrls]
       : phase === "search_filter_probe"
-      ? synthesizedSearchUrl
-        ? [
-            synthesizedSearchUrl,
-            ...searchUrls,
-            ...landingUrls,
-            target.startingUrl,
-            ...collectionUrls,
-            ...otherUrls,
-          ]
-        : searchUrls.length > 0
+        ? searchUrls.length > 0
           ? [
               ...searchUrls,
               ...landingUrls,
               target.startingUrl,
               ...collectionUrls,
-              ...otherUrls,
             ]
-          : collectionUrls.length > 0
-            ? [
-                ...collectionUrls,
-                ...landingUrls,
-                target.startingUrl,
-                ...otherUrls,
-              ]
-            : [...landingUrls, target.startingUrl, ...otherUrls]
-      : [
-          ...collectionUrls,
-          ...searchUrls,
-          ...landingUrls,
-          target.startingUrl,
-          ...otherUrls,
-        ];
+          : [...collectionUrls, ...landingUrls, target.startingUrl]
+        : [
+            ...collectionUrls,
+            ...searchUrls,
+            ...landingUrls,
+            target.startingUrl,
+          ];
 
   return uniqueStrings(preferredUrls);
 }

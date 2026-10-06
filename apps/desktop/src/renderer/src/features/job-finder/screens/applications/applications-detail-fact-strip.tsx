@@ -17,7 +17,6 @@ import {
 import {
   applyResultIsFieldSavePause,
   FIELD_SAVE_PAUSE_ACTIVITY,
-  formatVisibleRunId,
   getCustomerFacingApplyText,
   applyResultIsServiceWorkerBlocked,
 } from "./applications-detail-panel-helpers";
@@ -128,25 +127,31 @@ export function ApplicationsDetailFactStrip(props: {
         ? "Paused"
         : plannedStanding === "waiting_turn"
           ? "Waiting its turn"
-          : submissionOutcome === "submitted"
-            ? "Submitted (verified)"
-            : submissionOutcome === "outcome_uncertain"
-              ? "Outcome needs verification"
-              : visibleApplyResult?.state === "submitted"
-                ? "Submitted"
-                : visibleApplyResult?.state === "cancelled"
-                  ? "Cancelled by you"
-                  : visibleApplyResult?.state === "failed"
-                    ? "Could not apply"
-                    : visibleRunIsActive && !selectedAttemptBelongsToVisibleRun
-                      ? "In progress"
-                      : isResolvedAwaitingReview
-                        ? "Ready to send"
-                        : visibleApplyResult?.state === "blocked" ||
-                            (visibleApplyResult?.state === "awaiting_review" &&
-                              visibleApplyResult.blockerReason)
-                          ? "Needs you"
-                          : fallbackAttemptLabel;
+          : plannedStanding === "waiting_tab"
+            ? "Waiting for a browser tab"
+            : submissionOutcome === "not_submitted"
+              ? "Not sent"
+              : submissionOutcome === "submitted"
+                ? "Submitted (verified)"
+                : submissionOutcome === "outcome_uncertain"
+                  ? "Outcome needs verification"
+                  : visibleApplyResult?.state === "submitted"
+                    ? "Submitted"
+                    : visibleApplyResult?.state === "cancelled"
+                      ? "Cancelled by you"
+                      : visibleApplyResult?.state === "failed"
+                        ? "Could not apply"
+                        : visibleRunIsActive &&
+                            !selectedAttemptBelongsToVisibleRun
+                          ? "In progress"
+                          : isResolvedAwaitingReview
+                            ? "Ready to send"
+                            : visibleApplyResult?.state === "blocked" ||
+                                (visibleApplyResult?.state ===
+                                  "awaiting_review" &&
+                                  visibleApplyResult.blockerReason)
+                              ? "Needs you"
+                              : fallbackAttemptLabel;
   // The person's own tracker record wins over the run's last state, short of
   // a verified send: they sent it, or withdrew it, themselves.
   const personRecordedLabel =
@@ -189,7 +194,12 @@ export function ApplicationsDetailFactStrip(props: {
     (visibleApplyResult?.detail === selectedRecord.lastActionLabel ||
       visibleApplyResult?.summary === selectedRecord.lastActionLabel);
   const latestActivityContent =
-    isResolvedAwaitingReview || plannedStanding !== null
+    isResolvedAwaitingReview ||
+    selectedRecord.status === "submitted" ||
+    Boolean(selectedRecord.personSendReceipt) ||
+    visibleApplyResult?.state === "submitted" ||
+    plannedStanding !== null ||
+    ["failed", "cancelled", "skipped"].includes(visibleApplyResult?.state ?? "")
       ? null
       : visibleRunIsActive
         ? getCustomerFacingApplyText(visibleApplyResult.detail)
@@ -234,15 +244,30 @@ export function ApplicationsDetailFactStrip(props: {
         preparationStatusFact,
       ];
 
+  const formQuestionCount = Math.max(
+    questionSummary.total,
+    visibleApplyResult?.latestQuestionCount ?? 0,
+    visibleApplyResult?.reviewCard?.answers.length ?? 0,
+  );
+  const formAnswerCount = Math.min(
+    formQuestionCount,
+    Math.max(
+      questionSummary.answered,
+      visibleApplyResult?.latestAnswerCount ?? 0,
+      visibleApplyResult?.reviewCard?.answers.filter((answer) =>
+        answer.answer.trim(),
+      ).length ?? 0,
+    ),
+  );
   const detailFacts: DetailFact[] = [
     {
       content: formatTimestamp(selectedRecord.lastUpdatedAt),
       label: "Last updated",
     },
     {
-      content: questionSummary.total,
+      content: formQuestionCount,
       label: "Form questions",
-      note: `${questionSummary.answered} answered • ${questionSummary.unansweredRequired} required left`,
+      note: `${formAnswerCount} answered • ${questionSummary.unansweredRequired} required left`,
     },
     {
       content: formatStatusLabel(consentSummary.status),
@@ -268,10 +293,19 @@ export function ApplicationsDetailFactStrip(props: {
   ];
 
   if (visibleApplyResult) {
+    const questionsFound = Math.max(
+      visibleApplyResult.latestQuestionCount,
+      visibleApplyResult.reviewCard?.answers.length ?? 0,
+    );
+    const answersFilled = Math.max(
+      visibleApplyResult.latestAnswerCount,
+      visibleApplyResult.reviewCard?.answers.filter((answer) =>
+        answer.answer.trim(),
+      ).length ?? 0,
+    );
     const runNote = [
-      resolvedRunId ? `Run ${formatVisibleRunId(resolvedRunId)}` : null,
-      `${visibleApplyResult.latestQuestionCount} questions found`,
-      `${visibleApplyResult.latestAnswerCount} answers filled`,
+      `${questionsFound} ${questionsFound === 1 ? "question" : "questions"} found`,
+      `${answersFilled} ${answersFilled === 1 ? "answer" : "answers"} filled`,
       // The autosave pause already has its cause stated once above; repeating
       // the runtime sentence here made the same event read four ways.
       visibleApplyResult.blockerSummary && !isFieldSavePause
@@ -292,7 +326,6 @@ export function ApplicationsDetailFactStrip(props: {
               : formatStatusLabel(visibleApplyResult.state),
       label: "Latest preparation run",
       ...(runNote.length > 0 ? { note: runNote } : {}),
-      ...(resolvedRunId ? { title: resolvedRunId } : {}),
     });
   }
 

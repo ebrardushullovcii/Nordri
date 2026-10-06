@@ -1,3 +1,4 @@
+import { getDiscoverySourceRunCountLabel } from "../../lib/discovery-run-count-label";
 import {
   useDeferredValue,
   useEffect,
@@ -37,6 +38,45 @@ import {
   getRunOptions,
   type DiscoveryTargetConfig,
 } from "./discovery-history-utils";
+
+import { describeFailure } from "../../lib/describe-failure";
+import {
+  createDiscoveryRunSucceededFeedback,
+  createDiscoveryRunCancelledFeedback,
+  createDiscoveryRunInterruptedFeedback,
+} from "./discovery-run-feedback";
+
+function stripTerminalColors(value: string): string {
+  return value.replace(
+    new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g"),
+    "",
+  );
+}
+
+export function describeHistoryRun(run: DiscoveryRunRecord): string {
+  const counts = getDiscoveryRunReportCounts(run);
+  const feedback =
+    run.state === "completed"
+      ? createDiscoveryRunSucceededFeedback(
+          null,
+          describeRunCounts(run),
+          counts.new,
+          run.targetExecutions.filter((source) => source.state === "failed")
+            .length,
+        )
+      : run.state === "cancelled"
+        ? createDiscoveryRunCancelledFeedback({
+            savedJobCount: run.summary.validJobsFound,
+          })
+        : run.state === "running"
+          ? null
+          : createDiscoveryRunInterruptedFeedback({ detail: null });
+  return feedback?.toast
+    ? [feedback.toast.title, feedback.toast.description]
+        .filter(Boolean)
+        .join(". ")
+    : (feedback?.headline ?? "Search is running.");
+}
 
 /**
  * Search history quotes the run's own frozen report, so a row here reads the
@@ -132,7 +172,7 @@ function ActivityEventCard(props: {
         <span className="shrink-0">{formatTimestamp(event.timestamp)}</span>
       </div>
       <p className="text-[0.95rem] leading-6 text-(--text-headline)">
-        {event.message}
+        {stripTerminalColors(event.message)}
       </p>
       {event.jobsFound !== null ||
       event.jobsPersisted !== null ||
@@ -178,8 +218,11 @@ export function DiscoveryHistoryModal(props: {
   const eventStreamEndRef = useRef<HTMLDivElement | null>(null);
   const wasOpenRef = useRef(false);
   const liveRun = useMemo(
-    () => buildLiveRunRecord(props.liveEvents, props.targets),
-    [props.liveEvents, props.targets],
+    () =>
+      props.activeRun?.state === "running"
+        ? props.activeRun
+        : buildLiveRunRecord(props.liveEvents, []),
+    [props.liveEvents, props.activeRun],
   );
   const runOptions = useMemo(
     () => getRunOptions(liveRun, props.activeRun, props.recentRuns),
@@ -417,9 +460,12 @@ export function DiscoveryHistoryModal(props: {
     eventStreamEndRef.current?.scrollIntoView({ block: "end" });
   };
 
+  const selectedReport = getDiscoveryRunReportCounts(selectedRun);
+  const duplicateCount =
+    selectedReport.duplicates ?? selectedRun?.summary.duplicatesMerged ?? 0;
   return (
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-(--modal-scrim) p-6 backdrop-blur-sm sm:p-10 backdrop-blur-sm"
+      className="fixed inset-0 z-[140] overflow-y-auto bg-(--modal-scrim) p-6 backdrop-blur-sm sm:p-10 backdrop-blur-sm"
       onClick={props.onClose}
     >
       <div
@@ -538,7 +584,8 @@ export function DiscoveryHistoryModal(props: {
             </div>
           </aside>
 
-          <div className="grid min-h-0 grid-rows-[auto_minmax(12rem,auto)_auto_minmax(16rem,1fr)] gap-4 overflow-y-auto px-4 py-4">
+          <div className="grid min-h-0 content-start gap-4 overflow-y-auto px-4 py-4">
+            {selectedRun ? <p>{describeHistoryRun(selectedRun)}</p> : null}
             {selectedRun ? (
               <div className="grid gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-panel-raised) px-4 py-4 sm:grid-cols-4">
                 <div>
@@ -554,7 +601,9 @@ export function DiscoveryHistoryModal(props: {
                     Outcome
                   </p>
                   <p className="mt-2 text-[0.95rem] font-semibold text-(--text-headline)">
-                    {formatOutcomeLabel(selectedRun.summary.outcome)}
+                    {selectedRun.runPhase === "interrupted"
+                      ? "Interrupted"
+                      : formatOutcomeLabel(selectedRun.summary.outcome)}
                   </p>
                 </div>
                 <div>
@@ -567,20 +616,21 @@ export function DiscoveryHistoryModal(props: {
                 </div>
                 <div>
                   <p className="text-[0.72rem] uppercase tracking-(--tracking-label) text-foreground-muted">
-                    Saved
+                    New to you
                   </p>
                   <p className="mt-2 text-[0.95rem] font-semibold text-(--text-headline)">
-                    {selectedRun.summary.validJobsFound}
-                    {selectedRun.summary.duplicatesMerged > 0 ? (
+                    {getDiscoveryRunReportCounts(selectedRun).new ??
+                      selectedRun.summary.validJobsFound}
+                    {duplicateCount > 0 ? (
                       <span className="ml-2 text-[0.78rem] font-normal text-foreground-muted">
-                        {`${selectedRun.summary.duplicatesMerged} already known`}
+                        {`${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"} merged`}
                       </span>
                     ) : null}
                   </p>
                 </div>
                 <div>
                   <p className="text-[0.72rem] uppercase tracking-(--tracking-label) text-foreground-muted">
-                    Saved / held for review
+                    Saved directly / held for review
                   </p>
                   <p className="mt-2 text-[0.95rem] font-semibold text-(--text-headline)">
                     {selectedRun.summary.jobsPersisted} /{" "}
@@ -627,7 +677,7 @@ export function DiscoveryHistoryModal(props: {
             ) : null}
 
             {selectedRun ? (
-              <div className="grid max-h-60 gap-4 overflow-y-auto pr-1">
+              <div className="grid gap-4">
                 <section
                   aria-labelledby={`${dialogTitleId}-changes`}
                   className="grid gap-2"
@@ -642,7 +692,11 @@ export function DiscoveryHistoryModal(props: {
                     const changeCounts: ReadonlyArray<[string, number]> = [
                       // Listings seen for the first time, before the plan's
                       // "jobs to retain" limit; can exceed the saved count.
-                      ["New listings seen", selectedRun.summary.changeDigest.new],
+                      [
+                        "New to you",
+                        getDiscoveryRunReportCounts(selectedRun).new ??
+                          selectedRun.summary.validJobsFound,
+                      ],
                       ["Unchanged", selectedRun.summary.changeDigest.unchanged],
                       ["Changed", selectedRun.summary.changeDigest.changed],
                       [
@@ -650,7 +704,6 @@ export function DiscoveryHistoryModal(props: {
                         selectedRun.summary.changeDigest.reactivated,
                       ],
                       ["Inactive", selectedRun.summary.changeDigest.inactive],
-                      ["Known", selectedRun.summary.changeDigest.known],
                       ["Skipped", selectedRun.summary.changeDigest.skipped],
                     ];
                     // A row of zeros is not evidence. Only the states this run
@@ -699,21 +752,6 @@ export function DiscoveryHistoryModal(props: {
                     >
                       Source health
                     </h3>
-                    <p className="text-[0.82rem] leading-5 text-foreground-soft">
-                      By source: {sourceHealth
-                        .map((source) => {
-                          const label =
-                            targetLabels.get(source.targetId) ??
-                            "Configured source";
-                          const execution = selectedRun.targetExecutions.find(
-                            (candidate) => candidate.targetId === source.targetId,
-                          );
-                          const contributed =
-                            (execution?.jobsPersisted ?? 0) + (execution?.jobsStaged ?? 0);
-                          return `${label} — ${contributed} ${contributed === 1 ? "job" : "jobs"}`;
-                        })
-                        .join("; ")}.
-                    </p>
                     <div className="grid gap-2 md:grid-cols-2">
                       {sourceHealth.map((source) => {
                         const sourceLabel =
@@ -732,7 +770,10 @@ export function DiscoveryHistoryModal(props: {
                         // direct saved jobs and jobs staged for the results list.
                         const contributed =
                           (execution?.jobsPersisted ?? 0) + (execution?.jobsStaged ?? 0);
-                        const terminalReport = contributed === 0
+                        const terminalReport =
+                          contributed === 0 &&
+                          (execution?.state !== "completed" ||
+                            source.health !== "healthy")
                           ? selectedRun.activity.findLast((event) =>
                               event.targetId === source.targetId &&
                               event.stage === "target" &&
@@ -787,12 +828,50 @@ export function DiscoveryHistoryModal(props: {
                                     : ""}
                                 </p>
                                 <p className="mt-1 text-[0.82rem] text-foreground-soft">
-                                  Contributed {contributed} new job{contributed === 1 ? "" : "s"} to this run
-                                  {alreadySaved > 0
-                                    ? `; ${alreadySaved} ${alreadySaved === 1 ? "was" : "were"} already saved`
-                                    : ""}
+                                  {getDiscoverySourceRunCountLabel(
+                                    selectedRun,
+                                    source.targetId,
+                                  )}
                                   .
                                 </p>
+                                {execution?.sourceCounts
+                                  ?.filter(
+                                    (counts) =>
+                                      counts.sourceId !== source.targetId,
+                                  )
+                                  .map((counts) => (
+                                    <p
+                                      key={counts.sourceId}
+                                      className="mt-1 text-[0.82rem] text-foreground-soft"
+                                    >
+                                      Found on {counts.label}:{" "}
+                                      {counts.inspected} inspected ·{" "}
+                                      {counts.saved} saved · {counts.rejected}{" "}
+                                      rejected · {counts.duplicates} duplicates
+                                      · {counts.deferred} deferred ·{" "}
+                                      {counts.pagesCovered ?? "Not recorded"}{" "}
+                                      {counts.pagesCovered === 1
+                                        ? "page"
+                                        : "pages"}{" "}
+                                      covered.
+                                    </p>
+                                  ))}
+                                {execution?.rejectedListings?.length ? (
+                                  <details className="mt-2 text-[0.82rem] text-foreground-soft">
+                                    <summary>
+                                      Why listings were excluded
+                                    </summary>
+                                    <ul>
+                                      {execution.rejectedListings.map(
+                                        (listing, index) => (
+                                          <li key={`${listing.url}:${index}`}>
+                                            {listing.title}: {listing.reason}
+                                          </li>
+                                        ),
+                                      )}
+                                    </ul>
+                                  </details>
+                                ) : null}
                               </div>
                               {canRetry ? (
                                 <Button
@@ -815,19 +894,36 @@ export function DiscoveryHistoryModal(props: {
                                 </Button>
                               ) : null}
                             </div>
-                            {terminalReport && source.warnings.length === 0 ? (
-                              <p className="text-[0.82rem] leading-5 text-foreground-soft">
-                                {terminalReport}
-                              </p>
+                            {source.warnings.length > 0 &&
+                            execution?.state !== "completed" ? (
+                              <>
+                                <p className="text-[0.82rem] leading-5 text-foreground-soft">
+                                  {
+                                    contributed > 0
+                                      ? "Some jobs were collected, but this source did not finish."
+                                      : describeFailure(source.warnings[0], {
+                                          action: "read this source",
+                                        }).userMessage
+                                  }
+                                </p>
+                              </>
                             ) : null}
-                            {source.warnings.map((warning) => (
-                              <p
-                                className="text-[0.82rem] leading-5 text-foreground-soft"
-                                key={warning}
-                              >
-                                {warning}
-                              </p>
-                            ))}
+                            {source.warnings.length > 0 || terminalReport ? (
+                              <details>
+                                <summary>Technical details</summary>
+                                {[
+                                  ...source.warnings,
+                                  ...(terminalReport ? [terminalReport] : []),
+                                ].map((detail, index) => (
+                                  <p
+                                    className="text-[0.82rem] leading-5 text-foreground-soft"
+                                    key={index}
+                                  >
+                                    {stripTerminalColors(detail)}
+                                  </p>
+                                ))}
+                              </details>
+                            ) : null}
                             {zeroReason ? (
                               <p className="text-[0.82rem] leading-5 text-(--warning-text)">
                                 {zeroReason}
@@ -868,7 +964,8 @@ export function DiscoveryHistoryModal(props: {
                 so it carries the same edge affordance the shared bounded
                 floating surfaces use instead of cutting a line mid-glyph with
                 nothing to say there is more. */}
-            <div className="relative grid min-h-0">
+            <details className="relative grid min-h-0">
+              <summary>Technical details</summary>
               <BoundedFloatingSurfaceScrollHint
                 edge="start"
                 visible={
@@ -892,7 +989,7 @@ export function DiscoveryHistoryModal(props: {
                 }
                 aria-live="polite"
                 aria-relevant="additions"
-                className="grid min-h-0 gap-3 overflow-y-auto pr-2 pb-6"
+                className="grid gap-3 pb-6"
                 onScroll={handleEventStreamScroll}
                 ref={eventStreamRef}
                 role="log"
@@ -917,7 +1014,7 @@ export function DiscoveryHistoryModal(props: {
                 )}
                 <div aria-hidden="true" ref={eventStreamEndRef} />
               </div>
-            </div>
+            </details>
           </div>
         </div>
       </div>

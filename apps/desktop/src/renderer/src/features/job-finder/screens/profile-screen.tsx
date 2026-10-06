@@ -1,3 +1,4 @@
+import { getRunningResumeImportProgress } from "@renderer/features/job-finder/lib/profile-resume-panel-utils";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import type {
@@ -18,6 +19,7 @@ import type {
   SourceInstructionArtifact,
 } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
+import { useToast } from "@renderer/components/ui/toast";
 import {
   describeResumeIdentityOwnershipChoice,
   useResumeSourceNameForProfile,
@@ -51,8 +53,11 @@ import { getJobFinderScrollBehavior } from "../lib/job-finder-scroll-behavior";
 
 import { ResumeIdentityChoiceNotice } from "../components/profile/resume-identity-choice-notice";
 import { ProfileSectionTabs } from "../components/profile/profile-section-tabs";
-import { ProfileSetupReminder } from "../components/profile/profile-setup-reminder";
-import { PageHeaderStack } from "../components/page-header";
+import { useProfileSetupStatusItem } from "../components/profile/profile-setup-reminder";
+import {
+  PageHeaderStack,
+  type PageStatusItem,
+} from "../components/page-header";
 import {
   buildProfilePayload,
   buildSearchPreferencesPayload,
@@ -142,6 +147,7 @@ export function ProfileScreen(props: {
   onSaveAll: (
     profile: CandidateProfile,
     searchPreferences: JobSearchPreferences,
+    savedSection?: "sources",
   ) => void;
   onVerifySourceInstructions: (targetId: string, instructionId: string) => void;
   latestResumeImportReviewCandidates: readonly ResumeImportFieldCandidateSummary[];
@@ -348,10 +354,36 @@ export function ProfileScreen(props: {
   // The renderer receives no progress event until a native picker has
   // returned a file. Treat that picker-only phase as recoverable rather than
   // freezing every profile field behind an unresolved local pending flag.
-  const isResumeImportProcessing =
-    pendingActions.importResume && resumeImportProgress !== null;
+  const runningImportProgress = getRunningResumeImportProgress(
+    latestResumeImportRun,
+  );
+  const importProgress = resumeImportProgress ?? runningImportProgress;
+  const importPending =
+    pendingActions.importResume || runningImportProgress !== null;
+  const isResumeImportProcessing = importPending && importProgress !== null;
   const resumeAnalysisPending =
     isResumeImportProcessing || pendingActions.analyzeProfile;
+  // Unfinished setup and a running resume update are conditions shown on
+  // the header status line, not cards above the tabs (ADR 0044).
+  const setupStatusItem = useProfileSetupStatusItem({
+    currentStep: profileSetupState.currentStep,
+    enabled: profileSetupState.status !== "completed",
+    isResumePending: pendingActions.profileSetup,
+    onResume: onResumeProfileSetup,
+    pendingItemCount: pendingSetupItems.length,
+  });
+  const profileStatusItems: PageStatusItem[] = [
+    ...(setupStatusItem ? [setupStatusItem] : []),
+    ...(resumeAnalysisPending
+      ? [
+          {
+            id: "resume-update",
+            tone: "info" as const,
+            text: "Editing is paused while your resume update finishes, so the import cannot overwrite a draft made at the same time.",
+          },
+        ]
+      : []),
+  ];
   // Job sources and Files hold no profile facts, so the assistant talks about
   // preferences while either tab is open.
   const copilotSection =
@@ -511,7 +543,11 @@ export function ProfileScreen(props: {
     }
 
     setValidationMessage(null);
-    onSaveAll(profileResult.payload, preferencesResult.payload);
+    onSaveAll(
+      profileResult.payload,
+      preferencesResult.payload,
+      activeSection === "sources" ? "sources" : undefined,
+    );
   }
 
   function handleResumeIdentityChoice(choice: "profile_name" | "resume_name") {
@@ -566,6 +602,19 @@ export function ProfileScreen(props: {
     });
   }
 
+  // A merge that kept the person's edits needs nothing from them, so it is
+  // a toast; a conflict needs a choice and stays as the box below (ADR 0042).
+  const { showToast } = useToast();
+  useEffect(() => {
+    if (!backgroundMergeNotice || hasBackgroundConflict) return;
+    showToast({
+      id: "profile-background-merge",
+      title: "Profile updated in the background",
+      description:
+        "Your unsaved edits were kept. Check the merged fields before saving.",
+    });
+  }, [backgroundMergeNotice, hasBackgroundConflict, showToast]);
+
   return (
     <LockedScreenLayout
       // F01: Profile's Save lived at the end of a ~5,400px page and was never
@@ -575,9 +624,9 @@ export function ProfileScreen(props: {
       // action is inside the viewport at 1024x720 and every larger size.
       bottomContent={
         <>
-          {backgroundMergeNotice ? (
+          {backgroundMergeNotice && hasBackgroundConflict ? (
             <div
-              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-(--surface-panel-border) bg-(--info-surface) px-4 py-2 text-sm leading-6 text-(--info-text) sm:px-5"
+              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-(--warning-border) bg-(--warning-surface) px-4 py-2 text-sm leading-6 text-(--warning-text) sm:px-5"
               role="status"
             >
               <span>{backgroundMergeNotice}</span>
@@ -614,7 +663,8 @@ export function ProfileScreen(props: {
         <>
           <PageHeaderStack
             title="Your profile"
-            description="Everything Job Finder knows about you. Edit any field, or ask the assistant to change it for you."
+            description="Everything Job Finder knows about you. Edit any field or ask the assistant."
+            statusItems={profileStatusItems}
             actions={
               <AskAssistantButton
                 prompt={starterQuestion ?? undefined}
@@ -627,28 +677,10 @@ export function ProfileScreen(props: {
             }
           />
 
-          {profileSetupState.status !== "completed" ? (
-            <ProfileSetupReminder
-              currentStep={profileSetupState.currentStep}
-              isResumePending={pendingActions.profileSetup}
-              onResume={onResumeProfileSetup}
-              pendingItemCount={pendingSetupItems.length}
-            />
-          ) : (
+          {profileSetupState.status === "completed" ? (
             <ProfileReadyBanner
               completionIdentity={`${profile.id}:${profileSetupState.completedAt ?? "completed"}`}
             />
-          )}
-
-          {resumeAnalysisPending ? (
-            <div
-              className="rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-sm leading-6 text-(--info-text)"
-              role="status"
-            >
-              Profile editing is paused while the resume update finishes. This
-              prevents the completed import from overwriting a draft created at
-              the same time.
-            </div>
           ) : null}
         </>
       }
@@ -691,12 +723,12 @@ export function ProfileScreen(props: {
                     importDisabledReason={importResumeGuardMessage}
                     isProfileReady={profileSetupState.status === "completed"}
                     isAnalyzeProfilePending={pendingActions.analyzeProfile}
-                    isImportResumePending={pendingActions.importResume}
+                    isImportResumePending={importPending}
                     latestResumeImportReviewCandidates={
                       latestResumeImportReviewCandidates
                     }
                     latestResumeImportRun={latestResumeImportRun}
-                    resumeImportProgress={resumeImportProgress}
+                    resumeImportProgress={importProgress}
                     onAnalyzeProfileFromResume={onAnalyzeProfileFromResume}
                     onApplyTimelineRepairAction={(proposalId, action) => {
                       if (!latestResumeImportRun) {
@@ -877,12 +909,12 @@ export function ProfileScreen(props: {
                       importDisabledReason={importResumeGuardMessage}
                       isProfileReady={profileSetupState.status === "completed"}
                       isAnalyzeProfilePending={pendingActions.analyzeProfile}
-                      isImportResumePending={pendingActions.importResume}
+                      isImportResumePending={importPending}
                       latestResumeImportReviewCandidates={
                         latestResumeImportReviewCandidates
                       }
                       latestResumeImportRun={latestResumeImportRun}
-                      resumeImportProgress={resumeImportProgress}
+                      resumeImportProgress={importProgress}
                       onAnalyzeProfileFromResume={onAnalyzeProfileFromResume}
                       onApplyTimelineRepairAction={(proposalId, action) => {
                         if (!latestResumeImportRun) {

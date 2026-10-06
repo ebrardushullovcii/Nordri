@@ -595,10 +595,12 @@ describe("Job Finder application authority service", () => {
         }),
       );
     const ids = ["resolution", "evidence"];
+    const releaseApplicationPage = vi.fn();
     const service = createJobFinderApplicationAuthorityService({
       repository,
       now: () => LATER,
       idFactory: () => ids.shift() ?? "unexpected",
+      releaseApplicationPage,
     });
 
     const resolution = await service.resolveSubmissionOutcome({
@@ -608,6 +610,9 @@ describe("Job Finder application authority service", () => {
     });
 
     expect(resolution.status).toBe("recorded");
+    expect(releaseApplicationPage).toHaveBeenCalledExactlyOnceWith(
+      uncertainOutcome.resultId,
+    );
     expect(resolve).toHaveBeenCalledTimes(1);
     const [resolvedInput] = resolve.mock.calls[0]!;
     expect(resolvedInput.expectedOutcomeId).toBe(uncertainOutcome.id);

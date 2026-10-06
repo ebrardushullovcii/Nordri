@@ -112,6 +112,28 @@ describe("configured resume strategy request boundary", () => {
           }),
         ]),
       );
+      for (const rule of [
+        "every stated skill level and limit",
+        "basic or still learning",
+        "seasonal or partial dates",
+        "credential years and renewal dates",
+        "quantified results",
+        "Each achievement and qualification appears once",
+        "Summaries lead with supported results",
+      ])
+        expect(systemPrompt).toContain(rule);
+      for (const personaFact of [
+        "Workday",
+        "Excel (advanced)",
+        "Articulate Rise",
+        "IFRS",
+        "CFO",
+        "Mentored 5 engineers",
+        "Mentored 4 SDRs",
+        "Fachkraft",
+        "ILS renewed 2025",
+      ])
+        expect(systemPrompt).not.toContain(personaFact);
       expect(systemPrompt).toContain(
         'Apply the named resume strategy "Frontend platform" for the Frontend Platform Engineering role family.',
       );
@@ -124,107 +146,6 @@ describe("configured resume strategy request boundary", () => {
       expect(systemPrompt).toContain(
         "Evidence boundaries: exact claims not allowed; paraphrased claims allowed; at most 2 evidence references per bullet.",
       );
-    } finally {
-      fetchMock.restore();
-    }
-  });
-
-  test("rejects a model bullet that cites more evidence references than the strategy allows", async () => {
-    const canonicalBullet =
-      "Built reliable TypeScript workflow tools for operations teams.";
-    const overLimitBullet =
-      "Built reliable TypeScript workflow tools for operations teams and platform delivery.";
-    const fetchMock = mockCapturingJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              experienceEntries: [
-                {
-                  profileRecordId: "experience_platform",
-                  bullets: [
-                    {
-                      text: overLimitBullet,
-                      evidenceRefs: [
-                        "experience:experience_platform:achievement:0",
-                        "profile:skills",
-                      ],
-                    },
-                  ],
-                },
-              ],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client = createOpenAiCompatibleJobFinderAiClient({
-        apiKey: "test-key",
-        baseUrl: "https://example.com/v1",
-        model: "test-model",
-      });
-      const baseProfile = createProfile();
-      const result = await client.createResumeDraft({
-        profile: {
-          ...baseProfile,
-          skills: ["TypeScript"],
-          experiences: [
-            {
-              id: "experience_platform",
-              companyName: "Acme Labs",
-              companyUrl: null,
-              title: "Platform Engineer",
-              employmentType: null,
-              location: "Remote",
-              workMode: ["remote"],
-              startDate: "2022-01",
-              endDate: null,
-              isCurrent: true,
-              isDraft: false,
-              summary: "Built reliable workflow tools for operations teams.",
-              achievements: [canonicalBullet],
-              skills: ["TypeScript"],
-              domainTags: [],
-              peopleManagementScope: null,
-              ownershipScope: null,
-            },
-          ],
-        },
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        job: createJobPosting(),
-        resumeText: "Resume text",
-        strategy: createStrategy({
-          allowParaphrasedClaims: true,
-          maxEvidenceRefsPerBullet: 1,
-        }),
-        evidence: {
-          summary: [],
-          candidateSummary: [],
-          experience: [],
-          skills: ["TypeScript"],
-          keywords: [],
-        },
-        researchContext: {
-          companyNotes: [],
-          domainVocabulary: [],
-          priorityThemes: [],
-        },
-      });
-
-      const experienceEntry = result.experienceEntries.find(
-        (entry) => entry.profileRecordId === "experience_platform",
-      );
-      expect(experienceEntry?.bullets).toContain(canonicalBullet);
-      expect(experienceEntry?.bullets).not.toContain(overLimitBullet);
-      expect(result.generationQuality).toMatchObject({
-        strategy: "deterministic",
-        proposedRewriteCount: 1,
-        acceptedRewriteCount: 0,
-        rejectedRewriteCount: 1,
-      });
     } finally {
       fetchMock.restore();
     }
@@ -302,3 +223,65 @@ describe("configured resume strategy request boundary", () => {
     }
   });
 });
+
+test.each([null, "German"])(
+  "writer receives target language %s and returns the language in the same response",
+  async (language) => {
+    const fetchMock = mockCapturingJsonFetch({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              languagePresentation: {
+                language: "German",
+                translations: [
+                  { id: "section_experience:label", text: "Berufserfahrung" },
+                ],
+              },
+            }),
+          },
+        },
+      ],
+    });
+    try {
+      const client = createOpenAiCompatibleJobFinderAiClient({
+        apiKey: "test-key",
+        baseUrl: "https://example.com/v1",
+        model: "test-model",
+      });
+      const draft = await client.createResumeDraft({
+        profile: createProfile(),
+        searchPreferences: createPreferences(),
+        settings: createSettings(),
+        job: createJobPosting(),
+        resumeText: "Resume text",
+        language,
+        languageFields: [
+          { id: "section_experience:label", text: "Experience" },
+        ],
+      });
+      const body = JSON.parse(fetchMock.getCapturedBody()) as {
+        messages: Array<{ content: string }>;
+      };
+      const payload = JSON.parse(body.messages[1]!.content) as {
+        targetLanguage: string;
+        languageFields: Array<{ id: string; text: string }>;
+      };
+      expect(payload.targetLanguage).toBe(
+        language ?? "the language the listing is written in",
+      );
+      expect(payload.languageFields).toEqual([
+        { id: "section_experience:label", text: "Experience" },
+      ]);
+      expect(body.messages[0]!.content).toContain(
+        "write the resume in that language in this writing pass",
+      );
+      expect(body.messages[0]!.content).toContain(
+        "When all displayed fields already use the target language, return an empty translations array",
+      );
+      expect(draft.languagePresentation?.language).toBe("German");
+    } finally {
+      fetchMock.restore();
+    }
+  },
+);

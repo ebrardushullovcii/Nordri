@@ -1,3 +1,5 @@
+import { canRetrySavedResumeImport } from "@nordri/contracts";
+import { getRunningResumeImportProgress } from "@renderer/features/job-finder/lib/profile-resume-panel-utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -15,6 +17,7 @@ import {
   type SourceDebugRunRecord,
 } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
+import { useToast } from "@renderer/components/ui/toast";
 import { LockedScreenLayout } from "../../locked-screen-layout";
 import { PageHeader } from "../../page-header";
 import { AskAssistantButton } from "../../../assistant/ask-assistant-button";
@@ -28,10 +31,12 @@ import { ProfileSetupStepEditor } from "./profile-setup-step-editor";
 import { ProfileSetupStepFooter } from "./profile-setup-step-footer";
 import {
   buildProfileSetupReadinessPresentation,
+  summarizeSavedSetupReviewValue,
   getProfileSetupReadinessBlockerLabel,
   getProfileSetupReadinessBlockerStep,
   getProfileSetupReviewItemCopy,
   isFinishBlockingReviewItem,
+  isReadinessCoveredSetupReviewItem,
   isProfileSetupMissingFieldReviewItem,
 } from "./profile-setup-screen-helpers";
 import {
@@ -165,12 +170,12 @@ export function ProfileSetupScreen(props: {
   const {
     actionState,
     importResumeGuardMessage,
-    isImportResumePending,
+    isImportResumePending: localImportPending,
     isProfileSetupPending,
     isReviewItemPending,
     latestResumeImportReviewCandidates,
     latestResumeImportRun,
-    resumeImportProgress,
+    resumeImportProgress: localImportProgress,
     onApplyProfileSetupReviewAction,
     onContinueToProfile,
     onImportResume,
@@ -202,6 +207,7 @@ export function ProfileSetupScreen(props: {
 
   const {
     backgroundArrays,
+    markOwnSave,
     backgroundMergeNotice,
     discardEditsAndReloadCanonical,
     draftAwareReviewItems,
@@ -243,9 +249,12 @@ export function ProfileSetupScreen(props: {
     return () => onProfileSurfaceDirtyChange(false);
   }, [hasUserAuthoredSetupChanges, onProfileSurfaceDirtyChange]);
 
+  const previousStepRef = useRef(profileSetupState.currentStep);
   useEffect(() => {
+    const advancing = previousStepRef.current !== profileSetupState.currentStep;
+    previousStepRef.current = profileSetupState.currentStep;
     const frameId = window.requestAnimationFrame(() => {
-      focusProfileSetupStepHeading();
+      focusProfileSetupStepHeading(document, advancing);
     });
 
     return () => window.cancelAnimationFrame(frameId);
@@ -264,7 +273,10 @@ export function ProfileSetupScreen(props: {
     hasUnsavedChanges: hasUnsavedSetupChanges,
     onContinueToProfile,
     onResumeSetup,
-    onSaveSetupStep,
+    onSaveSetupStep: (nextProfile, nextPreferences, nextStep, options) => {
+      markOwnSave(nextProfile, nextPreferences);
+      onSaveSetupStep(nextProfile, nextPreferences, nextStep, options);
+    },
     resumeApplicationMode: selectedResumeApplicationMode,
     preferencesFormValues: () => preferencesForm.getValues(),
     profile,
@@ -287,15 +299,23 @@ export function ProfileSetupScreen(props: {
   const flushPendingSource = () => {
     pendingSourceFlushRef.current?.();
   };
+  const runningImportProgress = getRunningResumeImportProgress(
+    latestResumeImportRun,
+  );
+  const isImportResumePending =
+    localImportPending || runningImportProgress !== null;
+  const resumeImportProgress = localImportProgress ?? runningImportProgress;
   const interruptedImportMessage =
-    isInterruptedResumeImport(latestResumeImportRun) && !isImportResumePending
-      ? RESUME_IMPORT_INTERRUPTED_MESSAGE
+    latestResumeImportRun?.status === "failed" && !isImportResumePending
+      ? isInterruptedResumeImport(latestResumeImportRun)
+        ? RESUME_IMPORT_INTERRUPTED_MESSAGE
+        : latestResumeImportRun.errorMessage
       : null;
-  const interruptedImportFileName =
-    latestResumeImportRun && isInterruptedResumeImport(latestResumeImportRun)
-      ? latestResumeImportRun.sourceResumeFileName
-      : null;
-
+  const interruptedImportFileName = canRetrySavedResumeImport(
+    latestResumeImportRun,
+  )
+    ? (latestResumeImportRun?.sourceResumeFileName ?? null)
+    : null;
   const pendingCurrentStepReviewItems = currentStepReviewItems.filter(
     (item) => item.status === "pending",
   );
@@ -332,7 +352,9 @@ export function ProfileSetupScreen(props: {
         editor: "profile",
         savedRevision: null,
         draftVersion: dirtyPaths.length,
-        dirtyFields: [...new Set(dirtyPaths.map(profileFieldForEditorPath))].slice(0, 80),
+        dirtyFields: [
+          ...new Set(dirtyPaths.map(profileFieldForEditorPath)),
+        ].slice(0, 80),
         unsavedValues: {},
         section: profileSetupState.currentStep,
         selection: null,
@@ -362,7 +384,9 @@ export function ProfileSetupScreen(props: {
   const remainingBlockerLabels = useMemo(() => {
     const currentStep = profileSetupState.currentStep;
     const whereToGo = (step: ProfileSetupStep) =>
-      step === currentStep ? "" : ` (${formatProfileSetupStepLabel(step)} step)`;
+      step === currentStep
+        ? ""
+        : ` (${formatProfileSetupStepLabel(step)} step)`;
     return [
       ...readinessPresentation.blockers.map(
         (blocker) =>
@@ -370,19 +394,32 @@ export function ProfileSetupScreen(props: {
             getProfileSetupReadinessBlockerStep(blocker.id),
           )}`,
       ),
-      ...draftAwareReviewItems.filter(isFinishBlockingReviewItem).map((item) => {
-        const label = getProfileSetupReviewItemCopy(item).label;
-        const verb = isProfileSetupMissingFieldReviewItem(item)
-          ? "Fill in"
-          : "Confirm";
-        return `${verb} ${label.charAt(0).toLowerCase()}${label.slice(1)}${whereToGo(item.step)}`;
-      }),
+      ...draftAwareReviewItems
+        .filter(
+          (item) =>
+            isFinishBlockingReviewItem(item) &&
+            !isReadinessCoveredSetupReviewItem(item),
+        )
+        .map((item) => {
+          const label = getProfileSetupReviewItemCopy(item).label;
+          const verb = isProfileSetupMissingFieldReviewItem(item)
+            ? "Fill in"
+            : "Confirm";
+          return `${verb} ${label.charAt(0).toLowerCase()}${label.slice(1)}${whereToGo(item.step)}`;
+        }),
     ];
-  }, [draftAwareReviewItems, profileSetupState.currentStep, readinessPresentation]);
+  }, [
+    draftAwareReviewItems,
+    profileSetupState.currentStep,
+    readinessPresentation,
+  ]);
 
   const reviewQueue = (
     <ProfileSetupReviewQueueCard
       compact={profileSetupState.currentStep === "targeting"}
+      getSavedValue={(item) =>
+        summarizeSavedSetupReviewValue(profile, searchPreferences, item)
+      }
       actionsDisabledReason={
         setupActionsDisabledReason ??
         (hasUserDraftChanges
@@ -398,6 +435,19 @@ export function ProfileSetupScreen(props: {
       onEditReviewItem={handleEditReviewItem}
     />
   );
+
+  // A merge that kept the person's edits needs nothing from them, so it is
+  // a toast; a conflict needs a choice and stays as a box (ADR 0042).
+  const { showToast } = useToast();
+  useEffect(() => {
+    if (!backgroundMergeNotice || hasBackgroundConflict) return;
+    showToast({
+      id: "profile-background-merge",
+      title: "Profile updated in the background",
+      description:
+        "Your unsaved edits were kept. Check the merged fields before saving.",
+    });
+  }, [backgroundMergeNotice, hasBackgroundConflict, showToast]);
 
   return (
     <LockedScreenLayout
@@ -437,21 +487,20 @@ export function ProfileSetupScreen(props: {
               // First run opens guided setup directly, so setup owns the way
               // back out of it.
               <div className="flex flex-wrap items-center gap-2">
-              <AskAssistantButton prompt={starterQuestion ?? undefined} />
-              <Button
-                onClick={() => {
-                  markGuidedSetupAutoOpenSpent();
-                  void navigate("/job-finder");
-                }}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                Back to Home
-              </Button>
+                <AskAssistantButton prompt={starterQuestion ?? undefined} />
+                <Button
+                  onClick={() => {
+                    markGuidedSetupAutoOpenSpent();
+                    void navigate("/job-finder");
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Back to Home
+                </Button>
               </div>
             }
-            eyebrow="Profile setup"
             title="Guided setup"
             description={
               isPristineSetup
@@ -465,8 +514,26 @@ export function ProfileSetupScreen(props: {
               currentStep={profileSetupState.currentStep}
               disabled={setupMutationPending}
               hasImportedResume={hasImportedResume}
-              onGoToStep={goToStep}
+              onGoToStep={(step) => {
+                flushPendingSource();
+                goToStep(step);
+              }}
               profileSetupState={profileSetupState}
+              unsavedSteps={[
+                ...flattenDirtyFields(profileForm.formState.dirtyFields).map(
+                  (path): ProfileSetupStep =>
+                    path.startsWith("identity.") || path.startsWith("summary.")
+                      ? "essentials"
+                      : path.startsWith("records.")
+                        ? "background"
+                        : path.startsWith("eligibility.")
+                          ? "targeting"
+                          : "extras",
+                ),
+                ...(preferencesForm.formState.isDirty
+                  ? ["targeting" as const]
+                  : []),
+              ]}
               readiness={pathReadiness}
               reviewItems={draftAwareReviewItems}
             />
@@ -478,6 +545,8 @@ export function ProfileSetupScreen(props: {
           {isPristineSetup ||
           profileSetupState.currentStep === "import" ? null : (
             <ProfileSetupImportNotice
+              onImportResume={onImportResume}
+              resumeImportProgress={resumeImportProgress}
               importDisabledReason={importResumeGuardMessage}
               isAnalyzeProfilePending={isAnalyzeProfilePending}
               isImportResumePending={isImportResumePending}
@@ -492,9 +561,9 @@ export function ProfileSetupScreen(props: {
             />
           )}
 
-          {backgroundMergeNotice ? (
+          {backgroundMergeNotice && hasBackgroundConflict ? (
             <div
-              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-sm leading-6 text-(--info-text)"
+              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-4 py-3 text-sm leading-6 text-(--warning-text)"
               role="status"
             >
               <span>{backgroundMergeNotice}</span>
@@ -530,7 +599,7 @@ export function ProfileSetupScreen(props: {
                 hasImportedResume={hasImportedResume}
                 onImportResume={onImportResume}
                 onStartManually={() => {
-                  if (isImportResumePending && resumeImportProgress === null) {
+                  if (isImportResumePending) {
                     onCancelImportResume();
                   }
                   goToStep("essentials");
@@ -620,7 +689,6 @@ export function ProfileSetupScreen(props: {
 
           <div className={profileSetupLayoutClassNames.reviewRail}>
             {profileSetupState.currentStep !== "targeting" ? reviewQueue : null}
-
           </div>
         </div>
       )}

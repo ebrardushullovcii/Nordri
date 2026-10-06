@@ -515,14 +515,14 @@ describe("profile copilot generic field-update descriptors", () => {
     expect(familyTotals).toEqual({
       replace_application_identity_fields: 3,
       replace_answer_bank_fields: 9,
-      replace_compensation_preferences_fields: 5,
+      replace_compensation_preferences_fields: 6,
       replace_identity_fields: 20,
       replace_narrative_fields: 5,
       replace_profile_list_fields: 3,
       replace_professional_summary_fields: 6,
-      replace_search_preferences_fields: 17,
+      replace_search_preferences_fields: 20,
       replace_skill_group_fields: 5,
-      replace_work_eligibility_fields: 9,
+      replace_work_eligibility_fields: 10,
     });
   });
 
@@ -816,4 +816,19 @@ describe("profile copilot generic field-update descriptors", () => {
       value: { tools: ["grep"] },
     });
   });
+});
+
+test("structured preference facts remain model-owned rather than guessed by fallback parsers", () => {
+  expect(
+    getReplacementFieldOwnershipSnapshot()
+      .filter((entry) => entry.owner === "model")
+      .map((entry) => entry.field)
+      .sort(),
+  ).toEqual([
+    "basis",
+    "limitedWorkPermissions",
+    "searchSelectivity",
+    "shiftPreference",
+    "weeklyHours",
+  ]);
 });

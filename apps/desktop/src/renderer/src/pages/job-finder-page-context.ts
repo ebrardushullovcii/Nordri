@@ -117,6 +117,7 @@ export interface JobFinderPageContext {
     options?: { stayOnCurrentPage?: boolean },
   ) => Promise<JobFinderAutoApplyQueueStartOutcome>;
   onStartApplyCopilot: (input: JobFinderApplicationStartTarget) => void;
+  onReviewResumePdf: (jobId: string) => void;
   /** Sends one finished application after the person presses Send. */
   onSubmitPreparedApplication: (jobId: string) => Promise<void>;
   /**
@@ -267,6 +268,7 @@ export interface JobFinderPageContext {
   /** Reports staged settings edits so the shell save retry stays truthful. */
   onSettingsDraftEdited: () => void;
   profileCopilotPendingContextKey: string | null;
+  onAssessJobListing: (jobId: string) => Promise<void>;
   onQueueJob: (jobId: string) => Promise<JobFinderQueuedJobOutcome>;
   onSetJobResumeApplicationMode: (
     jobId: string,
@@ -274,7 +276,8 @@ export interface JobFinderPageContext {
     resumeTailoringMode?: TailoringMode | null,
   ) => void;
   onRejectProfileCopilotPatchGroup: (patchGroupId: string) => void;
-  onResetWorkspace: () => void;
+  onResetWorkspace: () => void | Promise<boolean | void>;
+  onResetBrowser: () => Promise<boolean>;
   onResumeProfileSetup: (step?: ProfileSetupStep) => void;
   onRunAgentDiscovery?: (searchRequest?: JobFinderSearchRequest) => void;
   /**

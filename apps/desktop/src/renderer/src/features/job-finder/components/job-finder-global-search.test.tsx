@@ -37,7 +37,7 @@ const sampleEntries = [
     kind: "document" as const,
     metadata: ["resume"],
     subtitle: "PDF",
-    title: "Ebrar CV",
+    title: "Elian CV",
   },
 ];
 
@@ -281,7 +281,7 @@ describe("JobFinderGlobalSearchDialog", () => {
     renderDialog({ onClose, onNavigate });
 
     typeQuery("resume");
-    const resumeOption = screen.getAllByRole("option", { name: /Ebrar CV/ })[0];
+    const resumeOption = screen.getAllByRole("option", { name: /Elian CV/ })[0];
     expect(resumeOption).toBeTruthy();
     fireEvent.click(resumeOption as HTMLElement);
 

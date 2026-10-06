@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { APPLICATION_BOUNDARY_SENTENCE } from "./safeguards-application-boundary";
 // @vitest-environment jsdom
 
 import {
@@ -12,11 +14,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   JobFinderWorkspaceSnapshot,
   SafeguardMutationInput,
+  SetJobFinderActivityControlInput,
 } from "@nordri/contracts";
 import { JobFinderIntelligenceSafeguardsSchema } from "@nordri/contracts";
 import { SafeguardsScreen } from "./safeguards-screen";
 
 const now = "2026-08-15T10:00:00.000Z";
+afterEach(cleanup);
 
 function emptySafeguards() {
   return JobFinderIntelligenceSafeguardsSchema.parse({});
@@ -117,6 +121,8 @@ function workspaceWith(
 }
 
 function renderScreen(props: {
+  onSetActivityControl?: (input: { paused: boolean }) => Promise<boolean>;
+  onResetBrowser?: () => Promise<boolean>;
   onMutateSafeguards?: (input: SafeguardMutationInput) => Promise<boolean>;
   isPending?: (controlId: string) => boolean;
   actionMessage?: string | null;
@@ -125,6 +131,12 @@ function renderScreen(props: {
   return render(
     <MemoryRouter>
       <SafeguardsScreen
+        {...(props.onSetActivityControl
+          ? { onSetActivityControl: props.onSetActivityControl }
+          : {})}
+        {...(props.onResetBrowser
+          ? { onResetBrowser: props.onResetBrowser }
+          : {})}
         actionMessage={props.actionMessage ?? null}
         isPending={props.isPending ?? (() => false)}
         onMutateSafeguards={
@@ -227,7 +239,9 @@ describe("SafeguardsScreen", () => {
     renderScreen({ onMutateSafeguards, workspace: workspaceWith(safeguards) });
 
     expect(screen.getByText("Listing suspicious")).toBeTruthy();
-    expect(screen.getByText(/1 thing is being held back/)).toBeTruthy();
+    // The held count is said once, on the events section, not in a box.
+    expect(screen.getByText(/1 holding work back/)).toBeTruthy();
+    expect(screen.queryByText(/thing is being held back/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss signal" }));
 
@@ -516,7 +530,12 @@ describe("SafeguardsScreen", () => {
 
     renderScreen({ workspace });
 
-    const status = screen.getByTestId("safeguards-daily-capacity-status");
+    // The reached limit is an info item on the header status line.
+    const status = document.querySelector(
+      '[data-page-status-item="daily-capacity"]',
+    ) as HTMLElement;
+    expect(status.getAttribute("data-tone")).toBe("info");
+    expect(status.closest("[data-page-header-status]")).toBeTruthy();
     expect(status.textContent).toMatch(/20 of 20 used today/i);
     expect(status.textContent).toMatch(/reset at local midnight \(/i);
     expect(status.textContent).not.toMatch(/applications can both run/i);
@@ -552,7 +571,9 @@ describe("SafeguardsScreen", () => {
         /Nothing is being held back right now\. Searching and preparing applications can both run\./i,
       ),
     ).toBeTruthy();
-    expect(screen.queryByTestId("safeguards-daily-capacity-status")).toBeNull();
+    expect(
+      document.querySelector('[data-page-status-item="daily-capacity"]'),
+    ).toBeNull();
   });
 
   it("states the whole application boundary and keeps every permission revocable", async () => {
@@ -588,11 +609,7 @@ describe("SafeguardsScreen", () => {
     renderScreen({});
 
     // The sentence a job seeker can hold the product to, verbatim.
-    expect(
-      screen.getByText(
-        "Job Finder fills applications and sends them only with your permission. It never asks for your password or solves CAPTCHA or MFA.",
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText(APPLICATION_BOUNDARY_SENTENCE)).toBeTruthy();
 
     const revokeTrigger = await screen.findByRole("button", {
       name: "Revoke permission",
@@ -618,4 +635,160 @@ describe("SafeguardsScreen", () => {
 
     delete (window as unknown as Record<string, unknown>).nordri;
   });
+});
+
+it("uses workspace actions to refresh immediately after Resume and browser reset", async () => {
+  const next = workspaceWith();
+  next.activityControl = { paused: false, reason: null, pausedAt: null };
+  const initial = workspaceWith();
+  initial.activityControl = { paused: true, reason: null, pausedAt: now };
+  const setActivityControl = vi
+    .fn<
+      (
+        command: SetJobFinderActivityControlInput,
+      ) => Promise<JobFinderWorkspaceSnapshot>
+    >()
+    .mockResolvedValue(next);
+  const resetBrowser = vi
+    .fn<() => Promise<JobFinderWorkspaceSnapshot>>()
+    .mockResolvedValue(initial);
+  function Harness() {
+    const [workspace, setWorkspace] = useState(initial);
+    return (
+      <MemoryRouter>
+        <SafeguardsScreen
+          actionMessage={null}
+          isPending={() => false}
+          onMutateSafeguards={vi.fn()}
+          workspace={workspace}
+          onSetActivityControl={async (command) => {
+            setWorkspace(await setActivityControl(command));
+            return true;
+          }}
+          onResetBrowser={async () => {
+            setWorkspace(await resetBrowser());
+            return true;
+          }}
+        />
+      </MemoryRouter>
+    );
+  }
+  render(<Harness />);
+  expect(screen.getByText(/Everything is paused/)).toBeTruthy();
+  // The pause is one amber item on the status line, not a box.
+  expect(
+    document
+      .querySelector('[data-page-status-item="activity-paused"]')
+      ?.getAttribute("data-tone"),
+  ).toBe("warning");
+  fireEvent.click(screen.getByRole("button", { name: "Resume everything" }));
+  await waitFor(() =>
+    expect(screen.queryByText(/Everything is paused/)).toBeNull(),
+  );
+  expect(setActivityControl).toHaveBeenCalledWith({ paused: false });
+  fireEvent.click(screen.getByRole("button", { name: "Reset browser" }));
+  expect(resetBrowser).not.toHaveBeenCalled();
+  expect(screen.getByRole("alertdialog").textContent).toContain("sign-ins");
+  fireEvent.click(screen.getByRole("button", { name: "Clear browser" }));
+  await waitFor(() =>
+    expect(screen.getByText(/Everything is paused/)).toBeTruthy(),
+  );
+  expect(resetBrowser).toHaveBeenCalledOnce();
+});
+
+it("puts events before permissions, with compact browser recovery inside permissions", () => {
+  const { container } = renderScreen({
+    workspace: workspaceWith(signalSafeguards()),
+  });
+  const events = container.querySelector("[data-safeguard-events]")!;
+  const permissions = screen.getByTestId("safeguards-application-boundary");
+  expect(
+    events.compareDocumentPosition(permissions) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  const reset = screen.getByRole("button", { name: "Reset browser" });
+  expect(permissions.contains(reset)).toBe(true);
+  expect(reset.parentElement?.className).toContain("justify-items-start");
+  expect(screen.getAllByText(APPLICATION_BOUNDARY_SENTENCE)).toHaveLength(1);
+});
+
+it("keeps the inspected Safeguards section open after allowing a pair", async () => {
+  const safeguards = JobFinderIntelligenceSafeguardsSchema.parse({
+    simultaneousApplicationConflicts: [
+      {
+        id: "pair",
+        applicationRecordId: "a",
+        conflictingApplicationRecordId: "b",
+        companyKey: "synthetic",
+        companyName: "Synthetic Workshop",
+        jobIds: ["job_ready", "job_other"],
+        status: "detected",
+        explanation: "Same employer",
+        recoveryGuidance: "Choose a pair",
+      },
+    ],
+  });
+  const initial = workspaceWith(safeguards);
+  initial.companyJobs = [];
+  initial.dismissedDiscoveryJobs = [];
+  initial.discoveryJobs = [
+    initial.discoveryJobs[0]!,
+    { ...initial.discoveryJobs[0]!, id: "job_other", location: "London" },
+  ];
+  function Harness() {
+    const [workspace, setWorkspace] = useState(initial);
+    return (
+      <MemoryRouter>
+        <SafeguardsScreen
+          actionMessage={null}
+          isPending={() => false}
+          workspace={workspace}
+          onMutateSafeguards={() => {
+            setWorkspace({
+              ...workspace,
+              intelligence: {
+                ...workspace.intelligence,
+                safeguards: JobFinderIntelligenceSafeguardsSchema.parse({
+                  ...safeguards,
+                  simultaneousApplicationConflicts: [
+                    {
+                      ...safeguards.simultaneousApplicationConflicts[0],
+                      allowedPairs: [
+                        {
+                          jobIds: ["job_ready", "job_other"],
+                          decidedAt: now,
+                          revokedAt: null,
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              },
+            });
+            return Promise.resolve(true);
+          }}
+        />
+      </MemoryRouter>
+    );
+  }
+  const view = render(<Harness />);
+  const events = view.container.querySelector<HTMLDetailsElement>(
+    "[data-safeguard-events]",
+  )!;
+  expect(events.open).toBe(true);
+  const card = view.container.querySelector<HTMLElement>(
+    "[data-safeguard-kind=conflicts]",
+  )!;
+  expect(card.className).toContain("min-w-0");
+  expect(card.querySelector("h3")?.className).toContain("break-words");
+  // A pair choice names both jobs; it wraps inside the card instead of
+  // pushing it past a narrow column.
+  const pairChoice = screen.getByRole("button", { name: /^Send both anyway:/ });
+  expect(pairChoice.className).toContain("whitespace-normal");
+  expect(pairChoice.className).toContain("max-w-full");
+  expect(pairChoice.parentElement?.className).toContain("min-w-0");
+  fireEvent.click(pairChoice);
+  await screen.findByText("Pairs allowed by you");
+  expect(events.open).toBe(true);
+  expect(screen.queryByText(/Recovery: Choose Send both anyway/)).toBeNull();
 });

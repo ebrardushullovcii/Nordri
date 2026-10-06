@@ -32,7 +32,6 @@ import type {
   ApplicationQuestionKind,
   BrowserAgentRunCheckpoint,
   SourceDebugPhase,
-  SharedAgentCompactionPolicy,
   SavedJob,
 } from "@nordri/contracts";
 import type { Page } from "playwright";
@@ -251,6 +250,10 @@ export interface ApplicationPreparationProgress {
 }
 
 export interface BrowserSessionRuntime {
+  readRenderedPage?(
+    url: string,
+    options?: { signal?: AbortSignal; onPage?: (page: Page) => void },
+  ): Promise<{ html: string; finalUrl: string }>;
   getSessionState(source: JobSource): Promise<BrowserSessionState>;
   openSession(
     source: JobSource,
@@ -340,15 +343,20 @@ export interface BrowserSessionRuntime {
     pageBindingKey: string,
   ): Promise<RawApplyPage | null>;
   /**
-   * Forget the retained page of an application that is finished (the
-   * employer confirmed receipt). The tab stays open for the person but is no
-   * longer protected, so later runs can reuse or close it instead of
-   * counting it against the browser's tab limit.
+   * Close the exact retained page when its owner has finished with it.
+   * Resolves `false` when the person has the page (they opened it to finish
+   * it), which then stays open for them.
    */
   releaseApplicationPageBinding?(
     source: JobSource,
     pageBindingKey: string,
-  ): Promise<void>;
+  ): Promise<boolean | void>;
+  /** Move a retained page to a replacement attempt without reloading it. */
+  transferApplicationPageBinding?(
+    source: JobSource,
+    previousKey: string,
+    nextKey: string,
+  ): Promise<boolean>;
   /**
    * Main-process-only application hand. The runtime retains Page ownership
    * and returns a redacted, transient observation with no DOM handle.
@@ -406,6 +414,8 @@ export interface BrowserApplicationExecutionOptions {
 }
 
 export interface AgentDiscoveryOptions {
+  /** Capacity waits happen before page navigation and do not fail a source. */
+  onWaitingForBrowserTab?: () => void;
   /** No person-specified result cap; retain every suitable posting found. */
   retainAllFound?: boolean;
   /** Public feed postings available for the model to inspect and select. */
@@ -443,9 +453,6 @@ export interface AgentDiscoveryOptions {
    * ends unless the run was stopped for the person.
    */
   dedicatedPage?: boolean;
-  agentHints?: {
-    widenReviewBudget?: boolean;
-  };
   siteLabel: string;
   navigationHostnames: string[];
   siteInstructions?: string[];
@@ -461,15 +468,9 @@ export interface AgentDiscoveryOptions {
     manualPrerequisiteState?: string | null;
     strategyLabel?: string | null;
   };
-  compaction?: Partial<SharedAgentCompactionPolicy>;
-  modelContextWindowTokens?: number | null;
-  compactionHints?: {
-    workflowKey?: string;
-  };
+  /** URL fragments that mark an already-open tab as a usable starting page. */
   relevantUrlSubstrings?: string[];
-  experimental?: boolean;
   skipSessionValidation?: boolean;
-  captureVisualSnapshots?: boolean;
   aiClient?: JobFinderAiClient;
   onProgress?: (progress: AgentDiscoveryProgress) => void;
   onAutomationPage?: AutomationPageListener;

@@ -18,12 +18,14 @@ import {
  * the collapsed Technical details block rendered by the activity sections.
  */
 export function ApplicationsDetailPanelRecoverySections(props: {
+  progressNow?: number | undefined;
   canRestageAutoRun: boolean;
   canRestageQueueRun: boolean;
   dailyPreparationCapacity: GlobalDailyApplicationPreparationCapacity | null;
   excludedQueueRecoveryEntries: QueueEntry[];
   isApplyPending: boolean;
   onStartApplyCopilot: (input: JobFinderExactApplicationTarget) => void;
+  onReviewResumePdf?: (jobId: string) => void;
   onStartAutoApplyQueue: (jobIds: string[]) => void;
   onOpenSafeguards?: () => void;
   onOpenNeedsYou?: () => void;
@@ -35,6 +37,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
    * be under-reported at every intermediate hop.
    */
   onFinishInBrowser?: FinishInBrowserHandler;
+  onReviewBeforeSending?: () => void;
   onConfirmFinishedInBrowser?: (input: FinishInBrowserInput) => void;
   canConfirmFinishedInBrowser?: boolean;
   browserStepContinuesOnItsOwn?: boolean;
@@ -49,6 +52,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
   selectedRecordLatestBlockerCode?: string | null;
   selectedRecordLastActionLabel?: string | null;
   selectedRecordTrackedAsApplied?: boolean;
+  personSendReceiptSummary?: string | null;
   selectedRun: JobFinderWorkspaceSnapshot["applyRuns"][number] | null;
   /** What the visible result's run is doing (a planned job's standing). */
   visibleApplyRunContext?: ApplyRunContext | null;
@@ -63,12 +67,14 @@ export function ApplicationsDetailPanelRecoverySections(props: {
     excludedQueueRecoveryEntries,
     isApplyPending,
     onStartApplyCopilot,
+    onReviewResumePdf,
     onStartAutoApplyQueue,
     onOpenSafeguards,
     onOpenNeedsYou,
     answerStep = null,
     onAllowSiteSaves,
     onFinishInBrowser,
+    onReviewBeforeSending,
     onConfirmFinishedInBrowser,
     canConfirmFinishedInBrowser,
     browserStepContinuesOnItsOwn,
@@ -90,18 +96,21 @@ export function ApplicationsDetailPanelRecoverySections(props: {
 
   return (
     <ApplicationsDetailPanelRecoveryActionsSection
+      progressNow={props.progressNow}
       canRestageAutoRun={canRestageAutoRun}
       canRestageQueueRun={canRestageQueueRun}
       dailyPreparationCapacity={dailyPreparationCapacity}
       excludedQueueRecoveryEntries={excludedQueueRecoveryEntries}
       isApplyPending={isApplyPending}
       onStartApplyCopilot={onStartApplyCopilot}
+      {...(onReviewResumePdf ? { onReviewResumePdf } : {})}
       onStartAutoApplyQueue={onStartAutoApplyQueue}
       {...(onOpenSafeguards ? { onOpenSafeguards } : {})}
       {...(onOpenNeedsYou ? { onOpenNeedsYou } : {})}
       answerStep={answerStep}
       {...(onAllowSiteSaves ? { onAllowSiteSaves } : {})}
       {...(onFinishInBrowser ? { onFinishInBrowser } : {})}
+      {...(onReviewBeforeSending ? { onReviewBeforeSending } : {})}
       {...(onConfirmFinishedInBrowser ? { onConfirmFinishedInBrowser } : {})}
       canConfirmFinishedInBrowser={canConfirmFinishedInBrowser ?? false}
       browserStepContinuesOnItsOwn={browserStepContinuesOnItsOwn ?? false}
@@ -115,6 +124,7 @@ export function ApplicationsDetailPanelRecoverySections(props: {
       selectedApplicationRecordId={selectedApplicationRecordId}
       selectedRecordLastActionLabel={selectedRecordLastActionLabel}
       selectedRecordTrackedAsApplied={selectedRecordTrackedAsApplied}
+      personSendReceiptSummary={props.personSendReceiptSummary ?? null}
       {...(selectedRecordLatestBlockerCode !== undefined
         ? { selectedRecordLatestBlockerCode }
         : {})}

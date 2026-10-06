@@ -1,5 +1,7 @@
 import {
   AssetGenerationReasonSchema,
+  ResumeLanguageTranslationSchema,
+  JobRequirementAssessmentSchema,
   type AiProfileAssistantBehavior,
   type AgentProviderStatus,
   AgentTaskExecutionReceiptSchema,
@@ -19,8 +21,16 @@ import {
   WorkModeListSchema,
   candidateLinkKindValues,
   type CandidateProfile,
+  type FitRecommendation,
+  FitRecommendationSchema,
   type JobFinderSettings,
   type JobPosting,
+  MatchLocationReachSchema,
+  type MatchLocationReach,
+  PreferenceAlignmentStateSchema,
+  type PreferenceAlignmentState,
+  RoleSuitabilityStateSchema,
+  type RoleSuitabilityState,
   type JobSearchPreferences,
   type ResumeApproach,
   type ResumeDraft,
@@ -195,9 +205,11 @@ export type TailoredResumeGenerationProvenance = z.infer<
 >;
 
 export const TailoredResumeDraftSchema = z.object({
+  languagePresentation: ResumeLanguageTranslationSchema.optional(),
   recommendedTemplateId: ResumeTemplateIdSchema.nullable().optional(),
   label: NullableStringSchema,
-  summary: NonEmptyStringSchema,
+  // A candidate without a saved summary may omit it in a fallback.
+  summary: z.string(),
   experienceHighlights: z.array(NonEmptyStringSchema).default([]),
   coreSkills: z.array(NonEmptyStringSchema).default([]),
   targetedKeywords: z.array(NonEmptyStringSchema).default([]),
@@ -210,6 +222,9 @@ export const TailoredResumeDraftSchema = z.object({
         dateRange: NullableStringSchema,
         summary: NullableStringSchema,
         bullets: z.array(NonEmptyStringSchema).default([]),
+        bulletSourceAchievementIds: z
+          .array(z.array(NonEmptyStringSchema))
+          .optional(),
         profileRecordId: NullableStringSchema,
       }),
     )
@@ -307,9 +322,24 @@ export type ResumeGenerationStrategyPolicy = z.infer<
 >;
 
 export const JobFitAssessmentSchema = z.object({
+  requirements: z.array(JobRequirementAssessmentSchema).max(40).optional(),
   score: z.number().int().min(0).max(100),
   reasons: z.array(NonEmptyStringSchema).default([]),
   gaps: z.array(NonEmptyStringSchema).default([]),
+  // The model's verdict on the same terms as a search's batch judging. Older
+  // replies and fakes without a recommendation remain review-only.
+  recommendation: FitRecommendationSchema.optional().catch(undefined),
+  role: RoleSuitabilityStateSchema.optional().catch(undefined),
+  roleExplanation: NonEmptyStringSchema.max(320).optional().catch(undefined),
+  preferences: PreferenceAlignmentStateSchema.optional().catch(undefined),
+  preferencesExplanation: NonEmptyStringSchema.max(320)
+    .optional()
+    .catch(undefined),
+  locationReach: MatchLocationReachSchema.optional().catch(undefined),
+  listingClosed: z.boolean().optional().catch(undefined),
+  listingClosedEvidence: NonEmptyStringSchema.max(240)
+    .optional()
+    .catch(undefined),
 });
 
 export type JobFitAssessment = z.infer<typeof JobFitAssessmentSchema>;
@@ -358,6 +388,9 @@ export interface CreateResumeDraftInput extends TailorResumeInput {
   availableTemplates?: readonly ResumeTemplateDefinition[];
   selectedTemplateId?: string | null;
   templateSelectionLocked?: boolean;
+  /** Null asks the writer to follow the actual listing language. */
+  language?: string | null;
+  languageFields?: Array<{ id: string; text: string }>;
   renderPreview?: (input: {
     draft: TailoredResumeDraft;
     templateId: string;
@@ -368,6 +401,7 @@ export interface CreateResumeDraftInput extends TailorResumeInput {
     fileName: string | null;
     requiredModelRepairs?: readonly ResumeValidationIssue[];
     personConfirmationCount?: number;
+    languageFields?: Array<{ id: string; text: string }>;
   }>;
   strategy?: ResumeGenerationStrategyPolicy | null;
   evidence?: {
@@ -571,9 +605,77 @@ export const PROFILE_RESUME_APPROACH_VOCABULARY = [
 ].join(" ");
 
 export interface AssessJobFitInput {
+  signal?: AbortSignal;
+  assessmentDate?: string;
   profile: CandidateProfile;
   searchPreferences: JobSearchPreferences;
   job: JobPosting;
+}
+
+/** One job's verdict from batch fit judging (ADR 0041). */
+export interface JobFitJudgmentResult {
+  jobId: string;
+  score: number;
+  recommendation: FitRecommendation;
+  role: RoleSuitabilityState;
+  roleExplanation: string | null;
+  preferences: PreferenceAlignmentState;
+  preferencesExplanation: string | null;
+  locationReach: MatchLocationReach;
+  reasons: string[];
+  gaps: string[];
+  /** The main reason for the recommendation, in one sentence. */
+  summary?: string | null;
+  listingClosed: boolean;
+  listingClosedEvidence: string | null;
+}
+
+export interface JudgeJobFitsInput {
+  signal?: AbortSignal;
+  assessmentDate: string;
+  profile: CandidateProfile;
+  searchPreferences: JobSearchPreferences;
+  /** At most one batch; callers split larger sets. */
+  jobs: ReadonlyArray<{ jobId: string; posting: JobPosting }>;
+}
+
+/** Resume lines the model checks against the candidate's evidence. */
+export interface ResumeClaimCheckInput {
+  signal?: AbortSignal;
+  /** How far the person allowed the resume to stretch. */
+  tailoringStrength: string;
+  job: {
+    title: string;
+    company: string;
+    description: string;
+    /** The posting's duties and qualifications, as listed. */
+    requirements?: ReadonlyArray<string>;
+  };
+  /** The candidate's evidence, each entry with an id the verdict can cite. */
+  evidence: ReadonlyArray<{ id: string; text: string }>;
+  resumeText: string | null;
+  /** All visible lines, including other batches, for repetition and context. */
+  resumeLines?: ReadonlyArray<{ section: string; text: string }>;
+  /** At most one batch; callers split larger sets. */
+  claims: ReadonlyArray<{ id: string; section: string; text: string }>;
+}
+
+export interface ResumeClaimCheckResult {
+  id: string;
+  verdict: "supported" | "stretch" | "unsupported";
+  reason: string;
+  evidenceIds: string[];
+  /**
+   * For a stretch or an unsupported line: the line rewritten to claim only
+   * what the evidence backs, or "" when nothing in it can be kept. Null when
+   * no fix was given.
+   */
+  fix: string | null;
+  /**
+   * A short note, addressed to the candidate, when the line is not finished
+   * resume writing (a keyword list, a fragment, filler, first-person prose).
+   */
+  style?: string | null;
 }
 
 export interface ExtractJobsFromPageInput {
@@ -581,6 +683,7 @@ export interface ExtractJobsFromPageInput {
   pageUrl: string;
   pageType: "search_results" | "job_detail";
   maxJobs: number;
+  selectionContext?: string;
   signal?: AbortSignal;
 }
 
@@ -648,6 +751,18 @@ export interface JobFinderAiClient {
   ): Promise<ProfileCopilotReply>;
   tailorResume(input: TailorResumeInput): Promise<TailoredResumeDraft>;
   assessJobFit(input: AssessJobFitInput): Promise<JobFitAssessment | null>;
+  /**
+   * Judges many jobs in one call. Absent on clients without a model; an
+   * empty answer leaves those jobs unjudged.
+   */
+  judgeJobFits?(input: JudgeJobFitsInput): Promise<JobFitJudgmentResult[]>;
+  /**
+   * Checks resume lines against the candidate's evidence, many per call.
+   * Absent on clients without a model; unchecked lines go to the person.
+   */
+  checkResumeClaims?(
+    input: ResumeClaimCheckInput,
+  ): Promise<ResumeClaimCheckResult[]>;
   extractJobsFromPage(input: ExtractJobsFromPageInput): Promise<JobPosting[]>;
   analyzeBrowserVisualSnapshot?(
     input: BrowserVisualAnalysisInput,
@@ -657,6 +772,7 @@ export interface JobFinderAiClient {
 
 export interface ChatWithToolsOptions {
   signal?: AbortSignal;
+  parallelToolCalls?: boolean;
   maxOutputTokens?: number;
   /** Which product conversation this turn continues; see model-request-identity. */
   conversationKey?: string;

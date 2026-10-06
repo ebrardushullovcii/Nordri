@@ -690,6 +690,7 @@ export function ResumeStrategiesScreen(props: {
               onClick={() =>
                 setEditing(emptyFormInput(props.baseResumeDocumentId))
               }
+              size="sm"
               type="button"
             >
               New resume approach

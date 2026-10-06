@@ -14,6 +14,7 @@ export interface LLMClient {
     tools: AgentLoopToolDefinition[],
     options?: {
       signal?: AbortSignal
+      parallelToolCalls?: boolean
       maxOutputTokens?: number
     }
   ) => Promise<{
@@ -29,6 +30,7 @@ export interface JobExtractor {
     pageUrl: string
     pageType: AgentExtractorPageType
     maxJobs: number
+    selectionContext?: string
     signal?: AbortSignal
   }) => Promise<Array<
     Pick<
@@ -49,6 +51,7 @@ export interface JobExtractor {
     > & Partial<
       Pick<
         JobPosting,
+        | 'applicationUrl'
         | 'postedAtText'
         | 'providerUpdatedAt'
         | 'responsibilities'

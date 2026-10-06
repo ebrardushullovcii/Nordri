@@ -81,9 +81,12 @@ export function DiscoverySessionSummary(props: {
             <div
               aria-live="polite"
               className={
+                // Only a required sign-in is a tinted box; a recommended one
+                // is an optional improvement, so it reads as plain text with
+                // its button (ADR 0042).
                 primarySourceAccessPrompt.state === "prompt_login_required"
                   ? "rounded-(--radius-small) border border-(--warning-border) bg-(--warning-surface) px-3 py-3 text-(length:--text-description) leading-6 text-(--warning-text)"
-                  : "rounded-(--radius-small) border border-(--info-border) bg-(--info-surface) px-3 py-3 text-(length:--text-description) leading-6 text-(--info-text)"
+                  : "text-(length:--text-description) leading-6 text-foreground-soft"
               }
               role="status"
             >
@@ -148,43 +151,43 @@ export function DiscoverySessionSummary(props: {
           {!isOfflineRuntime &&
           (needsLogin || isBlocked) &&
           !primarySourceAccessPrompt ? (
-            <div
+            <p
               role="status"
-              className="rounded-(--radius-small) border border-(--warning-border) bg-(--warning-surface) px-3 py-3 text-(length:--text-description) leading-6 text-(--warning-text)"
+              className="text-(length:--text-description) leading-6 text-foreground-soft"
             >
               Some sources may need sign-in before the next search can finish.
-            </div>
+            </p>
           ) : null}
           {!isOfflineRuntime && isReady && !primarySourceAccessPrompt ? (
-            <div
+            <p
               role="status"
-              className="rounded-(--radius-small) border border-(--success-border) bg-(--success-surface) px-3 py-3 text-(length:--text-description) leading-6 text-(--success-text)"
+              className="text-(length:--text-description) leading-6 text-foreground-soft"
             >
-              Browser ready. If you signed in to a job site here, that sign-in
-              is reused.
-            </div>
+              If you signed in to a job site in the browser, that sign-in is
+              reused.
+            </p>
           ) : null}
           {!isOfflineRuntime &&
           hasRecommendedSourceAccessPrompt &&
           !primarySourceAccessPrompt &&
           !needsLogin &&
           !isBlocked ? (
-            <div
+            <p
               role="status"
-              className="rounded-(--radius-small) border border-(--info-border) bg-(--info-surface) px-3 py-3 text-(length:--text-description) leading-6 text-(--info-text)"
+              className="text-(length:--text-description) leading-6 text-foreground-soft"
             >
               The browser can improve coverage for sources that support sign-in.
-            </div>
+            </p>
           ) : null}
           {isOfflineRuntime ? (
-            <div
+            <p
               role="status"
-              className="rounded-(--radius-small) border border-(--info-border) bg-(--info-surface) px-3 py-3 text-(length:--text-description) leading-6 text-(--info-text)"
+              className="text-(length:--text-description) leading-6 text-foreground-soft"
             >
               {isSearchSetupReady
                 ? DISCOVERY_OFFLINE_SETUP_NOTICE
                 : DISCOVERY_OFFLINE_CATALOG_NOTICE}
-            </div>
+            </p>
           ) : !sectionDetail &&
             !needsLogin &&
             !isBlocked &&
@@ -392,10 +395,12 @@ export function DiscoveryRunOneSourceSection(props: {
                 targetPrompt.targetId !==
                   primarySourceAccessPrompt?.targetId ? (
                   <div
+                    // A row status, not a box per source row: the colour
+                    // of the line says whether sign-in is required.
                     className={
                       targetPrompt.state === "prompt_login_required"
-                        ? "rounded-(--radius-small) border border-(--warning-border) bg-(--warning-surface) px-3 py-3 text-(length:--text-small) leading-6 text-(--warning-text)"
-                        : "rounded-(--radius-small) border border-(--info-border) bg-(--info-surface) px-3 py-3 text-(length:--text-small) leading-6 text-(--info-text)"
+                        ? "text-(length:--text-small) leading-6 text-(--warning-text)"
+                        : "text-(length:--text-small) leading-6 text-foreground-muted"
                     }
                     role="status"
                   >

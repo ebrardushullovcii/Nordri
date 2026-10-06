@@ -28,6 +28,9 @@
       "@nordri/core": ["packages/core/src/index.ts"],
       "@nordri/db": ["packages/db/src/index.ts"],
       "@nordri/knowledge-base": ["packages/knowledge-base/src/index.ts"],
+      "@nordri/job-finder/assistant-attention": [
+        "packages/job-finder/src/assistant/attention.ts"
+      ],
       "@nordri/job-finder/discovery-ordering": [
         "packages/job-finder/src/discovery-ordering.ts"
       ],

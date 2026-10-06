@@ -116,8 +116,12 @@ export function createApplicationPreparationScheduler(maxActive = 2): {
             throw new Error("Application preparation was released.");
           const nextKey = applicationSiteKey(nextUrl) ?? "unknown-site";
           if (nextKey === request.key) return;
-          // Release the previous site's ownership while waiting. Two forms
-          // crossing sites in opposite directions cannot deadlock this way.
+          // Release both the previous site and the worker slot while waiting
+          // for the destination. An unrelated site can use the idle capacity.
+          if (request.active) {
+            request.active = false;
+            running -= 1;
+          }
           await waitFor(request, nextKey);
         },
         async suspend(work) {

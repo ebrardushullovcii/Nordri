@@ -230,7 +230,7 @@ export function CampaignNotificationCenter(props: {
                 const pending = props.pendingNotificationId(notification.id);
                 return (
                   <li
-                    className={`grid gap-1.5 rounded-(--radius-field) border p-3 ${notification.unread ? "border-accent/40 bg-accent/5" : "border-border-subtle"}`}
+                    className={`grid gap-1.5 rounded-(--radius-field) border p-3 ${notification.unread ? "border-primary/60 bg-primary/10" : "border-border-subtle"}`}
                     key={notification.id}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -242,7 +242,7 @@ export function CampaignNotificationCenter(props: {
                           {kindLabels[notification.kind]} ·{" "}
                           {formatCreatedAt(notification.createdAt)}
                           {notification.unread ? (
-                            <span className="ml-2 rounded-full border border-accent/45 px-1.5 py-0.5 text-accent">
+                            <span className="ml-2 rounded-full border border-primary/60 bg-primary/10 px-1.5 py-0.5 font-semibold text-foreground">
                               Unread
                             </span>
                           ) : null}
@@ -267,7 +267,10 @@ export function CampaignNotificationCenter(props: {
                     </div>
                     {notification.body ? (
                       <p className="text-sm text-foreground-soft">
-                        {notification.body}
+                        {notification.kind === "blocked_work" &&
+                        notification.sourceTargetId
+                          ? "This job source could not be opened. Your saved jobs and other sources are still available. Open job sources to try again."
+                          : notification.body}
                       </p>
                     ) : null}
                     {props.onNavigate ? (

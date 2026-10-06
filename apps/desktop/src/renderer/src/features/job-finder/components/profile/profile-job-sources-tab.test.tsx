@@ -142,14 +142,18 @@ describe("ProfileJobSourcesTab", () => {
     });
   });
 
-  it("rejects whitespace in hosts while allowing spaces in paths and queries", () => {
+  it("rejects literal spaces in addresses instead of saving a pasted list as a path", () => {
     expect(
       parseJobSourceUrls(
         "not a url\nhttps://not%20a%20url/jobs\nhttps://jobs.example.com/Job Openings?team=Design Systems",
       ),
     ).toEqual({
-      urls: ["https://jobs.example.com/Job%20Openings?team=Design%20Systems"],
-      invalid: ["not a url", "https://not%20a%20url/jobs"],
+      urls: ["https://jobs.example.com/Job"],
+      invalid: [
+        "not a url",
+        "https://not%20a%20url/jobs",
+        "Openings?team=Design Systems",
+      ],
     });
   });
 
@@ -734,7 +738,7 @@ describe("ProfileJobSourcesTab", () => {
       target: { value: "https://gamma.example/careers" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Add 1 source" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit gamma.example" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit gamma.example/careers" }));
 
     const includeToggle = screen.getByRole("checkbox", {
       name: "Include this source in searches",
@@ -764,9 +768,9 @@ describe("ProfileJobSourcesTab", () => {
 
     expect(screen.getByText("Added and turned on 2 sources.")).toBeTruthy();
     expect(screen.getByText("3 sources")).toBeTruthy();
-    expect(screen.getByText("alpha.example")).toBeTruthy();
+    expect(screen.getByText("alpha.example/careers")).toBeTruthy();
     expect(screen.getByText("https://alpha.example/careers")).toBeTruthy();
-    expect(screen.getByText("beta.example")).toBeTruthy();
+    expect(screen.getByText("beta.example/jobs")).toBeTruthy();
     expect(screen.getByText("https://beta.example/jobs")).toBeTruthy();
   });
 
@@ -843,4 +847,18 @@ describe("ProfileJobSourcesTab", () => {
     expect(title?.className).toContain("truncate");
     expect(title?.getAttribute("title")).toBe(longName);
   });
+});
+
+it("parses a list supplied without a paste event and refuses malformed mixed input", () => {
+  expect(
+    parseJobSourceUrls("https://one.example/careers https://two.example/jobs"),
+  ).toEqual({
+    urls: ["https://one.example/careers", "https://two.example/jobs"],
+    invalid: [],
+  });
+  expect(
+    parseJobSourceUrls(
+      "https://one.example/careers not a web address https://two.example/jobs",
+    ).invalid,
+  ).toEqual(["not a web address"]);
 });

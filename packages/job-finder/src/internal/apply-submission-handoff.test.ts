@@ -510,3 +510,32 @@ describe("deriveApplySubmissionCapacity", () => {
     ).toEqual({ remainingRunCapacity: 1, remainingDailyCapacity: 4 });
   });
 });
+
+it.each([
+  {
+    status: "recorded_not_submitted",
+    reason: "form_validation_failed",
+    detail: "Select at least one skill.",
+    summary: "Not sent: correct the marked fields",
+    nextActionLabel: "Correct the fields in the browser",
+  },
+  {
+    status: "outcome_uncertain",
+    reason: "confirmation_timeout",
+    detail:
+      "127.0.0.1 did not confirm receipt in time. Check this application on the site before trying again.",
+    summary: "Send attempted; confirmation timed out",
+    nextActionLabel: "Check the site and confirm",
+  },
+])(
+  "explains $reason without claiming a send",
+  ({ status, reason, detail, summary, nextActionLabel }) => {
+    const result = {
+      status,
+      outcome: { browserAction: { reason, detail } },
+    } as unknown as Parameters<typeof describeSubmissionOutcome>[0]["result"];
+    expect(
+      describeSubmissionOutcome({ result, siteLabel: "127.0.0.1" }),
+    ).toEqual({ summary, detail, nextActionLabel });
+  },
+);

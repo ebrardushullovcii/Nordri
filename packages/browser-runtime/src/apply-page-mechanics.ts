@@ -231,10 +231,19 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
               labelText(element.closest("label")) ||
               nearbyQuestionText() ||
               "";
-            const legend = element
-              .closest("fieldset")
-              ?.querySelector(":scope > legend")
-              ?.textContent?.trim();
+            // Nested question groups keep the outer form step's own label.
+            // Reading only the nearest legend dropped that context for skills
+            // and radio groups while other questions still showed the step.
+            const legends: string[] = [];
+            let fieldset = element.closest("fieldset");
+            while (fieldset) {
+              const legend = labelText(
+                fieldset.querySelector(":scope > legend"),
+              );
+              if (legend && !legends.includes(legend)) legends.unshift(legend);
+              fieldset = fieldset.parentElement?.closest("fieldset") ?? null;
+            }
+            const legend = legends.join(" — ");
             const role = element.getAttribute("role")?.toLowerCase() ?? "";
             const tagName = select
               ? "select"
@@ -248,6 +257,11 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
               index,
               tagName,
               inputType: input?.type.toLowerCase() ?? (role || tagName),
+              accept: input?.accept ?? "",
+              min: input?.min ?? "",
+              max: input?.max ?? "",
+              step: input?.step ?? "",
+              maxLength: input?.maxLength ?? textarea?.maxLength ?? -1,
               role,
               id: html.id,
               name: input?.name ?? textarea?.name ?? select?.name ?? "",
@@ -260,7 +274,12 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
                 Boolean(
                   input?.required ?? textarea?.required ?? select?.required,
                 ) || element.getAttribute("aria-required") === "true",
-              invalid: element.getAttribute("aria-invalid") === "true",
+              invalid:
+                element.getAttribute("aria-invalid") === "true" ||
+                Boolean(
+                  (input ?? textarea ?? select)?.validity &&
+                  !(input ?? textarea ?? select)?.validity.valid,
+                ),
               validationMessage:
                 input?.validationMessage ??
                 textarea?.validationMessage ??
@@ -269,14 +288,16 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
               disabled:
                 Boolean(
                   input?.disabled ?? textarea?.disabled ?? select?.disabled,
-                ) || element.getAttribute("aria-disabled") === "true",
+                ) ||
+                element.matches(":disabled") ||
+                element.getAttribute("aria-disabled") === "true",
               readOnly: Boolean(input?.readOnly ?? textarea?.readOnly),
               // A file input is almost always hidden behind a styled "Attach"
               // button (Lever, Greenhouse, Workday). Attaching works on the
               // hidden input, so it stays in the observation; without it the
               // run saw only the button and could never attach the resume.
               visible:
-                (input?.type === "file" && !input.disabled) ||
+                (input?.type === "file" && !input.matches(":disabled")) ||
                 (style.display !== "none" &&
                   style.visibility !== "hidden" &&
                   style.opacity !== "0" &&
@@ -460,6 +481,43 @@ async function readApplyFrame(frame: Frame, frameIndex: number) {
   }
 }
 
+/** Reads present progress markers without waiting for an optional element. */
+export async function readApplyStepLabel(
+  page: Pick<Page, "locator">,
+): Promise<string | null> {
+  return page
+    .locator(
+      "[aria-current='step'], [role='progressbar'], [aria-label*='step' i]",
+    )
+    .evaluateAll((elements) => {
+      const current = elements.find((element) =>
+        element.matches("[aria-current='step']"),
+      );
+      const container = current?.closest("[role='list'], ol, ul");
+      if (current && container) {
+        const steps = Array.from(container.children).filter(
+          (candidate) =>
+            candidate.matches("li, [role='listitem']") &&
+            (candidate.textContent ?? "").trim().length > 0,
+        );
+        const index = steps.findIndex(
+          (candidate) => candidate === current || candidate.contains(current),
+        );
+        if (index >= 0 && steps.length >= 2) {
+          const label = (current as HTMLElement).innerText.trim().slice(0, 120);
+          return `Step ${index + 1} of ${steps.length}${label ? `: ${label}` : ""}`;
+        }
+      }
+      const progress = elements.find((element) =>
+        element.matches("[role='progressbar'], [aria-label*='step' i]"),
+      );
+      return progress
+        ? (progress as HTMLElement).innerText.trim().slice(0, 200)
+        : null;
+    })
+    .catch(() => null);
+}
+
 async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
   const [controls, actions, links, bodyText, validationErrors, stepLabel] =
     await Promise.all([
@@ -529,10 +587,16 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
             return "";
           };
           const groupLabel = (element: Element): string => {
-            const legend = element
-              .closest("fieldset")
-              ?.querySelector(":scope > legend");
-            if (legend?.textContent?.trim()) return legend.textContent.trim();
+            const legends: string[] = [];
+            let fieldset = element.closest("fieldset");
+            while (fieldset) {
+              const legend = labelText(
+                fieldset.querySelector(":scope > legend"),
+              );
+              if (legend && !legends.includes(legend)) legends.unshift(legend);
+              fieldset = fieldset.parentElement?.closest("fieldset") ?? null;
+            }
+            if (legends.length > 0) return legends.join(" — ");
             const group = element.closest(
               "[role='group'], [role='radiogroup']",
             );
@@ -597,6 +661,11 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
               index,
               tagName,
               inputType: input?.type.toLowerCase() ?? (role || tagName),
+              accept: input?.accept ?? "",
+              min: input?.min ?? "",
+              max: input?.max ?? "",
+              step: input?.step ?? "",
+              maxLength: input?.maxLength ?? textarea?.maxLength ?? -1,
               role,
               id: html.id ?? "",
               name: input?.name ?? textarea?.name ?? select?.name ?? "",
@@ -609,7 +678,12 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
                 Boolean(
                   input?.required ?? textarea?.required ?? select?.required,
                 ) || element.getAttribute("aria-required") === "true",
-              invalid: element.getAttribute("aria-invalid") === "true",
+              invalid:
+                element.getAttribute("aria-invalid") === "true" ||
+                Boolean(
+                  (input ?? textarea ?? select)?.validity &&
+                  !(input ?? textarea ?? select)?.validity.valid,
+                ),
               validationMessage:
                 input?.validationMessage ??
                 textarea?.validationMessage ??
@@ -618,14 +692,17 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
               disabled:
                 Boolean(
                   input?.disabled ?? textarea?.disabled ?? select?.disabled,
-                ) || element.getAttribute("aria-disabled") === "true",
+                ) ||
+                element.matches(":disabled") ||
+                element.getAttribute("aria-disabled") === "true",
               readOnly: Boolean(input?.readOnly ?? textarea?.readOnly),
               // A file input is almost always hidden behind a styled "Attach"
               // button (Lever, Greenhouse, Workday). Attaching works on the
               // hidden input, so it stays in the observation; without it the
               // run saw only the button and could never attach the resume.
               visible:
-                (input?.type === "file" && !input.disabled) || isVisible(html),
+                (input?.type === "file" && !input.matches(":disabled")) ||
+                isVisible(html),
               value:
                 input?.value ??
                 textarea?.value ??
@@ -745,39 +822,7 @@ async function readRawApplyPageOnce(page: Page): Promise<RawApplyPage> {
             .slice(0, 12),
         )
         .catch(() => [] as string[]),
-      (async () => {
-        const current = page.locator("[aria-current='step']").first();
-        const currentStep =
-          (await current.count()) > 0
-            ? await current
-                .evaluate((element) => {
-                  const container = element.closest("[role='list'], ol, ul");
-                  if (!container) return null;
-                  const steps = Array.from(container.children).filter(
-                    (candidate) =>
-                      candidate.matches("li, [role='listitem']") &&
-                      (candidate.textContent ?? "").trim().length > 0,
-                  );
-                  const index = steps.findIndex(
-                    (candidate) =>
-                      candidate === element || candidate.contains(element),
-                  );
-                  if (index < 0 || steps.length < 2) return null;
-                  const label = (element as HTMLElement).innerText
-                    .trim()
-                    .slice(0, 120);
-                  return `Step ${index + 1} of ${steps.length}${label ? `: ${label}` : ""}`;
-                })
-                .catch(() => null)
-            : null;
-        if (currentStep) return currentStep;
-        return page
-          .locator("[role='progressbar'], [aria-label*='step' i]")
-          .first()
-          .innerText({ timeout: 1_000 })
-          .then((text) => text.trim().slice(0, 200))
-          .catch(() => null);
-      })(),
+      readApplyStepLabel(page),
     ]);
 
   // A list the page draws itself does not report its own selection, so it is
@@ -1403,25 +1448,46 @@ export function createPlaywrightApplyPageMechanics(
         await locator
           .scrollIntoViewIfNeeded({ timeout: 2_000 })
           .catch(() => undefined);
-        try {
-          await locator.setChecked(checked, { timeout: 5_000 });
-        } catch (actionabilityError) {
-          // Styled radios and checkboxes often leave the native input under a
-          // label or outside the painted viewport. Activating that exact,
-          // enabled input through the DOM preserves its normal click/change
-          // events without depending on pointer geometry.
-          const changed = await locator
-            .evaluate((element, desired) => {
-              if (!(element instanceof HTMLInputElement) || element.disabled) {
-                return false;
-              }
-              if (element.checked !== desired) {
+        // A covered native input used to spend five seconds failing the
+        // pointer check before DOM activation. Detect that geometry up front;
+        // reachable controls still use Playwright's normal pointer events.
+        const activateNative = (coveredOnly: boolean) =>
+          locator
+            .evaluate(
+              (element, input) => {
+                if (
+                  !(element instanceof HTMLInputElement) ||
+                  (element.type !== "checkbox" && element.type !== "radio") ||
+                  element.matches(":disabled")
+                ) {
+                  return false;
+                }
+                if (element.checked === input.checked) return true;
+                if (input.coveredOnly) {
+                  const rect = element.getBoundingClientRect();
+                  const root = element.getRootNode();
+                  const hit = (
+                    root instanceof ShadowRoot ? root : document
+                  ).elementFromPoint(
+                    rect.x + rect.width / 2,
+                    rect.y + rect.height / 2,
+                  );
+                  if (hit === element || (hit && element.contains(hit)))
+                    return false;
+                }
                 element.click();
-              }
-              return element.checked === desired;
-            }, checked)
+                return element.checked === input.checked;
+              },
+              { checked, coveredOnly },
+            )
             .catch(() => false);
-          if (!changed) throw actionabilityError;
+        if (!(await activateNative(true))) {
+          try {
+            await locator.setChecked(checked, { timeout: 5_000 });
+          } catch (actionabilityError) {
+            // Preserve the fallback if the page changed after the hit test.
+            if (!(await activateNative(false))) throw actionabilityError;
+          }
         }
         return { ok: true, observedValue: checked ? "checked" : "unchecked" };
       } catch (error) {

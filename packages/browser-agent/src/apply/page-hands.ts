@@ -13,12 +13,6 @@ import {
   toAnswerControlType,
 } from "./control-classification";
 import { detectApplyBlocker } from "./blockers";
-import { workHistoryField } from "./answer-sourcing";
-import {
-  explicitCallingCode,
-  isPhoneCountryControl,
-  optionCallingCodes,
-} from "./phone-country";
 import type {
   ApplyControlKind,
   ApplyFormAction,
@@ -155,9 +149,29 @@ export function buildApplyFormObservation(
       ...(inputType === "month" || inputType === "date"
         ? { dateInputType: inputType }
         : {}),
+      ...(inputType === "number" ||
+      inputType === "date" ||
+      inputType === "month"
+        ? {
+            inputConstraints: {
+              type: inputType,
+              ...(rawControl.min ? { min: rawControl.min } : {}),
+              ...(rawControl.max ? { max: rawControl.max } : {}),
+              ...(rawControl.step ? { step: rawControl.step } : {}),
+            },
+          }
+        : {}),
+      ...(inputType === "file" && rawControl.accept
+        ? {
+            acceptedTypes: rawControl.accept
+              .split(",")
+              .map((entry) => entry.trim().toLowerCase())
+              .filter(Boolean),
+          }
+        : {}),
       label: rawControl.label.trim(),
       groupLabel: rawControl.groupLabel.trim(),
-      ...(kind === "radio"
+      ...(kind === "radio" || (kind === "checkbox" && !rawControl.required)
         ? {
             choiceGroupKey: rawControl.name.trim()
               ? `${rawControl.scopeKey ?? "root"}:name:${rawControl.name.trim()}`
@@ -195,85 +209,29 @@ export function buildApplyFormObservation(
     };
   });
 
-  // Removed rows can leave legends numbered 2, 4, ... . Rows still in the
-  // DOM keep their slots when collapsed; hidden templates do not, even when
-  // their controls carry defaults.
-  const workRows = new Map<
-    string,
-    { control: ApplyFormControl; rawControl: RawApplyControl }[]
-  >();
-  raw.controls.forEach((rawControl, index) => {
-    const control = controls[index];
-    if (!control || !workHistoryField(control)) return;
-    const group = normalizeSignal(control.groupLabel);
-    const row = workRows.get(group) ?? [];
-    row.push({ control, rawControl });
-    workRows.set(group, row);
-  });
-  let rowIndex = 0;
-  for (const row of workRows.values()) {
-    const hidden = row.every(({ control }) => !control.visible);
-    const isTemplate =
-      hidden &&
-      (row.every(({ control }) => control.disabled) ||
-        row.some(({ rawControl }) =>
-          /template/iu.test(`${rawControl.id} ${rawControl.name}`),
-        ));
-    if (isTemplate) continue;
-    for (const { control } of row) control.workHistoryIndex = rowIndex;
-    rowIndex += 1;
-  }
-
   // A radio group is one question. Once one option is selected, every option
   // in that group belongs to an answered question; `checked` still identifies
   // the chosen value. Treating each unselected option as a separate empty
   // required field makes an agent overwrite a valid Yes with No (and vice
   // versa) while trying to satisfy an impossible form state.
   for (const control of controls) {
-    if (control.kind !== "radio") continue;
+    if (control.kind !== "radio" && control.kind !== "checkbox") continue;
     const groupKey = control.choiceGroupKey;
     if (!groupKey) continue;
     const group = controls.filter(
       (candidate) =>
-        candidate.kind === "radio" && candidate.choiceGroupKey === groupKey,
+        candidate.kind === control.kind &&
+        candidate.choiceGroupKey === groupKey,
     );
+    if (control.kind === "checkbox" && group.length < 2) continue;
     control.answered = group.some((candidate) => candidate.checked);
     // Radio choices must pass through the same saved-answer matching as a
     // select. Otherwise a saved prose answer appears usable until every
     // individual radio is refused, without a question for the person.
+    if (control.kind === "checkbox") control.answerControlType = "multi_choice";
     control.options = group.map(
       (candidate) => candidate.label || candidate.value,
     );
-  }
-
-  // A phone field sitting next to a country picker must not repeat the code
-  // the picker already shows, so each phone field is told what that is.
-  const shownCallingCode =
-    controls
-      .filter((control) => isPhoneCountryControl(control))
-      .flatMap((control) => {
-        const shown = control.selectedOptionLabel || control.value;
-        const fromOption = optionCallingCodes(shown);
-        const explicit = explicitCallingCode(shown);
-        return fromOption.length === 1 && fromOption[0]
-          ? [fromOption[0]]
-          : explicit
-            ? [explicit]
-            : [];
-      })
-      .at(0) ?? null;
-  if (shownCallingCode) {
-    for (const control of controls) {
-      if (
-        !isPhoneCountryControl(control) &&
-        control.questionKind === "personal_info" &&
-        /\b(phone|mobile|telephone|cell)\b/u.test(
-          normalizeSignal(`${control.label} ${control.groupLabel}`),
-        )
-      ) {
-        control.selectedCallingCode = shownCallingCode;
-      }
-    }
   }
 
   const actions: ApplyFormAction[] = raw.actions.map((rawAction) => ({

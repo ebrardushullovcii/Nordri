@@ -194,16 +194,16 @@ describe("tailored draft preparation", () => {
     }
   });
 
-  it("deduplicates in stable order and never returns more than ten jobs", () => {
+  it("deduplicates in stable order and queues every missing resume", () => {
     const queue = [
-      ...Array.from({ length: 12 }, (_, index) => createItem(`job-${index}`)),
+      ...Array.from({ length: 33 }, (_, index) => createItem(`job-${index}`)),
       createItem("job-0"),
     ];
 
     expect(
       getTailoredDraftPreparationCandidates(queue).map((item) => item.jobId),
-    ).toEqual(Array.from({ length: 10 }, (_, index) => `job-${index}`));
-    expect(getTailoredDraftPreparationCandidates(queue, 50)).toHaveLength(10);
+    ).toEqual(Array.from({ length: 33 }, (_, index) => `job-${index}`));
+    expect(getTailoredDraftPreparationCandidates(queue, 50)).toHaveLength(33);
   });
 
   it("runs at most two drafts, accounts for out-of-order failures, and stops new work", async () => {
@@ -546,8 +546,8 @@ describe("safe application presentation labels", () => {
         resumeReview: {
           status: "original_resume",
           sourceDocumentId: "resume_original",
-          fileName: "Ebrar.pdf",
-          filePath: "/tmp/Ebrar.pdf",
+          fileName: "Elian.pdf",
+          filePath: "/tmp/Elian.pdf",
         },
       }),
     );
@@ -629,10 +629,10 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 1,
         }),
       ),
-    ).toBe("Wrote 1 resume. Nothing was sent.");
+    ).toBe("Wrote 1 resume.");
   });
 
-  it("singularizes the remainder sentence for exactly one eligible job left over", () => {
+  it("leaves remaining work out of a one-job completion notice", () => {
     expect(
       getTailoredDraftPreparationResultMessage(
         createState({
@@ -643,12 +643,10 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 10,
         }),
       ),
-    ).toBe(
-      "Wrote 10 resumes. 1 more job still needs a resume; run it again. Nothing was sent.",
-    );
+    ).toBe("Wrote 10 resumes.");
   });
 
-  it("pluralizes the remainder sentence for twenty eligible jobs left over", () => {
+  it("leaves remaining work out of a twenty-job completion notice", () => {
     expect(
       getTailoredDraftPreparationResultMessage(
         createState({
@@ -659,9 +657,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 10,
         }),
       ),
-    ).toBe(
-      "Wrote 10 resumes. 20 more jobs still need a resume; run it again. Nothing was sent.",
-    );
+    ).toBe("Wrote 10 resumes.");
   });
 
   it("never says stopped when every candidate was attempted and some failed", () => {
@@ -677,7 +673,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
     );
 
     expect(message).toBe(
-      "Wrote 7 resumes; 3 failed. 4 more jobs still need a resume; run it again. Run it again to retry the failed jobs. Nothing was sent.",
+      "Wrote 7 resumes; 3 failed. Run it again to retry the failed jobs.",
     );
     expect(message).not.toMatch(/stopped/i);
   });
@@ -695,7 +691,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
     );
 
     expect(message).toBe(
-      "Wrote 0 resumes; 1 failed. 1 more job still needs a resume; run it again. Run it again to retry the failed job. Nothing was sent.",
+      "Wrote 0 resumes; 1 failed. Run it again to retry the failed job.",
     );
   });
 
@@ -713,7 +709,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
         }),
       ),
     ).toBe(
-      "Stopped after 2 resumes; 1 failed. 8 more jobs still need a resume; run it again. Run it again to retry the failed job. Nothing was sent.",
+      "Stopped after 2 resumes; 1 failed. Run it again to retry the failed job.",
     );
     expect(
       getTailoredDraftPreparationResultMessage(
@@ -739,7 +735,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 2,
         }),
       ),
-    ).toBe("Stopped after 1 resume. Nothing was sent.");
+    ).toBe("Stopped after 1 resume.");
     expect(
       getTailoredDraftPreparationResultMessage(
         createState({
@@ -749,7 +745,7 @@ describe("getTailoredDraftPreparationResultMessage", () => {
           totalCount: 5,
         }),
       ),
-    ).toBe("Stopped after 3 resumes. Nothing was sent.");
+    ).toBe("Stopped after 3 resumes.");
   });
 });
 
@@ -899,4 +895,80 @@ describe("a shortlist that is all on the original resume", () => {
       "Every job here uses your original resume, so there is nothing to write.",
     );
   });
+});
+
+it("counts written, fallback and Original choices separately", async () => {
+  const result = await prepareTailoredDraftBatch(
+    [createItem("written"), createItem("fallback"), createItem("original")],
+    (id) => Promise.resolve(id as "written" | "fallback" | "original"),
+  );
+  expect(result).toMatchObject({
+    completedCount: 3,
+    fallbackCount: 1,
+    originalChoiceCount: 1,
+    failedCount: 0,
+  });
+  expect(
+    getTailoredDraftPreparationResultMessage({
+      ...result,
+      currentIndex: null,
+      eligibleRemainingCount: 0,
+      status: "completed",
+    }),
+  ).toBe(
+    "Wrote 1 resume · 1 kept your original wording · 1 Original by choice.",
+  );
+});
+
+it("describes pending Original assessment without claiming it rewrites the file", () => {
+  expect(
+    getReviewQueueWorkflowStatus(
+      createItem("original", { resumeApplicationMode: "original_resume" }),
+      null,
+      true,
+    ).label,
+  ).toBe("Reading the listing");
+});
+
+it("reports a removed active draft separately from written resumes", async () => {
+  const result = await prepareTailoredDraftBatch([createItem("removed")], () =>
+    Promise.resolve("cancelled" as const),
+  );
+  expect(result).toMatchObject({
+    completedCount: 1,
+    cancelledCount: 1,
+    failedCount: 0,
+  });
+  expect(
+    getTailoredDraftPreparationResultMessage({
+      ...result,
+      currentIndex: null,
+      eligibleRemainingCount: 0,
+      status: "completed",
+    }),
+  ).toBe("Wrote 0 resumes · 1 removed from the shortlist.");
+});
+
+it("finishes all 33 missing resumes from one queue while keeping two active", async () => {
+  const candidates = getTailoredDraftPreparationCandidates(
+    Array.from({ length: 33 }, (_, i) => createItem(`batch_${i}`)),
+  );
+  let active = 0;
+  let maxActive = 0;
+  const generate = vi.fn(async () => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await Promise.resolve();
+    active--;
+    return true;
+  });
+  const result = await prepareTailoredDraftBatch(candidates, generate);
+  expect(result).toMatchObject({
+    totalCount: 33,
+    completedCount: 33,
+    stopped: false,
+    failedCount: 0,
+  });
+  expect(generate).toHaveBeenCalledTimes(33);
+  expect(maxActive).toBeLessThanOrEqual(2);
 });

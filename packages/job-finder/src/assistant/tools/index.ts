@@ -14,6 +14,7 @@ import { jobsTools } from "./jobs-tools";
 import { fileTools, profileTools } from "./profile-tools";
 import { resumeTools } from "./resume-tools";
 import { settingsTools } from "./settings-tools";
+import { searchPlanTools } from "./search-plan-tools";
 import { workspaceTools } from "./workspace-tools";
 
 export { undoReceipt } from "./profile-tools";
@@ -36,7 +37,7 @@ export const ASSISTANT_TOOL_GROUPS: Record<
   jobs: jobsTools,
   applications: applicationTools,
   tracking: trackingTools,
-  settings: settingsTools,
+  settings: [...settingsTools, ...searchPlanTools],
   browser: browserTools,
 };
 

@@ -1,3 +1,4 @@
+import { APPLICATION_BOUNDARY_SENTENCE } from "../safeguards/safeguards-application-boundary";
 import { CreateApplicationAuthorityEnvelopeInputSchema } from "@nordri/contracts";
 import type {
   ApplicationAttestationKind,
@@ -129,7 +130,7 @@ function mutationMessage(
 ): string {
   if (result.status === "applied") {
     return action === "revoked"
-      ? "What Job Finder may do has been taken back. It can no longer open or fill an application for you, and it has never been able to submit one."
+      ? "What Job Finder may do has been taken back. It can no longer open or fill this application for you."
       : result.envelope.intermediateMutationsAuthorized
         ? "Saved. Job Finder may fill this application and let the site save answers as it goes. It still cannot send the application."
         : "Saved. Job Finder may fill this application. It cannot let the site save answers as it goes, and it cannot send the application.";
@@ -413,10 +414,14 @@ export function SettingsApplicationAuthoritySection({
           : await api.createApplicationAuthorityEnvelope(
               parsed.data satisfies CreateApplicationAuthorityEnvelopeInput,
             );
-      setActionState({
-        message: mutationMessage(result, "saved"),
-        status: result.status === "applied" ? "ready" : "failed",
-      });
+      setActionState(
+        result.status === "applied"
+          ? {
+              message: mutationMessage(result, "saved"),
+              status: "ready",
+            }
+          : { message: mutationMessage(result, "saved"), status: "failed" },
+      );
       if (result.status === "applied") {
         setEnvelopes((current) => {
           const withoutOld = current.filter(
@@ -597,10 +602,7 @@ export function SettingsApplicationAuthoritySection({
             </h3>
           </div>
           <p className="text-(length:--text-description) leading-5 text-foreground-soft">
-            Decide how much of an application Job Finder may fill in for you.
-            Today it can open an application and fill supported fields for your
-            review. It never sends an application, creates an account, enters a
-            password, or answers a security check.
+            {APPLICATION_BOUNDARY_SENTENCE}
           </p>
         </div>
         <Button
@@ -711,9 +713,9 @@ export function SettingsApplicationAuthoritySection({
           </div>
           <ToggleField
             checked={draft.salaryDisclosure === "answer_from_profile"}
-            description="Forms often ask what pay you expect. Left off, Job Finder stops and asks you each time, which is usually the safer choice."
+            description="Covers expected pay, current pay and pay history. Off: optional pay fields stay blank; required pay questions wait for you."
             disabled={selectedNonDraftable}
-            label="Let Job Finder answer pay questions from your profile"
+            label="Let Job Finder answer expected and current pay questions"
             onCheckedChange={(checked) =>
               setDraftValue(
                 "salaryDisclosure",

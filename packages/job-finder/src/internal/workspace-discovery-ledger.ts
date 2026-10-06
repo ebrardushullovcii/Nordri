@@ -569,6 +569,7 @@ export function applyInactiveLedgerMarks(input: {
 
 export function createDiscoveryProvenance(input: {
   targetId: string;
+  sourceLabel?: string;
   adapterKind: SavedJob["provenance"][number]["adapterKind"];
   resolvedAdapterKind: SavedJob["provenance"][number]["resolvedAdapterKind"];
   startingUrl: string;
@@ -589,6 +590,7 @@ export function createDiscoveryProvenance(input: {
     sourceJobId: input.sourceJobId ?? null,
     applyPath: input.applyPath ?? null,
     targetId: input.targetId,
+    ...(input.sourceLabel ? { sourceLabel: input.sourceLabel } : {}),
     adapterKind: input.adapterKind,
     resolvedAdapterKind: input.resolvedAdapterKind,
     startingUrl: input.startingUrl,

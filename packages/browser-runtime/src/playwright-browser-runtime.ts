@@ -1,3 +1,4 @@
+import { readRenderedPageHtml } from "./rendered-page-reader";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   mkdir,
@@ -31,8 +32,10 @@ import type { ApplyRawPageHands } from "@nordri/contracts";
 import type { JobFinderAiClient } from "@nordri/ai-providers";
 import {
   createApplyPageHands,
+  createSearchResultCache,
   runJobSearchAgent,
   type AgentConfig,
+  type AgentResult,
   type AgentExtractorPageType,
   type LLMClient,
 } from "@nordri/browser-agent";
@@ -616,6 +619,9 @@ export interface BrowserAgentRuntimeOptions {
      * automation never sees. The host's tab limit counts those too.
      */
     openTabCount?(): number;
+    /** Waiting forms are excluded from the eight working slots. */
+    workingTabCount?(): number;
+    hasAutomationTabCapacity?(): boolean;
   };
   headless?: boolean;
   maxJobsPerRun?: number;
@@ -1187,6 +1193,8 @@ export async function reserveEmbeddedApplicationTab(
   onWaiting?: () => void,
   /** The host's own count of open tabs, when it has tabs automation cannot see. */
   hostTabCount?: () => number,
+  hostWorkingTabCount?: () => number,
+  hostHasCapacity?: () => boolean,
 ): Promise<() => void> {
   // The embedded browser allows eight tabs. Keep one spare for a site's popup
   // and let a waiting application use the next tab the person closes.
@@ -1200,7 +1208,15 @@ export async function reserveEmbeddedApplicationTab(
         context.pages().filter((page) => !page.isClosed()).length,
         hostTabCount?.() ?? 0,
       ) + (pendingEmbeddedApplicationTabs.get(context) ?? 0);
-    if (occupied < 7) {
+    const working = hostWorkingTabCount
+      ? hostWorkingTabCount() +
+        (pendingEmbeddedApplicationTabs.get(context) ?? 0)
+      : occupied;
+    if (
+      working < 7 &&
+      occupied < (hostWorkingTabCount ? 15 : 7) &&
+      (hostHasCapacity?.() ?? true)
+    ) {
       pendingEmbeddedApplicationTabs.set(
         context,
         (pendingEmbeddedApplicationTabs.get(context) ?? 0) + 1,
@@ -1209,8 +1225,10 @@ export async function reserveEmbeddedApplicationTab(
       return () => {
         if (released) return;
         released = true;
-        const remaining = (pendingEmbeddedApplicationTabs.get(context) ?? 1) - 1;
-        if (remaining > 0) pendingEmbeddedApplicationTabs.set(context, remaining);
+        const remaining =
+          (pendingEmbeddedApplicationTabs.get(context) ?? 1) - 1;
+        if (remaining > 0)
+          pendingEmbeddedApplicationTabs.set(context, remaining);
         else pendingEmbeddedApplicationTabs.delete(context);
       };
     }
@@ -1240,12 +1258,6 @@ export async function reserveEmbeddedApplicationTab(
       signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
-}
-
-async function getPrimaryPageIfReady(context: BrowserContext): Promise<Page> {
-  const currentPages = context.pages();
-  const liveHttpPage = selectLiveHttpPage(currentPages);
-  return liveHttpPage ?? getPrimaryPage(context);
 }
 
 /** Binds Stop to the currently resolved page, including during navigation. */
@@ -1282,6 +1294,7 @@ const PERSON_HANDOFF_WINDOW_MS = 12 * 60 * 60 * 1000;
 export function createBrowserAgentRuntime(
   options: BrowserAgentRuntimeOptions,
 ): BrowserSessionRuntime {
+  const searchResultCache = createSearchResultCache();
   const debugPort = options.debugPort ?? 9333;
   let activeDebugPort = debugPort;
   const jobExtractor = options.jobExtractor;
@@ -1300,6 +1313,12 @@ export function createBrowserAgentRuntime(
   );
   const usesEmbeddedBrowserHost = Boolean(options.browserHost);
   const hostTabCount = options.browserHost?.openTabCount?.bind(
+    options.browserHost,
+  );
+  const hostWorkingTabCount = options.browserHost?.workingTabCount?.bind(
+    options.browserHost,
+  );
+  const hostHasCapacity = options.browserHost?.hasAutomationTabCapacity?.bind(
     options.browserHost,
   );
   // A person can prepare several Ask-before-sending forms or open unrelated
@@ -1404,8 +1423,21 @@ export function createBrowserAgentRuntime(
     }
   }
 
-  /** Pages of applications already sent: first to go when a tab is needed. */
-  const sentApplicationPages = new Set<Page>();
+  /** Forgets a finished application's page and closes it unless the person has it. */
+  async function releaseApplicationPage(key: string): Promise<boolean> {
+    await rebindPreparedApplicationPage(key);
+    const page = preparedApplicationPages.get(key);
+    const withPerson = preparedPagesWithPerson.has(key);
+    preparedApplicationPages.delete(key);
+    markedPreparedApplicationKeys.delete(key);
+    preparedPagesWithPerson.delete(key);
+    // The person opened it to finish it themselves: the site's confirmation
+    // stays in front of them until they close the tab.
+    if (withPerson) return false;
+    if (page && !page.isClosed()) await page.close().catch(() => undefined);
+    return true;
+  }
+
   const getLivePreparedApplicationPages = (): Page[] => [
     ...new Set(
       [...preparedApplicationPages.values()].filter((page) => !page.isClosed()),
@@ -1877,7 +1909,9 @@ export function createBrowserAgentRuntime(
       agentOptions.startingUrls.find((url) => isHttpUrlLike(url)) ?? null;
 
     if (!navigationTarget) {
-      return getReadyPage(source);
+      const page = await (await getContext()).newPage();
+      onPageResolved?.(page);
+      return page;
     }
 
     const context = await getContext();
@@ -2179,6 +2213,9 @@ export function createBrowserAgentRuntime(
   }
 
   return {
+    async readRenderedPage(url, readOptions) {
+      return readRenderedPageHtml(await getContext(), url, readOptions);
+    },
     getSessionState(source) {
       return Promise.resolve(
         BrowserSessionStateSchema.parse({
@@ -2365,16 +2402,21 @@ export function createBrowserAgentRuntime(
       if (!page || page.isClosed()) return null;
       return readRawApplyPage(page);
     },
-    releaseApplicationPageBinding(_source, pageBindingKey) {
-      // Only sent applications are released. Their page may be closed when a
-      // new form needs the tab, so it no longer counts toward the limit.
-      const releasedPage = preparedApplicationPages.get(pageBindingKey);
-      if (releasedPage && !releasedPage.isClosed())
-        sentApplicationPages.add(releasedPage);
-      preparedApplicationPages.delete(pageBindingKey);
-      markedPreparedApplicationKeys.delete(pageBindingKey);
-      preparedPagesWithPerson.delete(pageBindingKey);
-      return Promise.resolve();
+    releaseApplicationPageBinding: (_source, key) =>
+      releaseApplicationPage(key),
+    async transferApplicationPageBinding(_source, previousKey, nextKey) {
+      await rebindPreparedApplicationPage(previousKey);
+      const page = preparedApplicationPages.get(previousKey);
+      if (!page || page.isClosed()) return false;
+      if (previousKey === nextKey) return true;
+      await closePrepareOnlyAuthorizedFormActionWindow(page);
+      await closePrepareOnlyFinalActionWindow(page);
+      preparedApplicationPages.delete(previousKey);
+      markedPreparedApplicationKeys.delete(previousKey);
+      preparedPagesWithPerson.delete(previousKey);
+      bindPreparedApplicationPage(nextKey, page);
+      await markPreparedPage(nextKey, page);
+      return true;
     },
     applyPageMechanics: applyPageMechanicsForSource,
     installApplyPrepareOnlyGuard: installApplyPrepareOnlyGuardForSource,
@@ -2484,15 +2526,19 @@ export function createBrowserAgentRuntime(
         // written. Requiring the binding also prevents restart recovery from
         // creating a fresh, empty same-URL form and calling it continuation.
         const isContinuation = isHttpUrlLike(input.startingUrl ?? "");
-        if (isContinuation && input.applicationPageBindingKey) {
+        if (input.applicationPageBindingKey) {
           await rebindPreparedApplicationPage(input.applicationPageBindingKey);
         }
         const retainedContinuationPage =
-          isContinuation && input.applicationPageBindingKey
-            ? selectPreparedApplicationPage(
-                preparedApplicationPages,
-                input.applicationPageBindingKey,
-              )
+          input.applicationPageBindingKey
+            ? isContinuation
+              ? selectPreparedApplicationPage(
+                  preparedApplicationPages,
+                  input.applicationPageBindingKey,
+                )
+              : (preparedApplicationPages.get(
+                  input.applicationPageBindingKey,
+                ) ?? null)
             : null;
         if (retainedContinuationPage) {
           await closePrepareOnlyAuthorizedFormActionWindow(
@@ -2626,10 +2672,7 @@ export function createBrowserAgentRuntime(
                           !page.isClosed() &&
                           !keep.has(page) &&
                           !pagesInUse.has(page);
-                        // First the empty startup tab, then the page of an
-                        // application that was already sent: it stays open
-                        // for the person to see the confirmation until a new
-                        // form needs the tab.
+                        // Reclaim only the unused startup tab.
                         const idle =
                           context
                             .pages()
@@ -2638,13 +2681,8 @@ export function createBrowserAgentRuntime(
                                 free(page) &&
                                 (page.url() === "about:blank" ||
                                   page.url() === ""),
-                            ) ??
-                          [...sentApplicationPages].find(
-                            (page) =>
-                              free(page) && context.pages().includes(page),
-                          );
+                            );
                         if (!idle) return false;
-                        sentApplicationPages.delete(idle);
                         await idle.close().catch(() => undefined);
                         return idle.isClosed();
                       },
@@ -2656,6 +2694,8 @@ export function createBrowserAgentRuntime(
                           }
                         : undefined,
                       hostTabCount,
+                      hostWorkingTabCount,
+                      hostHasCapacity,
                     ),
                   );
                 const protectedPreparedPages = [
@@ -2930,6 +2970,19 @@ export function createBrowserAgentRuntime(
         recordExecutionTiming("total", executionStartedAtMs);
         const lastCheckpointIndex = executionResult.checkpoints.length - 1;
 
+        if (
+          executionResult.state === "submitted" ||
+          executionResult.state === "failed" ||
+          executionResult.state === "unsupported"
+        ) {
+          if (input.applicationPageBindingKey)
+            await releaseApplicationPage(input.applicationPageBindingKey);
+          else if (
+            applicationPageForVisuals &&
+            !applicationPageForVisuals.isClosed()
+          )
+            await applicationPageForVisuals.close().catch(() => undefined);
+        }
         return ApplyExecutionResultSchema.parse({
           ...executionResult,
           checkpoints: executionResult.checkpoints.map((checkpoint, index) =>
@@ -2984,6 +3037,143 @@ export function createBrowserAgentRuntime(
         aiClient?.chatWithTools,
       );
 
+      const agentConfig: AgentConfig = {
+        source,
+        ...(agentOptions.sourceCatalog
+          ? {
+              sourceCatalog: agentOptions.sourceCatalog,
+              sourceCatalogComplete:
+                agentOptions.sourceCatalogComplete === true,
+            }
+          : {}),
+        ...(agentOptions.retainAllFound ? { retainAllFound: true } : {}),
+        maxSteps: agentOptions.maxSteps,
+        ...(agentOptions.runControl
+          ? { runControl: agentOptions.runControl }
+          : {}),
+        ...(agentOptions.resumeCheckpoint
+          ? { resumeCheckpoint: agentOptions.resumeCheckpoint }
+          : {}),
+        ...(agentOptions.onCheckpoint
+          ? { onCheckpoint: agentOptions.onCheckpoint }
+          : {}),
+        targetJobCount: agentOptions.targetJobCount,
+        userProfile: agentOptions.userProfile,
+        searchPreferences: {
+          targetRoles: agentOptions.searchPreferences.targetRoles,
+          locations: agentOptions.searchPreferences.locations,
+          workModes: agentOptions.searchPreferences.workModes ?? [],
+        },
+        startingUrls: agentOptions.startingUrls,
+        navigationPolicy: {
+          allowedHostnames: agentOptions.navigationHostnames,
+          allowSubdomains: true,
+        },
+        promptContext: {
+          siteLabel: agentOptions.siteLabel,
+          ...(agentOptions.searchMode
+            ? { searchMode: agentOptions.searchMode }
+            : {}),
+          ...(agentOptions.searchRequest
+            ? { searchRequest: agentOptions.searchRequest }
+            : {}),
+          ...(agentOptions.searchGuidance
+            ? { searchGuidance: agentOptions.searchGuidance }
+            : {}),
+          ...(agentOptions.siteInstructions
+            ? { siteInstructions: agentOptions.siteInstructions }
+            : {}),
+          ...(agentOptions.toolUsageNotes
+            ? { toolUsageNotes: agentOptions.toolUsageNotes }
+            : {}),
+          ...(agentOptions.taskPacket
+            ? { taskPacket: agentOptions.taskPacket }
+            : {}),
+        },
+      };
+
+      const toDiscoveryResult = (result: AgentResult): DiscoveryRunResult => {
+        return DiscoveryRunResultSchema.parse({
+          source,
+          startedAt,
+          completedAt: new Date().toISOString(),
+          querySummary: buildQuerySummary(
+            agentOptions.searchPreferences.targetRoles,
+            agentOptions.searchPreferences.locations,
+            agentOptions.siteLabel,
+          ),
+          warning:
+            [
+              // Never states a SAVED count. What the runtime holds is the
+              // volume it read off the site; what a search keeps is decided
+              // afterwards, by the run that dedupes and retains. Reporting
+              // the first number as the second is how one screen carried
+              // "Stopped early with 24 jobs saved" beside its own "15
+              // results" — three numbers for one population, and at most one
+              // of them true. The kept count belongs to the run report, and
+              // this sentence points at it instead of guessing.
+              result.incomplete
+                ? `Stopped early after reading ${result.jobs.length} listing${result.jobs.length === 1 ? "" : "s"} from this site. How many were kept is shown with this search's results.`
+                : null,
+              result.warning ?? null,
+              result.error ?? null,
+            ]
+              .filter(Boolean)
+              .join(" ") || null,
+          inventoryCompleteness: "partial",
+          jobs: result.jobs,
+          agentMetadata: {
+            steps: result.steps,
+            incomplete: result.incomplete ?? false,
+            transcriptMessageCount: result.transcriptMessageCount,
+            reviewTranscript: result.reviewTranscript ?? [],
+            compactionState: result.compactionState ?? null,
+            compactionUsedFallbackTrigger:
+              result.compactionUsedFallbackTrigger ?? false,
+            phaseCompletionMode: result.phaseCompletionMode ?? null,
+            phaseCompletionReason: result.phaseCompletionReason ?? null,
+            coveredPageUrls: result.coveredPageUrls,
+            deferredListingPageUrls: result.deferredListingPageUrls,
+            duplicateListingPageUrls: result.duplicateListingPageUrls,
+            duplicateListings: result.duplicateListings,
+            unreadableListings: result.unreadableListings,
+            ...(result.pagesCovered !== undefined
+              ? { pagesCovered: result.pagesCovered }
+              : {}),
+            phaseEvidence: result.phaseEvidence ?? null,
+            debugFindings: result.debugFindings ?? null,
+            accessBlockerReason: result.accessBlockerReason ?? null,
+            parkedTab: result.parkedPageUrl
+              ? {
+                  tabId: null,
+                  url: result.parkedPageUrl,
+                  title: null,
+                }
+              : null,
+          },
+        });
+      };
+      agentOptions.signal?.throwIfAborted();
+      const reused = searchResultCache.read(agentConfig);
+      if (reused) {
+        const reason =
+          "This source has not changed; reused the previous search results.";
+        agentOptions.onProgress?.({
+          currentUrl: agentConfig.startingUrls[0] ?? "about:blank",
+          jobsFound: reused.jobs.length,
+          stepCount: 0,
+          currentAction: "finish",
+          message: reason,
+          targetId: null,
+          adapterKind: source,
+        });
+        return toDiscoveryResult({
+          ...reused,
+          steps: 0,
+          phaseCompletionReason: reason,
+        });
+      }
+
       let page: Page | null = null;
       // Set when the agent stopped on a page only the person can continue
       // (a sign-in, a check). That page is the parked tab: it stays open.
@@ -2993,8 +3183,23 @@ export function createBrowserAgentRuntime(
         agentOptions.signal,
       );
 
+      let releaseReservedTab: (() => void) | null = null;
       try {
+        if (usesEmbeddedBrowserHost) {
+          const context = await getContext();
+          releaseReservedTab = await reserveEmbeddedApplicationTab(
+            context,
+            agentOptions.signal,
+            undefined,
+            () => agentOptions.onWaitingForBrowserTab?.(),
+            hostTabCount,
+            hostWorkingTabCount,
+            hostHasCapacity,
+          );
+        }
         page = await getAgentRunPage(source, agentOptions, (resolvedPage) => {
+          releaseReservedTab?.();
+          releaseReservedTab = null;
           page = resolvedPage;
           releaseDiscoveryPageUse?.();
           releaseDiscoveryPageUse = usePage(resolvedPage);
@@ -3049,143 +3254,10 @@ export function createBrowserAgentRuntime(
           }
         }
 
-        const agentConfig: AgentConfig = {
-          source,
-          ...(agentOptions.sourceCatalog
-            ? {
-                sourceCatalog: agentOptions.sourceCatalog,
-                sourceCatalogComplete: agentOptions.sourceCatalogComplete === true,
-              }
-            : {}),
-          ...(agentOptions.retainAllFound ? { retainAllFound: true } : {}),
-          maxSteps: agentOptions.maxSteps,
-          ...(agentOptions.runControl
-            ? { runControl: agentOptions.runControl }
-            : {}),
-          ...(agentOptions.resumeCheckpoint
-            ? { resumeCheckpoint: agentOptions.resumeCheckpoint }
-            : {}),
-          ...(agentOptions.onCheckpoint
-            ? { onCheckpoint: agentOptions.onCheckpoint }
-            : {}),
-          targetJobCount: agentOptions.targetJobCount,
-          userProfile: agentOptions.userProfile,
-          searchPreferences: {
-            targetRoles: agentOptions.searchPreferences.targetRoles,
-            locations: agentOptions.searchPreferences.locations,
-            workModes: agentOptions.searchPreferences.workModes ?? [],
-          },
-          startingUrls: agentOptions.startingUrls,
-          ...(agentOptions.agentHints?.widenReviewBudget
-            ? { weakSameHostBoard: true }
-            : {}),
-          navigationPolicy: {
-            allowedHostnames: agentOptions.navigationHostnames,
-            allowSubdomains: true,
-          },
-          promptContext: {
-            siteLabel: agentOptions.siteLabel,
-            ...(agentOptions.searchMode
-              ? { searchMode: agentOptions.searchMode }
-              : {}),
-            ...(agentOptions.searchRequest
-              ? { searchRequest: agentOptions.searchRequest }
-              : {}),
-            ...(agentOptions.searchGuidance
-              ? { searchGuidance: agentOptions.searchGuidance }
-              : {}),
-            ...(agentOptions.siteInstructions
-              ? { siteInstructions: agentOptions.siteInstructions }
-              : {}),
-            ...(agentOptions.toolUsageNotes
-              ? { toolUsageNotes: agentOptions.toolUsageNotes }
-              : {}),
-            ...(agentOptions.taskPacket
-              ? { taskPacket: agentOptions.taskPacket }
-              : {}),
-            ...(agentOptions.experimental ? { experimental: true } : {}),
-          },
-          resolveLivePage: async () => {
-            const context = await getContext();
-            return currentSessionState.status === "ready"
-              ? getPrimaryPageIfReady(context)
-              : getReadyPage(source);
-          },
-          ...(agentOptions.captureVisualSnapshots || agentOptions.taskPacket
-            ? {
-                visualAnalysis: {
-                  enabled: true,
-                  captureSnapshot: (request, snapshotPage) =>
-                    captureVisualSnapshotForPage(
-                      snapshotPage ?? page!,
-                      request,
-                    ),
-                  analyzeSnapshot: ({ snapshot, context }) =>
-                    aiClient?.analyzeBrowserVisualSnapshot
-                      ? aiClient.analyzeBrowserVisualSnapshot({
-                          snapshot,
-                          context,
-                        })
-                      : Promise.reject(
-                          new Error(
-                            "AI client does not support browser visual analysis.",
-                          ),
-                        ),
-                  persistScreenshots: Boolean(agentOptions.taskPacket),
-                },
-              }
-            : {}),
-          ...(agentOptions.compaction
-            ? { compaction: agentOptions.compaction }
-            : {}),
-          compactionCapability: {
-            tokenEstimator: ({ messages, maxOutputTokens }) => {
-              const estimatedInputTokens = messages.reduce((sum, message) => {
-                const messageContent = message.content ?? "";
-                const contentTokens = Math.ceil(messageContent.length / 4);
-                if (message.role === "assistant" && message.toolCalls) {
-                  return (
-                    sum +
-                    contentTokens +
-                    Math.ceil(JSON.stringify(message.toolCalls).length / 4)
-                  );
-                }
-                if (message.role === "tool") {
-                  return (
-                    sum +
-                    contentTokens +
-                    Math.ceil((message.toolCallId ?? "").length / 4)
-                  );
-                }
-                return sum + contentTokens;
-              }, 0);
 
-              return {
-                estimatedInputTokens,
-                estimatedTotalTokens:
-                  estimatedInputTokens + Math.max(0, maxOutputTokens),
-              };
-            },
-            modelContextWindowTokens:
-              agentOptions.modelContextWindowTokens ??
-              aiClient?.getStatus().modelContextWindowTokens ??
-              null,
-            compactionWorkflowKey:
-              agentOptions.compactionHints?.workflowKey ??
-              (agentOptions.taskPacket
-                ? "source_debug_worker"
-                : "browser_agent_live_discovery"),
-          },
-          ...(agentOptions.relevantUrlSubstrings
-            ? {
-                extractionContext: {
-                  relevantUrlSubstrings: agentOptions.relevantUrlSubstrings,
-                },
-              }
-            : {}),
-        };
 
         const result = await runJobSearchAgent({
+          resultCache: searchResultCache,
           hands: createApplyPageHands(createPlaywrightApplyPageMechanics(page)),
           page,
           config: agentConfig,
@@ -3216,6 +3288,7 @@ export function createBrowserAgentRuntime(
               return jobs.map((job) => ({
                 sourceJobId: job.sourceJobId,
                 canonicalUrl: job.canonicalUrl,
+                applicationUrl: job.applicationUrl,
                 title: job.title,
                 company: job.company,
                 location: job.location,
@@ -3249,57 +3322,7 @@ export function createBrowserAgentRuntime(
         });
         pageParkedForPerson = Boolean(result.parkedPageUrl);
 
-        return DiscoveryRunResultSchema.parse({
-          source,
-          startedAt,
-          completedAt: new Date().toISOString(),
-          querySummary: buildQuerySummary(
-            agentOptions.searchPreferences.targetRoles,
-            agentOptions.searchPreferences.locations,
-            agentOptions.siteLabel,
-          ),
-          warning:
-            [
-              // Never states a SAVED count. What the runtime holds is the
-              // volume it read off the site; what a search keeps is decided
-              // afterwards, by the run that dedupes and retains. Reporting
-              // the first number as the second is how one screen carried
-              // "Stopped early with 24 jobs saved" beside its own "15
-              // results" — three numbers for one population, and at most one
-              // of them true. The kept count belongs to the run report, and
-              // this sentence points at it instead of guessing.
-              result.incomplete
-                ? `Stopped early after reading ${result.jobs.length} listing${result.jobs.length === 1 ? "" : "s"} from this site. How many were kept is shown with this search's results.`
-                : null,
-              result.warning ?? null,
-              result.error ?? null,
-            ]
-              .filter(Boolean)
-              .join(" ") || null,
-          inventoryCompleteness: "partial",
-          jobs: result.jobs,
-          agentMetadata: {
-            steps: result.steps,
-            incomplete: result.incomplete ?? false,
-            transcriptMessageCount: result.transcriptMessageCount,
-            reviewTranscript: result.reviewTranscript ?? [],
-            compactionState: result.compactionState ?? null,
-            compactionUsedFallbackTrigger:
-              result.compactionUsedFallbackTrigger ?? false,
-            phaseCompletionMode: result.phaseCompletionMode ?? null,
-            phaseCompletionReason: result.phaseCompletionReason ?? null,
-            phaseEvidence: result.phaseEvidence ?? null,
-            debugFindings: result.debugFindings ?? null,
-            accessBlockerReason: result.accessBlockerReason ?? null,
-            parkedTab: result.parkedPageUrl
-              ? {
-                  tabId: null,
-                  url: result.parkedPageUrl,
-                  title: null,
-                }
-              : null,
-          },
-        });
+        return toDiscoveryResult(result);
       } catch (error) {
         if (
           (error instanceof DOMException && error.name === "AbortError") ||
@@ -3322,12 +3345,15 @@ export function createBrowserAgentRuntime(
             agentOptions.searchPreferences.locations,
             agentOptions.siteLabel,
           ),
-          warning: `Agent discovery failed: ${detail}`,
+          warning: /Close a browser tab before opening another/i.test(detail)
+            ? "The browser tab limit is reached. Close finished tabs, then run this search again."
+            : `Agent discovery failed: ${detail}`,
           inventoryCompleteness: "unknown",
           jobs: [],
           agentMetadata: null,
         });
       } finally {
+        releaseReservedTab?.();
         (releaseDiscoveryPageUse as (() => void) | null)?.();
         pageAbortBinding.dispose();
         if (page && !page.isClosed() && !agentOptions.signal?.aborted) {
@@ -3338,17 +3364,10 @@ export function createBrowserAgentRuntime(
             "The dedicated browser profile is open and ready for target-specific discovery.",
           );
         }
-        // A tab opened for this run alone is closed with it. A page the agent
-        // parked for the person (sign-in, a challenge) stays open: the host
-        // binds it to the request, and closing the request closes it.
-        if (
-          (agentOptions.dedicatedPage ||
-            (agentOptions.sourceCatalog?.length ?? 0) > 0) &&
-          !pageParkedForPerson &&
-          page &&
-          !page.isClosed() &&
-          !agentOptions.signal?.aborted
-        ) {
+        // The run's page is closed with it. A page the agent parked for the
+        // person (sign-in, a challenge) stays open: the host binds it to the
+        // request, and closing the request closes it.
+        if (!pageParkedForPerson && page && !page.isClosed()) {
           await page.close().catch(() => undefined);
         }
       }

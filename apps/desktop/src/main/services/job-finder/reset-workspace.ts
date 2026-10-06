@@ -28,6 +28,7 @@ import {
   resolveJobFinderWorkspaceRelativePath,
 } from "./paths";
 import { getJobFinderWorkspaceService } from "./workspace-service";
+import { getEmbeddedBrowser } from "../browser/embedded-browser";
 
 const RESET_INTENT_MARKER_VERSION = 1;
 const JOB_FINDER_RESET_TRASH_DIRECTORY_PREFIX = "job-finder-reset-";
@@ -194,6 +195,7 @@ function listResetSourceRelativePaths(): readonly string[] {
     getCandidateAssetsDirectory(),
     getApplicationDocumentsDirectory(),
     getBrowserAgentProfileDirectory(),
+    path.join(getJobFinderUserDataDirectory(), "exports"),
   ].map((sourceDirectory) => toPosixRelativePath(sourceDirectory));
 }
 
@@ -972,8 +974,60 @@ function recordStartupResetRecoveryOutcome(
   recordStartupResetRecoveryFact({ status: "idle" });
 }
 
+const BROWSER_CLEAR_TIMEOUT_MS = 15_000;
+
+async function clearBrowserSession() {
+  const session = getEmbeddedBrowser().getSession();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      (async () => {
+        await session.clearStorageData();
+        await session.clearCache();
+      })(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "The browser took too long to clear. Your workspace was not deleted. Restart Nordri and try again.",
+              ),
+            ),
+          BROWSER_CLEAR_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function resetJobFinderBrowser() {
+  const service = await getJobFinderWorkspaceService();
+  await service.setActivityControl({ paused: true, reason: "Browser reset" });
+  const { shutdownAssistantHost } =
+    await import("../assistant/assistant-service");
+  await shutdownAssistantHost();
+  const browser = getEmbeddedBrowser();
+  await browser.close(true);
+  await clearBrowserSession();
+  return service.getWorkspaceSnapshot();
+}
+
 export async function resetJobFinderWorkspace() {
   const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
+  // Stop all workspace work before closing pages so late completions cannot
+  // repopulate the workspace. A failed clear must never report success.
+  const { shutdownAssistantHost } =
+    await import("../assistant/assistant-service");
+  await shutdownAssistantHost();
+  await jobFinderWorkspaceService.setActivityControl({
+    paused: true,
+    reason: "Resetting workspace",
+  });
+  const browser = getEmbeddedBrowser();
+  await browser.close(true);
+  await clearBrowserSession();
   let completedIntent: JobFinderResetIntent | undefined;
   let snapshot: unknown;
 
@@ -1009,9 +1063,9 @@ export async function resetJobFinderWorkspace() {
       await import("../assistant/assistant-service");
     await resetAssistantStore();
   } catch (error) {
-    console.warn(
-      "[Desktop] The assistant history could not be cleared.",
-      error,
+    throw new Error(
+      "Workspace data was removed, but assistant history could not be cleared. Try Reset everything again.",
+      { cause: error },
     );
   }
 

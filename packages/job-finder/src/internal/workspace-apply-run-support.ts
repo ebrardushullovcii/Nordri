@@ -1,5 +1,9 @@
+import { resumeFormFileNames } from "@nordri/contracts";
+import { inferQuestionKind } from "@nordri/browser-agent";
 import {
   ApplicationAnswerRecordSchema,
+  type ApplicationAnswerRecord,
+  compareApplicationAnswerRecency,
   ApplicationRecordSchema,
   ApplyExecutionResultSchema,
   ApplyJobResultSchema,
@@ -43,14 +47,22 @@ export function summarizeApplyJobResultStates(
   const latestByJob = new Map<string, ApplyJobResult>();
   for (const result of results) {
     const current = latestByJob.get(result.jobId);
-    if (!current || result.updatedAt.localeCompare(current.updatedAt) > 0) {
+    if (
+      !current ||
+      hasVerifiedApplicationSubmission(result) ||
+      (!hasVerifiedApplicationSubmission(current) &&
+        result.updatedAt.localeCompare(current.updatedAt) > 0)
+    ) {
       latestByJob.set(result.jobId, result);
     }
   }
   const latestResults = [...latestByJob.values()];
   return {
     submittedJobs: latestResults.filter(
-      (result) => result.state === "submitted",
+      (result) =>
+        result.state === "submitted" &&
+        (result.privacyReceipt === null ||
+          hasVerifiedApplicationSubmission(result)),
     ).length,
     awaitingReviewJobs: latestResults.filter(
       (result) => result.state === "awaiting_review",
@@ -74,7 +86,12 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
   const latestByJob = new Map<string, ApplyJobResult>();
   for (const result of input.results) {
     const current = latestByJob.get(result.jobId);
-    if (!current || result.updatedAt.localeCompare(current.updatedAt) > 0) {
+    if (
+      !current ||
+      hasVerifiedApplicationSubmission(result) ||
+      (!hasVerifiedApplicationSubmission(current) &&
+        result.updatedAt.localeCompare(current.updatedAt) > 0)
+    ) {
       latestByJob.set(result.jobId, result);
     }
   }
@@ -89,7 +106,10 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
   );
   const pendingJobs = pendingResults.length;
   const submittedJobs = orderedResults.filter(
-    (result) => result?.state === "submitted",
+    (result) =>
+      result?.state === "submitted" &&
+      (result.privacyReceipt === null ||
+        hasVerifiedApplicationSubmission(result)),
   ).length;
   const skippedJobs = orderedResults.filter(
     (result) => result?.state === "skipped",
@@ -101,6 +121,12 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
   const remainsRunning =
     input.run.state === "running" &&
     pendingResults.some((result) => result?.state !== "awaiting_review");
+  const safetyPaused =
+    input.run.state === "paused_for_user_review" &&
+    pendingResults.some(
+      (result) =>
+        result?.state === "planned" && !result.applicationPreparationStartedAt,
+    );
   const completed = pendingJobs === 0 && blockedJobs === 0;
   const state = completed
     ? "completed"
@@ -127,18 +153,67 @@ export function reconcileApplyRunAfterConfirmedSubmission(input: {
     currentJobId,
     updatedAt: input.submittedAt,
     completedAt: completed ? input.submittedAt : null,
-    summary: completed
-      ? input.submittedSummary
-      : `${input.submittedSummary}; ${pendingJobs + blockedJobs} ${pendingJobs + blockedJobs === 1 ? "application is" : "applications are"} still waiting for review.`,
-    detail: completed
-      ? input.submittedDetail
-      : "The confirmed application is recorded. The remaining prepared applications keep their own review state.",
+    summary: safetyPaused
+      ? input.run.summary
+      : completed
+        ? input.submittedSummary
+        : `${input.submittedSummary}; ${pendingJobs + blockedJobs} ${pendingJobs + blockedJobs === 1 ? "application is" : "applications are"} still waiting for review.`,
+    detail: safetyPaused
+      ? input.run.detail
+      : completed
+        ? input.submittedDetail
+        : submittedJobs > 0
+          ? "The confirmed application is recorded. The remaining applications keep their own review state."
+          : "Nothing was confirmed sent. The remaining applications keep their own review state.",
     pendingJobs,
     submittedJobs,
     skippedJobs,
     blockedJobs,
     failedJobs,
   });
+}
+
+/** Preparation prose cannot establish a send; only the submission receipt can. */
+export function describeApplicationPreparation(
+  result: ApplyExecutionResult,
+): ApplyExecutionResult {
+  if (result.state === "submitted" || result.state === "in_progress")
+    return result;
+  const waiting = result.questions.some(
+    (question) =>
+      question.status !== "answered" && question.status !== "submitted",
+  );
+  return {
+    ...result,
+    summary:
+      result.state === "failed" || result.state === "unsupported"
+        ? "Application preparation did not finish."
+        : waiting
+          ? "Needs your answers."
+          : result.state === "ready"
+            ? "Ready to send."
+            : "Preparation paused.",
+    detail:
+      result.blocker?.detail ??
+      result.blocker?.summary ??
+      (result.state === "failed" || result.state === "unsupported"
+        ? result.detail
+        : waiting
+          ? "Answer the remaining questions to continue this application."
+          : result.state === "ready"
+            ? "The form is filled in. Review it and send when you are ready."
+            : "Preparation paused before a send was confirmed."),
+  };
+}
+
+export function hasVerifiedApplicationSubmission(
+  result: ApplyJobResult,
+): boolean {
+  return (
+    result.privacyReceipt?.finalSubmitOccurred === true &&
+    (result.privacyReceipt.submissionOutcome === null ||
+      result.privacyReceipt.submissionOutcome.outcome === "submitted")
+  );
 }
 
 export function enforcePrepareOnlyExecutionResult(
@@ -524,6 +599,8 @@ export function mapExecutionResultToApplyBlockerReason(
   }
 
   switch (blocker.code) {
+    case "application_closed":
+      return "application_closed";
     case "missing_resume":
       return "resume_missing";
     case "requires_manual_review":
@@ -608,6 +685,7 @@ export function buildApplicationPrivacyReceipt(input: {
   generatedAt: string;
   runId: string;
   resultId: string;
+  reviewCard?: ApplicationReviewCard | null;
 }): ApplicationPrivacyReceipt {
   const executionResult = enforcePrepareOnlyExecutionResult(
     input.executionResult,
@@ -619,6 +697,20 @@ export function buildApplicationPrivacyReceipt(input: {
     (entry) => ({ ...entry, artifactRefId: null }),
   );
 
+  const attachedResume = input.reviewCard?.attachments.find(
+    (attachment) =>
+      inferQuestionKind({
+        kind: "file",
+        label: attachment.field,
+        groupLabel: "",
+        placeholder: "",
+      }) === "resume",
+  );
+  const matchesSelectedResume =
+    !attachedResume ||
+    resumeFormFileNames(input.resumeArtifact.fileName).includes(
+      attachedResume.fileName,
+    );
   return ApplicationPrivacyReceiptSchema.parse({
     generatedAt: input.generatedAt,
     lineage: {
@@ -633,10 +725,14 @@ export function buildApplicationPrivacyReceipt(input: {
     },
     resume: {
       source: input.resumeArtifact.source,
-      sourceDocumentId: input.resumeArtifact.sourceDocumentId,
-      exportArtifactId: input.resumeArtifact.exportArtifactId,
-      fileName: input.resumeArtifact.fileName,
-      sha256: input.resumeArtifact.sha256,
+      sourceDocumentId: matchesSelectedResume
+        ? input.resumeArtifact.sourceDocumentId
+        : null,
+      exportArtifactId: matchesSelectedResume
+        ? input.resumeArtifact.exportArtifactId
+        : null,
+      fileName: attachedResume?.fileName ?? input.resumeArtifact.fileName,
+      sha256: matchesSelectedResume ? input.resumeArtifact.sha256 : null,
     },
     stayedLocal: [
       "profile_data",
@@ -668,6 +764,7 @@ export function buildApplicationPrivacyReceipt(input: {
   });
 }
 export function buildApplyCopilotArtifacts(input: {
+  existingAnswerRecords?: readonly ApplicationAnswerRecord[];
   applicationRecordId: string;
   job: SavedJob;
   executionResult: ApplyExecutionResult;
@@ -686,6 +783,10 @@ export function buildApplyCopilotArtifacts(input: {
   checkpoints: ReturnType<typeof ApplicationReplayCheckpointSchema.parse>[];
   consentRequests: ReturnType<typeof ApplicationConsentRequestSchema.parse>[];
 } {
+  input = {
+    ...input,
+    executionResult: describeApplicationPreparation(input.executionResult),
+  };
   const runId = input.runId ?? createUniqueId("apply_run");
   const resultId = input.resultId ?? createUniqueId("apply_result");
   const canonicalApplyUrl = input.job.applicationUrl ?? input.job.canonicalUrl;
@@ -760,9 +861,21 @@ export function buildApplyCopilotArtifacts(input: {
       : [];
   }
 
+  const latestAnswerByQuestion = new Map<string, ApplicationAnswerRecord>();
+  for (const answer of [...(input.existingAnswerRecords ?? [])].sort(
+    compareApplicationAnswerRecency,
+  )) {
+    if (!latestAnswerByQuestion.has(answer.questionId))
+      latestAnswerByQuestion.set(answer.questionId, answer);
+  }
   const answerRecords = input.executionResult.questions.flatMap((question) =>
     question.suggestedAnswers.map((answer) => {
-      return ApplicationAnswerRecordSchema.parse({
+      const questionId =
+        persistedQuestionIdByExecutionId.get(question.id) ?? question.id;
+      const previous = latestAnswerByQuestion.get(questionId);
+      const record = ApplicationAnswerRecordSchema.parse({
+        revision: (previous?.revision ?? 0) + 1,
+        supersedesAnswerId: previous?.id ?? null,
         id:
           persistedAnswerIdByExecutionId.get(answer.id) ??
           createUniqueId("apply_answer"),
@@ -787,6 +900,8 @@ export function buildApplyCopilotArtifacts(input: {
             ? input.detectedAt
             : null,
       });
+      latestAnswerByQuestion.set(questionId, record);
+      return record;
     }),
   );
   const questionRecords = input.executionResult.questions.map((question) => {
@@ -811,6 +926,9 @@ export function buildApplyCopilotArtifacts(input: {
       prompt: question.prompt,
       ...(question.description ? { description: question.description } : {}),
       ...(question.note ? { note: question.note } : {}),
+      ...(question.inputConstraints
+        ? { inputConstraints: question.inputConstraints }
+        : {}),
       kind: question.kind,
       answerControlType:
         question.answerControlType ??
@@ -956,6 +1074,7 @@ export function buildApplyCopilotArtifacts(input: {
     generatedAt: input.detectedAt,
     runId,
     resultId,
+    reviewCard: input.reviewCard ?? null,
   });
   const result = ApplyJobResultSchema.parse({
     id: resultId,
@@ -965,6 +1084,7 @@ export function buildApplyCopilotArtifacts(input: {
     queuePosition: 0,
     state: resultState,
     summary: input.executionResult.summary,
+    agentTiming: input.executionResult.agentTiming,
     detail: input.executionResult.detail,
     startedAt: replayableExecutionCheckpoints[0]?.at ?? input.detectedAt,
     updatedAt: input.detectedAt,
@@ -983,8 +1103,15 @@ export function buildApplyCopilotArtifacts(input: {
     listingSignalEvidence: input.executionResult.listingSignalEvidence,
     visualObservationSets: input.executionResult.visualObservationSets,
     visualCheckpoints: input.executionResult.visualCheckpoints,
-    latestQuestionCount: questionRecords.length,
-    latestAnswerCount: answerRecords.length,
+    latestQuestionCount: Math.max(
+      questionRecords.length,
+      input.reviewCard?.answers.length ?? 0,
+    ),
+    latestAnswerCount: Math.max(
+      answerRecords.filter((answer) => answer.status === "filled").length,
+      input.reviewCard?.answers.filter((answer) => answer.answer.trim())
+        .length ?? 0,
+    ),
     pendingConsentRequestCount: consentRequests.length,
     artifactCount: artifactRefs.length,
     latestCheckpointId: checkpoints.at(-1)?.id ?? null,

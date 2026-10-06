@@ -44,6 +44,7 @@ import type {
   SourceDebugWorkerAttemptInput,
   SourceInstructionArtifact,
   TailoredAsset,
+  SaveUserActionAnswerDraftInput,
   UserActionEvent,
   UserActionRequest,
 } from "@nordri/contracts";
@@ -171,6 +172,7 @@ export interface CompanyIntelligenceCommitCurrent {
 
 export interface JobFinderRepository
   extends ApplicationAuthorityRepository, ApplicationAnswerSnapshotRepository {
+  exportState(): Promise<JobFinderRepositoryState>;
   close(): Promise<void>;
   reset(seed: JobFinderRepositorySeed): Promise<void>;
   getProfile(): Promise<CandidateProfile>;
@@ -463,6 +465,9 @@ export interface JobFinderRepository
   listUserActionRequests(
     query?: UserActionRequestQuery,
   ): Promise<readonly UserActionRequest[]>;
+  saveUserActionAnswerDraft(
+    input: SaveUserActionAnswerDraftInput,
+  ): Promise<void>;
   getUserActionRequest(id: string): Promise<UserActionRequest | null>;
   createUserActionRequest(
     request: UserActionRequest,

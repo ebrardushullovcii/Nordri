@@ -14,14 +14,69 @@ import {
 import { describeApplicationPreparationProgress } from "@nordri/job-finder";
 
 describe("withEmbeddedBrowserActivity", () => {
+  test("terminal cleanup reaches the host even when its automation page was detached", async () => {
+    const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+    const releaseApplicationPageBinding = vi.fn(() =>
+      Promise.reject(new Error("Page detached")),
+    );
+    const releaseOwnedTabs = vi.fn();
+    const wrapped = withEmbeddedBrowserActivity(
+      { ...base, releaseApplicationPageBinding },
+      { releaseOwnedTabs } as unknown as EmbeddedBrowser,
+    );
+    await expect(
+      wrapped.releaseApplicationPageBinding!("target_site", "sent_result"),
+    ).rejects.toThrow("Page detached");
+    expect(releaseOwnedTabs).toHaveBeenCalledExactlyOnceWith("sent_result", {
+      keepForPerson: false,
+    });
+  });
+
+  test("a finished form the person has stays open as their tab", async () => {
+    const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+    const releaseOwnedTabs = vi.fn();
+    const wrapped = withEmbeddedBrowserActivity(
+      {
+        ...base,
+        releaseApplicationPageBinding: vi.fn(() => Promise.resolve(false)),
+      },
+      { releaseOwnedTabs } as unknown as EmbeddedBrowser,
+    );
+    await expect(
+      wrapped.releaseApplicationPageBinding!("target_site", "sent_result"),
+    ).resolves.toBe(false);
+    expect(releaseOwnedTabs).toHaveBeenCalledExactlyOnceWith("sent_result", {
+      keepForPerson: true,
+    });
+  });
+
+  test("a replacement attempt reclaims and transfers the host's exact tab owner", async () => {
+    const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+    const transferApplicationPageBinding = vi.fn(() => Promise.resolve(true));
+    const reclaimOwnedTabs = vi.fn(() => Promise.resolve());
+    const transferOwnedTabs = vi.fn();
+    const wrapped = withEmbeddedBrowserActivity(
+      { ...base, transferApplicationPageBinding },
+      { reclaimOwnedTabs, transferOwnedTabs } as unknown as EmbeddedBrowser,
+    );
+    await expect(
+      wrapped.transferApplicationPageBinding!("target_site", "old", "retry"),
+    ).resolves.toBe(true);
+    expect(reclaimOwnedTabs).toHaveBeenCalledExactlyOnceWith("old");
+    expect(transferOwnedTabs).toHaveBeenCalledExactlyOnceWith("old", "retry");
+    expect(reclaimOwnedTabs.mock.invocationCallOrder[0]).toBeLessThan(
+      transferApplicationPageBinding.mock.invocationCallOrder[0]!,
+    );
+  });
+
   test("keeps form values out of the visible progress label", () => {
     expect(
       describeApplicationPreparationProgress(
-        'suggest_answer → "Phone": +1 555 0100 from your profile',
+        'fill_fields → Filled in "Phone". +1 555 0100 from your profile',
       ),
-    ).toBe("Checking a form answer");
+    ).toBe("Filling in form fields");
     expect(
-      describeApplicationPreparationProgress('fill_text → filled "Full name"'),
+      describeApplicationPreparationProgress('type → Filled in "Full name"'),
     ).toBe("Filling a text field");
   });
 
@@ -252,7 +307,7 @@ describe("withEmbeddedBrowserActivity", () => {
       "tab_verification",
       expect.objectContaining({
         kind: "challenge",
-        title: "This page needs a human",
+        title: "This page needs you: Example Jobs",
       }),
     );
     expect(requestAttention).not.toHaveBeenCalled();
@@ -345,7 +400,9 @@ describe("withEmbeddedBrowserActivity", () => {
       catalog: [],
     });
     const command = vi.fn().mockResolvedValue(undefined);
-    const reopenParkedTab = vi.fn().mockReturnValue("tab_parked_before_restart");
+    const reopenParkedTab = vi
+      .fn()
+      .mockReturnValue("tab_parked_before_restart");
     const browser = {
       command,
       showTab: vi.fn().mockReturnValue(false),
@@ -392,4 +449,64 @@ describe("withEmbeddedBrowserActivity", () => {
       ),
     ).toBe("tab_second");
   });
+});
+
+test("reads the exact native person-owned application even when CDP released its page", async () => {
+  const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+  const page = {
+    bodyText: "Application received",
+    loading: false,
+  } as unknown as NonNullable<
+    Awaited<
+      ReturnType<
+        NonNullable<BrowserSessionRuntime["readApplicationPageWithPerson"]>
+      >
+    >
+  >;
+  const readApplicationPageWithPerson = vi.fn(() => Promise.resolve(page));
+  const fallback = vi.fn(() => Promise.resolve(null));
+  const browser = {
+    readApplicationPageWithPerson,
+  } as unknown as EmbeddedBrowser;
+  const wrapped = withEmbeddedBrowserActivity(
+    { ...base, readApplicationPageWithPerson: fallback },
+    browser,
+  );
+  expect(
+    await wrapped.readApplicationPageWithPerson?.(
+      "target_site",
+      "result_waiting",
+    ),
+  ).toBe(page);
+  expect(readApplicationPageWithPerson).toHaveBeenCalledWith("result_waiting");
+  expect(fallback).not.toHaveBeenCalled();
+});
+
+test("does not send a prepared form while its exact tab is lent for editing", async () => {
+  const base = createStubBrowserSessionRuntime({ sessions: [], catalog: [] });
+  const execute = vi.fn<
+    NonNullable<BrowserSessionRuntime["executeExactlyOneFinalAction"]>
+  >(() => Promise.resolve({} as never));
+  const browser = {
+    isApplicationPageLent: vi.fn((owner: string) => owner === "editing_result"),
+    runAutomation: async (
+      _label: string,
+      _signal: AbortSignal | undefined,
+      work: (signal: AbortSignal) => Promise<unknown>,
+    ) => work(new AbortController().signal),
+  } as unknown as EmbeddedBrowser;
+  const wrapped = withEmbeddedBrowserActivity(
+    {
+      ...base,
+      executeExactlyOneFinalAction: execute,
+    },
+    browser,
+  );
+  const input = { pageBindingKey: "editing_result" } as Parameters<
+    NonNullable<BrowserSessionRuntime["executeExactlyOneFinalAction"]>
+  >[1];
+  await expect(
+    wrapped.executeExactlyOneFinalAction!("target_site", input),
+  ).rejects.toThrow("Wait for the turn to finish before sending");
+  expect(execute).not.toHaveBeenCalled();
 });

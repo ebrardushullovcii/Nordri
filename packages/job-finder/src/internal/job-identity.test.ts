@@ -47,6 +47,40 @@ describe("job identity", () => {
     expect(match).toBe(aggregator);
   });
 
+  test("a shared employer application endpoint does not merge different roles", () => {
+    const existing = identity({
+      applicationUrl: "https://employer.test/apply",
+    });
+    const index = createJobIdentityIndex([existing], (value) => value);
+    expect(
+      index.find(
+        identity({
+          sourceJobId: "junior",
+          canonicalUrl: "https://other-board.test/jobs/junior",
+          title: "Junior Software Engineer",
+          applicationUrl: "https://employer.test/apply",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  test("site-local posting numbers do not merge different sites on one host", () => {
+    const first = identity({
+      source: "target_site",
+      sourceJobId: "2",
+      canonicalUrl: "https://jobs.example.com/shared/first/jobs/2",
+      applicationUrl: "https://jobs.example.com/shared/first/apply/2",
+    });
+    const second = identity({
+      ...first,
+      canonicalUrl: "https://jobs.example.com/shared/second/jobs/2",
+      applicationUrl: "https://jobs.example.com/shared/second/apply/2",
+    });
+    expect(
+      createJobIdentityIndex([first], (value) => value).find(second),
+    ).toBeNull();
+  });
+
   test("normalizes only non-identity URL decoration", () => {
     expect(
       normalizeJobIdentityUrl(
@@ -160,7 +194,7 @@ describe("job identity", () => {
     ).toBeNull();
   });
 
-  test("rejects conflicting provider-ID and URL evidence", () => {
+  test("rejects a canonical listing URL that conflicts with a known provider id", () => {
     const providerMatch = identity({
       providerKey: "greenhouse",
       providerBoardToken: "acme",
@@ -189,7 +223,23 @@ describe("job identity", () => {
     ).toBe("conflict");
   });
 
-  test("uses exact facts only to disambiguate colliding strong IDs", () => {
+  test("matches the same URL despite corrected employer, title and unknown feed id", () => {
+    const urlMatch = identity();
+    const index = createJobIdentityIndex([urlMatch], (value) => value);
+    expect(
+      index.find(
+        identity({
+          canonicalUrl: urlMatch.canonicalUrl,
+          applicationUrl: null,
+          company: "Wrong employer",
+          title: "Corrected role title",
+          sourceJobId: "wrong",
+        }),
+      ),
+    ).toBe(urlMatch);
+  });
+
+  test("does not use generic posting numbers and similar facts to identify a new listing", () => {
     const first = identity({
       canonicalUrl: "https://careers.acme.test/jobs/first",
       applicationUrl: null,
@@ -210,7 +260,7 @@ describe("job identity", () => {
           title: "Senior Data Engineer",
         }),
       ),
-    ).toBe(second);
+    ).toBeNull();
   });
 
   test("does not create a facts alias from a relative posted date", () => {

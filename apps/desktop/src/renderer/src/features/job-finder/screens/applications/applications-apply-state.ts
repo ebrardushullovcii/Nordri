@@ -85,6 +85,22 @@ export function getApplicationApplyPresentation(input: {
     };
   }
 
+  if (
+    outcome === "not_submitted" &&
+    applyResult?.privacyReceipt?.submissionOutcome?.browserAction?.reason ===
+      "form_validation_failed"
+  ) {
+    return {
+      state: "paused",
+      label: "Not sent",
+      tone: "warning",
+      summary:
+        applyResult.privacyReceipt.submissionOutcome.browserAction.detail ??
+        applyResult.detail,
+      nextStep: "Correct the fields in the browser",
+    };
+  }
+
   // A successful continuation can update the exact result and its review card
   // in the same repository transition that replaces an older person handoff.
   // Prefer that current, blocker-free result over a stale paused projection on

@@ -455,7 +455,8 @@ describe("workspace application answer methods", () => {
     expect(profile.answerBank.customAnswers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          question: "Will you now or later require visa sponsorship?",
+          question: expect.not.stringContaining("Application location:"),
+          applicationScope: expect.objectContaining({ location: "Remote" }),
           answer: "No",
         }),
       ]),
@@ -493,7 +494,8 @@ describe("workspace application answer methods", () => {
     expect(profile.headline).toBe("Interleaved headline");
     expect(profile.answerBank.customAnswers).toEqual([
       expect.objectContaining({
-        question: "Will you now or later require visa sponsorship?",
+        question: expect.not.stringContaining("Application location:"),
+        applicationScope: expect.objectContaining({ location: "Remote" }),
         answer: "No",
       }),
     ]);
@@ -525,7 +527,8 @@ describe("workspace application answer methods", () => {
     expect(profile.answerBank.customAnswers).toHaveLength(1);
     expect(profile.answerBank.customAnswers[0]).toEqual(
       expect.objectContaining({
-        question: "Will you now or later require visa sponsorship?",
+        question: expect.not.stringContaining("Application location:"),
+        applicationScope: expect.objectContaining({ location: "Remote" }),
         answer: "No",
       }),
     );
@@ -578,6 +581,27 @@ describe("workspace application answer methods", () => {
       questionId: "question-sponsorship",
     });
     expect(answers).toHaveLength(1);
+  });
+
+  it("replaces a different saved answer when the person saves a new one", async () => {
+    const { job, methods, repository } = createHarness();
+
+    await methods.saveApplicationAnswer({
+      ...saveCommand("save-first", 0),
+      jobId: job.id,
+      saveScope: "reusable_profile",
+    });
+    const details = await methods.saveApplicationAnswer({
+      ...saveCommand("save-second", 1),
+      jobId: job.id,
+      value: { type: "single_choice" as const, value: "Yes" },
+      saveScope: "reusable_profile",
+    });
+
+    expect(details.answerRecords.at(-1)?.revision).toBe(2);
+    const profile = await repository.getProfile();
+    expect(profile.answerBank.customAnswers).toHaveLength(1);
+    expect(profile.answerBank.customAnswers[0]?.answer).toBe("Yes");
   });
 
   it("keeps command retries idempotent", async () => {

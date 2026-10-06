@@ -1,4 +1,4 @@
-import type { JobPosting } from "@nordri/contracts";
+import { FitJudgmentSchema, type JobPosting } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 import { createSeed } from "../workspace-service.test-fixtures";
 import {
@@ -9,6 +9,7 @@ import { createMatchAssessment } from "./matching";
 import {
   MATCH_ASSESSMENT_SCORER_VERSION,
   createMatchAssessmentPostingFingerprint,
+  createMatchAssessmentContextFingerprint,
   createMatchAssessmentSession,
 } from "./match-assessment-session";
 
@@ -156,8 +157,8 @@ describe("match assessment session", () => {
       scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
       contextFingerprint: session.contextFingerprint,
     });
-    expect(first.postingFingerprint).toMatch(/^match_posting_v4_logic12_/u);
-    expect(session.contextFingerprint).toMatch(/^match_context_v4_logic12_/u);
+    expect(first.postingFingerprint).toMatch(/^match_posting_v4_logic15_/u);
+    expect(session.contextFingerprint).toMatch(/^match_context_v4_logic15_/u);
   });
 
   test("does not reuse an assessment persisted under the previous scoring logic", () => {
@@ -386,4 +387,79 @@ describe("match assessment session", () => {
     expect(calculate).toHaveBeenCalledTimes(500);
     expect(session.getComputationCount()).toBe(500);
   });
+});
+
+test("a changed-goals batch replaces a carried full assessment in the session", () => {
+  const seed = createSeed();
+  const posting = seed.savedJobs[0]!;
+  const full = {
+    ...posting.matchAssessment,
+    judgment: FitJudgmentSchema.parse({
+      source: "full",
+      judgedAt: "2026-10-03T10:00:00Z",
+      contextFingerprint: "goals-A",
+      postingFingerprint: "listing-A",
+      score: 80,
+      recommendation: "strong_fit",
+      role: "exact",
+      preferences: "aligned",
+      locationReach: "in_area",
+    }),
+  };
+  const batch = FitJudgmentSchema.parse({
+    ...full.judgment,
+    source: "batch",
+    contextFingerprint: "goals-B",
+    score: 30,
+    recommendation: "skip",
+  });
+  const session = createMatchAssessmentSession({
+    profile: seed.profile,
+    searchPreferences: seed.searchPreferences,
+    calculate: createMatchAssessment,
+  });
+  session.assess({ ...posting, matchAssessment: full });
+  expect(
+    session.assess({ ...posting, matchAssessment: full }, batch).judgment,
+  ).toEqual(batch);
+  const nextBatch = { ...batch, contextFingerprint: "goals-C", score: 20 };
+  expect(
+    session.assess({ ...posting, matchAssessment: full }, nextBatch).judgment,
+  ).toEqual(nextBatch);
+});
+
+test("job source changes do not invalidate listing fit", () => {
+  const seed = createSeed();
+  const before = createMatchAssessmentContextFingerprint(
+    seed.profile,
+    seed.searchPreferences,
+  );
+  expect(
+    createMatchAssessmentContextFingerprint(seed.profile, {
+      ...seed.searchPreferences,
+      discovery: {
+        ...seed.searchPreferences.discovery,
+        targets: [],
+        historyLimit: 3,
+      },
+    }),
+  ).toBe(before);
+});
+
+test("remote reach remains a fit input when source settings are excluded", () => {
+  const seed = createSeed();
+  expect(
+    createMatchAssessmentContextFingerprint(seed.profile, {
+      ...seed.searchPreferences,
+      discovery: {
+        ...seed.searchPreferences.discovery,
+        remoteCountsAsAnyLocation: false,
+      },
+    }),
+  ).not.toBe(
+    createMatchAssessmentContextFingerprint(
+      seed.profile,
+      seed.searchPreferences,
+    ),
+  );
 });

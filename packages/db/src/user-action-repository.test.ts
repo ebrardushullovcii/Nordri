@@ -368,3 +368,105 @@ describe("user action repository persistence", () => {
     expect(migration?.name).toBe("job_finder_user_actions");
   });
 });
+
+test("unfinished answers survive reopening and are scoped to the exact request", async () => {
+  const fixture = await createTempRepository("answer-draft-");
+  temporaryDirectories.push(fixture.tempDirectory);
+  const repository = await fixture.createRepository();
+  const request = createRequest({
+    kind: "manual_answer",
+    scope: {
+      type: "application",
+      source: "target_site",
+      runId: "run",
+      jobId: "job",
+      resultId: "result",
+      applicationRecordId: "app",
+    },
+    verification: { type: "page_blocker_absent", blockerFingerprint: "dates" },
+  });
+  await repository.createUserActionRequest(request);
+  const draft = {
+    answers: { "Start date": "2026-11-02", "Interview availability": "" },
+    saveForFuture: false,
+  };
+  await repository.saveUserActionAnswerDraft({
+    requestId: request.id,
+    expectedRevision: 1,
+    draft,
+  });
+  const reopened = await fixture.createRepository();
+  expect(
+    (await reopened.getUserActionRequest(request.id))?.answerDraft,
+  ).toEqual(draft);
+  expect((await reopened.getUserActionRequest(request.id))?.revision).toBe(1);
+  await expect(
+    reopened.saveUserActionAnswerDraft({
+      requestId: "different-request",
+      expectedRevision: 1,
+      draft,
+    }),
+  ).rejects.toThrow("question has changed");
+  const transition = createTransition(request, {
+    eventId: "answer",
+    state: "verifying",
+    occurredAt: "2026-07-30T10:01:00.000Z",
+  });
+  await reopened.commitUserActionTransition(transition);
+  await expect(
+    reopened.saveUserActionAnswerDraft({
+      requestId: request.id,
+      expectedRevision: 1,
+      draft,
+    }),
+  ).rejects.toThrow("question has changed");
+  await reopened.saveUserActionAnswerDraft({
+    requestId: request.id,
+    expectedRevision: 2,
+    draft: null,
+  });
+  expect(
+    (await reopened.getUserActionRequest(request.id))?.answerDraft,
+  ).toBeNull();
+});
+
+test.each(["memory", "file"] as const)(
+  "%s drafts merge fields and ignore an older save arriving last",
+  async (backend) => {
+    const fixture =
+      backend === "file" ? await createTempRepository("draft-merge-") : null;
+    if (fixture) temporaryDirectories.push(fixture.tempDirectory);
+    const repository = fixture
+      ? await fixture.createRepository()
+      : createInMemoryJobFinderRepository(createSeed());
+    const request = createRequest({
+      kind: "manual_answer",
+      scope: {
+        type: "application",
+        source: "target_site",
+        runId: "run",
+        jobId: "job",
+        resultId: "result",
+        applicationRecordId: "app",
+      },
+      verification: {
+        type: "page_blocker_absent",
+        blockerFingerprint: "dates",
+      },
+    });
+    await repository.createUserActionRequest(request);
+    const save = (editedAt: number, answers: Record<string, string>) =>
+      repository.saveUserActionAnswerDraft({
+        requestId: request.id,
+        expectedRevision: 1,
+        editedAt,
+        draft: { answers },
+      });
+    await save(10, { Start: "Monday", Interview: "Tuesday" });
+    await save(30, { Start: "Friday" });
+    await save(20, { Start: "Wednesday", Interview: "Thursday" });
+    expect(
+      (await repository.getUserActionRequest(request.id))?.answerDraft?.answers,
+    ).toEqual({ Start: "Friday", Interview: "Thursday" });
+  },
+);

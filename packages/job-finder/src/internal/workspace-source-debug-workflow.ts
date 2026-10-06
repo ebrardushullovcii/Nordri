@@ -22,10 +22,7 @@ import {
   isInternalSourceDebugFailure,
   prefixedLines,
   reviewSourceInstructionArtifactWithAi,
-  summarizeApplyPathBehavior,
-  summarizeCanonicalUrlBehavior,
   type SourceInstructionFinalReviewPhaseContext,
-  warningSuggestsAuthRestriction,
 } from "./source-instructions";
 import { uniqueStrings } from "./shared";
 import {
@@ -561,7 +558,6 @@ export async function runSourceDebugWorkflow(
           normalizedTarget,
           phaseStartingUrlArtifact,
           phase,
-          searchPreferences,
         );
         const currentRunHasDistinctRouteHint =
           currentRouteHintStartingUrls.some(
@@ -573,7 +569,6 @@ export async function runSourceDebugWorkflow(
                 normalizedTarget,
                 preservedRouteHintArtifact,
                 phase,
-                searchPreferences,
               )
             : [];
         const phaseStartingUrls = uniqueStrings(
@@ -614,9 +609,6 @@ export async function runSourceDebugWorkflow(
               noProgressStepLimit: SOURCE_DEBUG_STALL_STEP_WINDOW,
             },
             startingUrls: phaseStartingUrls,
-            agentHints: {
-              widenReviewBudget: adapter.kind === "target_site",
-            },
             siteLabel: `${normalizedTarget.label} ${formatStatusLabel(phase)}`,
             navigationHostnames: [targetUrl.hostname],
             siteInstructions: composeSourceDebugInstructions(
@@ -632,13 +624,7 @@ export async function runSourceDebugWorkflow(
               "Stop when the phase goal has been proven or blocked.",
             ]),
             taskPacket: phasePacket,
-            compaction: sourceDebugCompactionPolicy,
-            modelContextWindowTokens: modelContextWindowTokensSnapshot,
-            compactionHints: {
-              workflowKey: "source_debug_worker",
-            },
             relevantUrlSubstrings: adapter.relevantUrlSubstrings,
-            experimental: adapter.experimental,
             skipSessionValidation: true,
             aiClient: ctx.aiClient,
             signal: executionSignal,
@@ -729,19 +715,6 @@ export async function runSourceDebugWorkflow(
         const applyReadyCount = debugResult.jobs.filter(
           (job) => job.applyPath !== "unknown" || job.easyApplyEligible,
         ).length;
-        const hostname = new URL(normalizedTarget.startingUrl).hostname;
-        const canonicalUrlBehavior =
-          phase === "site_structure_mapping" ||
-          phase === "job_detail_validation" ||
-          phase === "replay_verification"
-            ? summarizeCanonicalUrlBehavior(debugResult.jobs, hostname)
-            : [];
-        const applyPathBehavior =
-          (phase === "site_structure_mapping" ||
-            phase === "apply_path_validation") &&
-          !warningSuggestsAuthRestriction(debugResult.warning)
-            ? summarizeApplyPathBehavior(debugResult.jobs)
-            : [];
         const confirmedFacts = uniqueStrings([
           ...(debugFindings?.summary ? [debugFindings.summary] : []),
           ...prefixedLines(
@@ -758,8 +731,6 @@ export async function runSourceDebugWorkflow(
             "Visual evidence: ",
             visualArtifacts.visualEvidence.map((evidence) => evidence.summary),
           ),
-          ...canonicalUrlBehavior,
-          ...applyPathBehavior,
           ...filterSourceDebugWarnings(debugFindings?.warnings ?? []),
           ...filterSourceDebugWarnings([debugResult.warning]),
         ]);
@@ -1127,8 +1098,8 @@ export async function runSourceDebugWorkflow(
             jobsFound: successfulAttemptCount,
           });
           const finalReviewStartedAtMs = Date.now();
-          try {
-            return await reviewSourceInstructionArtifactWithAi({
+          const review = () =>
+            reviewSourceInstructionArtifactWithAi({
               aiClient: ctx.aiClient,
               target: normalizedTarget,
               run,
@@ -1144,6 +1115,13 @@ export async function runSourceDebugWorkflow(
               modelContextWindowTokens: modelContextWindowTokensSnapshot,
               signal: executionSignal,
             });
+          try {
+            // A review that fails for a passing reason is asked once more
+            // before the check's notes are kept as an unorganized draft.
+            return (
+              (await review()) ??
+              (executionSignal.aborted ? null : await review())
+            );
           } finally {
             finalReviewMs = Date.now() - finalReviewStartedAtMs;
           }
@@ -1161,7 +1139,13 @@ export async function runSourceDebugWorkflow(
             synthesizedInstruction ??
             preservedRouteHintArtifact,
         )
-      : heuristicFinalizedInstruction;
+      : SourceInstructionArtifactSchema.parse({
+          ...heuristicFinalizedInstruction,
+          warnings: uniqueStrings([
+            ...heuristicFinalizedInstruction.warnings,
+            "The AI could not organize what this check learned, so these are the check's own notes. Check the source again to complete them.",
+          ]),
+        });
     const preserveExistingValidatedInstruction =
       reviewInstructionArtifact?.status === "validated" &&
       verification.outcome !== "passed";
@@ -1185,6 +1169,7 @@ export async function runSourceDebugWorkflow(
       currentUrl: normalizedTarget.startingUrl,
       jobsFound: successfulAttemptCount,
     });
+    executionSignal.throwIfAborted();
     const finalizationStartedAtMs = Date.now();
     await ctx.repository.upsertSourceInstructionArtifact(instructionToPersist);
     await ctx.saveDiscoveryTargetUpdate(
@@ -1244,7 +1229,8 @@ export async function runSourceDebugWorkflow(
     await ctx.persistSourceDebugRun(run);
   } catch (error) {
     const interrupted =
-      error instanceof DOMException && error.name === "AbortError";
+      executionSignal.aborted ||
+      (error instanceof Error && error.name === "AbortError");
     const openFailure = interrupted
       ? null
       : describeSourceDebugOpenFailure(error, normalizedTarget.label);

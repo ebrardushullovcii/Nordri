@@ -114,3 +114,14 @@ describe("App & device: side menu with the assistant", () => {
     ).toBe("false");
   });
 });
+
+it("points to the persistent text enlargement controls", () => {
+  render(
+    <SettingsAppDeviceSection
+      onUpdateAppearanceTheme={vi.fn()}
+      settings={settings()}
+    />,
+  );
+  expect(screen.getByText("Text size")).toBeTruthy();
+  expect(screen.getByText(/View → Zoom In/)).toBeTruthy();
+});

@@ -1,12 +1,17 @@
-import type { ApplicationAttemptQuestion } from "@nordri/contracts";
+import { questionClassificationKey } from "./question-classification";
+import {
+  resumeFormFileNames,
+  type ApplicationAttemptQuestion,
+} from "@nordri/contracts";
 
 import {
-  matchOption,
-  personFacingNeedsYouReason,
-  resolveApplyAnswer,
-  resolveReusableAnswer,
-} from "./answer-sourcing";
+  savedAnswerForQuestion,
+  storedFactFor,
+  isAnswerFromThisApplication,
+} from "./application-facts";
 import { normalizeSignal } from "./control-classification";
+import { matchOption } from "./option-match";
+import type { ApplyQuestionClassification } from "./question-classification";
 import {
   buildCoverLetterRequest,
   coverLetterPolicyAllows,
@@ -108,12 +113,23 @@ export interface ApplyExecutorDeps {
   config: ApplyAgentConfig;
   now: () => Date;
   guardState: ApplyGuardState;
+  /**
+   * The model's reading of the page's questions (ADR 0041): whether one asks
+   * about pay and which declaration one is. Absent offline, where the keyword
+   * classification on the observation stands.
+   */
+  classifyQuestions?: (
+    controls: readonly ApplyFormControl[],
+    step?: string,
+  ) => Promise<ReadonlyMap<string, ApplyQuestionClassification>>;
+  onAnswerSource?: (source: "stored_fact" | "checked") => void;
   checkWrittenAnswer?: (
     question: string,
     answer: string,
   ) => Promise<{
     supported: boolean;
     reason: string;
+    reviewWording?: string;
   }>;
 }
 
@@ -188,7 +204,9 @@ function questionIdFor(
   );
   const ordinal = same.findIndex((candidate) => candidate.ref === control.ref);
   const choiceSuffix =
-    control.kind === "radio" && control.choiceGroupKey
+    (control.kind === "radio" ||
+      control.answerControlType === "multi_choice") &&
+    control.choiceGroupKey
       ? `_${digest(control.choiceGroupKey)}`
       : "";
   const suffix =
@@ -203,12 +221,51 @@ function questionIdFor(
  * question, not two: "Phone — Phone" is what a saved answer then fails to
  * match on the next run.
  */
+/**
+ * A file field that names another file. An empty read-back is not evidence
+ * either way: some sites clear the field once they hold the file.
+ */
+/** Native accept is a format constraint, independent of document wording. */
+function acceptsDocument(
+  control: ApplyFormControl,
+  document: Pick<ApplyDocument, "fileName" | "mimeType">,
+): boolean {
+  if (!control.acceptedTypes?.length) return true;
+  const name = document.fileName.toLowerCase();
+  const mime = document.mimeType.toLowerCase();
+  return control.acceptedTypes.some((accepted) =>
+    accepted.startsWith(".")
+      ? name.endsWith(accepted)
+      : accepted.endsWith("/*")
+        ? mime.startsWith(accepted.slice(0, -1))
+        : accepted === mime,
+  );
+}
+
+export function fileFieldHoldsOtherFile(
+  value: string,
+  fileName: string,
+): boolean {
+  const shown = value.split(/[\\/]/u).at(-1)?.trim() ?? "";
+  return shown !== "" && !shown.includes(fileName) && !fileName.includes(shown);
+}
+
 export function questionPrompt(control: ApplyFormControl): string {
   const label = control.label.trim();
   const group = control.groupLabel.trim();
+  // File tasks name the input, without its fieldset legend or required marker.
+  if (control.kind === "file") {
+    return label.replace(/[\s*:]+$/u, "").replace(/\s+upload$/iu, "") || "file";
+  }
   const normalizedLabel = normalizeSignal(label);
   const normalizedGroup = normalizeSignal(group);
-  if (control.kind === "radio" && group.length > 0) return group;
+  if (
+    (control.kind === "radio" ||
+      (control.kind === "checkbox" &&
+        control.answerControlType === "multi_choice")) &&
+    group.length > 0
+  )
+    return group;
   const groupAddsSomething =
     normalizedGroup.length > 0 &&
     normalizedLabel.length > 0 &&
@@ -230,7 +287,7 @@ export function buildPendingQuestion(input: {
   reason?: string | null;
 }): ApplicationAttemptQuestion {
   const { control, suggestion } = input;
-  const note = input.reason ? personFacingNeedsYouReason(input.reason) : null;
+  const note = input.reason?.trim() || null;
   const radioSiblings =
     control.kind === "radio" && control.choiceGroupKey
       ? (input.siblings ?? []).filter(
@@ -248,6 +305,9 @@ export function buildPendingQuestion(input: {
     prompt: questionPrompt(control),
     kind: control.questionKind,
     answerControlType: control.answerControlType,
+    ...(control.inputConstraints
+      ? { inputConstraints: control.inputConstraints }
+      : {}),
     isRequired: control.required,
     detectedAt: input.detectedAt,
     // A list's blank first choice is not an answer anyone could give.
@@ -260,10 +320,27 @@ export function buildPendingQuestion(input: {
             id: `${questionIdFor(control, input.jobId, input.siblings ?? [])}_suggestion`,
             text: suggestion.value,
             sourceKind:
-              suggestion.sourceKind === "answer_library" ? "user" : "profile",
+              suggestion.sourceKind === "answer_library"
+                ? "user"
+                : suggestion.sourceKind === "generated"
+                  ? "prior_answer"
+                  : "profile",
             sourceId: suggestion.sourceId,
             confidenceLabel: null,
-            provenance: [],
+            provenance: [
+              {
+                id: `${questionIdFor(control, input.jobId, input.siblings ?? [])}_source`,
+                sourceKind:
+                  suggestion.sourceKind === "answer_library"
+                    ? "user"
+                    : suggestion.sourceKind === "generated"
+                      ? "prior_answer"
+                      : "profile",
+                sourceId: suggestion.sourceId,
+                label: suggestion.provenanceLabel,
+                snippet: null,
+              },
+            ],
           },
         ]
       : [],
@@ -271,6 +348,311 @@ export function buildPendingQuestion(input: {
     submittedAnswer: null,
     status: "detected",
   };
+}
+
+/**
+ * The control as the model classified its question: a pay question and a
+ * declaration are what the model says they are, not what a keyword list
+ * matched. If the model cannot be asked, the keyword classification stays,
+ * so the person's pay switch and declaration approvals are never left
+ * unguarded.
+ */
+async function withModelQuestionKinds(
+  deps: ApplyExecutorDeps,
+  observation: ApplyFormObservation,
+  control: ApplyFormControl,
+): Promise<ApplyFormControl> {
+  if (!deps.classifyQuestions) {
+    return control;
+  }
+  let classification: ApplyQuestionClassification | undefined;
+  let payCurrency = false;
+  try {
+    const classifications = await deps.classifyQuestions(
+      observation.controls,
+      JSON.stringify({ url: observation.url, step: observation.step }),
+    );
+    classification =
+      classifications.get(
+        questionClassificationKey(control, observation.controls),
+      ) ?? classifications.get(questionPrompt(control));
+    payCurrency =
+      /currency/iu.test(questionPrompt(control)) &&
+      (control.questionKind === "salary_expectation" ||
+        observation.controls.some(
+          (sibling) =>
+            (
+              classifications.get(
+                questionClassificationKey(sibling, observation.controls),
+              ) ?? classifications.get(questionPrompt(sibling))
+            )?.asksAboutPay === true,
+        ));
+  } catch {
+    return control;
+  }
+  if (!classification) {
+    return control;
+  }
+  return {
+    ...control,
+    questionKind:
+      classification.eligibilityKind ??
+      (classification.asksAboutPay || payCurrency
+        ? "salary_expectation"
+        : control.questionKind === "salary_expectation"
+          ? "other"
+          : control.questionKind),
+    attestationKind: classification.declarationKind,
+    ...(typeof classification.asksHiringCountry === "boolean"
+      ? { asksHiringCountry: classification.asksHiringCountry }
+      : {}),
+    ...(typeof classification.asksCurrentPay === "boolean"
+      ? { asksCurrentPay: classification.asksCurrentPay }
+      : {}),
+  };
+}
+
+const PAY_KEPT_PRIVATE_REASON =
+  "Job Finder leaves pay questions to you. Answer it yourself if you want to.";
+
+type AnswerDecision =
+  | { kind: "use"; answer: ApplyAnswer }
+  /**
+   * Left for the person. `permission` marks their own choice to answer this
+   * themselves (pay they keep private), which no model answer overrides.
+   */
+  | {
+      kind: "leave";
+      reason: string;
+      suggestion: ApplyAnswer | null;
+      permission: boolean;
+    };
+
+function savedSuggestion(
+  control: ApplyFormControl,
+  config: ApplyAgentConfig,
+): ApplyAnswer | null {
+  const saved = savedAnswerForQuestion(control, config.sources.reusableAnswers);
+  let value = saved?.answer ?? "";
+  if (saved && control.answerControlType === "multi_choice") {
+    try {
+      const selected: unknown = JSON.parse(saved.answer);
+      if (
+        Array.isArray(selected) &&
+        selected.every((entry) => typeof entry === "string") &&
+        selected.includes(control.label || control.value)
+      ) {
+        value = control.label || control.value;
+      }
+    } catch {
+      /* Older text answers still go through the fact check. */
+    }
+  }
+  const sourceLabel =
+    saved &&
+    normalizeSignal(saved.question) === normalizeSignal(questionPrompt(control))
+      ? "your answer to this question"
+      : `your saved answer "${saved?.label || saved?.question}"`;
+  return saved
+    ? {
+        value,
+        kind: control.questionKind,
+        sourceKind: "answer_library",
+        sourceId: `answerLibrary.${saved.id}`,
+        provenanceLabel: sourceLabel,
+        groundedIn: [sourceLabel],
+      }
+    : null;
+}
+
+/**
+ * Whether the model's answer about the person goes in (ADR 0041, ADR 0021).
+ *
+ * The model read the question and the person's facts and chose the answer.
+ * The person's saved answer to this exact question, or a value that is one of
+ * their stored facts word for word, goes in as that; anything else is read by
+ * the fact check against their profile,
+ * resume and saved answers before it is written. Pay the person keeps to
+ * themselves is left for them, whatever the model proposed. Without a fact
+ * check (an offline run) only stored facts go in.
+ */
+async function decideAnswer(input: {
+  deps: ApplyExecutorDeps;
+  control: ApplyFormControl;
+  value: string;
+  groundedIn?: readonly string[] | undefined;
+  storedFactId?: string | undefined;
+}): Promise<AnswerDecision> {
+  const { deps, control, value } = input;
+  const config = deps.config;
+  const payDisclosed =
+    config.authority.salaryDisclosure === "answer_from_profile";
+  const saved = savedSuggestion(control, config);
+  // Application answers are injected only for this request's execution;
+  // reusable library answers do not carry this prefix.
+  const savedRecord = savedAnswerForQuestion(
+    control,
+    config.sources.reusableAnswers,
+  );
+  const isApplicationAnswer =
+    saved?.sourceId.startsWith("answerLibrary.application_") &&
+    (!savedRecord?.applicationScope ||
+      isAnswerFromThisApplication(
+        savedRecord,
+        config.application,
+        config.sources.posting.location,
+      ));
+  if (saved && isApplicationAnswer) {
+    if (control.answerControlType === "multi_choice" && saved.value !== value)
+      return {
+        kind: "leave",
+        reason: "Use only the options the person chose for this question.",
+        suggestion: saved,
+        permission: false,
+      };
+    deps.onAnswerSource?.("stored_fact");
+    return { kind: "use", answer: saved };
+  }
+  if (control.questionKind === "salary_expectation" && !payDisclosed) {
+    const savedPay = config.sources.profile.answerBank.salaryExpectations;
+    return {
+      kind: "leave",
+      reason: PAY_KEPT_PRIVATE_REASON,
+      suggestion:
+        saved ??
+        (savedPay && !control.asksCurrentPay
+          ? {
+              value: savedPay,
+              kind: "salary_expectation",
+              sourceKind: "profile",
+              sourceId: "profile.answerBank.salaryExpectations",
+              provenanceLabel: "your saved pay answer",
+              groundedIn: ["your saved pay answer"],
+            }
+          : null),
+      permission: true,
+    };
+  }
+
+  const eligibilityQuestion =
+    control.questionKind === "work_authorization" ||
+    control.questionKind === "visa_sponsorship" ||
+    control.asksHiringCountry === true;
+  if (
+    eligibilityQuestion &&
+    saved &&
+    isAnswerFromThisApplication(
+      savedAnswerForQuestion(control, config.sources.reusableAnswers),
+      config.application,
+      config.sources.posting.location,
+    ) &&
+    normalizeSignal(saved.value) !== normalizeSignal(value)
+  ) {
+    return {
+      kind: "leave",
+      reason: `You answered this question ${saved.value}. Use that answer unchanged.`,
+      suggestion: saved,
+      permission: false,
+    };
+  }
+  if (
+    (!eligibilityQuestion ||
+      isAnswerFromThisApplication(
+        savedAnswerForQuestion(control, config.sources.reusableAnswers),
+        config.application,
+        config.sources.posting.location,
+      )) &&
+    saved &&
+    saved.value.trim() === value.trim()
+  ) {
+    deps.onAnswerSource?.("stored_fact");
+    return { kind: "use", answer: { ...saved, value } };
+  }
+  // The person's own answer to this exact question, even a bare Yes or No.
+  const stored = storedFactFor({
+    sources: config.sources,
+    payDisclosed,
+    control,
+    value,
+    storedFactId: input.storedFactId,
+  });
+  if (stored) {
+    deps.onAnswerSource?.("stored_fact");
+    return { kind: "use", answer: stored };
+  }
+  if (!deps.checkWrittenAnswer) {
+    return {
+      kind: "leave",
+      reason: "Job Finder could not check this answer against your facts.",
+      suggestion: savedSuggestion(control, config),
+      permission: false,
+    };
+  }
+  let check;
+  deps.onAnswerSource?.("checked");
+  try {
+    check = await deps.checkWrittenAnswer(questionPrompt(control), value);
+  } catch {
+    return {
+      kind: "leave",
+      reason:
+        "Job Finder could not check this answer right now. Please review it yourself or try again.",
+      suggestion: saved,
+      permission: false,
+    };
+  }
+  if (!check.supported) {
+    return {
+      kind: "leave",
+      reason: check.reason,
+      suggestion: check.reviewWording
+        ? {
+            value: check.reviewWording,
+            kind: control.questionKind,
+            sourceKind: "generated",
+            sourceId: `review.${control.ref}`,
+            provenanceLabel: "proposed wording for your review",
+            groundedIn: [],
+          }
+        : savedSuggestion(control, config),
+      permission: false,
+    };
+  }
+  if (saved && saved.value.trim() === value.trim()) {
+    return { kind: "use", answer: { ...saved, value } };
+  }
+  return {
+    kind: "use",
+    answer: {
+      value,
+      kind: control.questionKind,
+      sourceKind: "generated",
+      sourceId: `written.${control.ref}`,
+      provenanceLabel: "written for this application",
+      groundedIn:
+        input.groundedIn && input.groundedIn.length > 0
+          ? [...input.groundedIn]
+          : ["your profile"],
+    },
+  };
+}
+
+function eligibilityReviewReason(
+  control: ApplyFormControl,
+  config: ApplyAgentConfig,
+  reason: string,
+): string {
+  if (
+    control.questionKind !== "work_authorization" &&
+    control.questionKind !== "visa_sponsorship"
+  )
+    return reason;
+  const facts = config.sources.profile.workEligibility;
+  const permits = (facts.limitedWorkPermissions ?? []).map(
+    (permit) =>
+      `${permit.country}: ${permit.conditions}${permit.requiresFutureSponsorship === true ? "; sponsorship needed later" : ""}`,
+  );
+  return `${reason} Posting location: ${config.sources.posting.location?.trim() || "not specified"}. Countries where you can work: ${facts.authorizedWorkCountries.join(", ") || "not recorded"}.${permits.length ? ` Limited permissions: ${permits.join(". ")}.` : ""} Confirm the hiring country and answer for this job's hours and dates.`;
 }
 
 function leaveUnansweredForPerson(input: {
@@ -281,7 +663,8 @@ function leaveUnansweredForPerson(input: {
   reason: string;
   suggestion: ApplyAnswer | null;
 }): ApplyExecutionOutcome {
-  const { control, observation, config, at, reason, suggestion } = input;
+  const { control, observation, config, at, suggestion } = input;
+  const reason = eligibilityReviewReason(control, config, input.reason);
   return {
     kind: "suggestion",
     answer: suggestion,
@@ -299,6 +682,60 @@ function leaveUnansweredForPerson(input: {
     controlRef: control.ref,
     observation,
   };
+}
+
+/**
+ * An answer the fact check did not support. The model is told why and may
+ * answer again from the facts; a required question is kept for the person in
+ * case no supported answer comes.
+ */
+function unsupportedAnswer(input: {
+  control: ApplyFormControl;
+  observation: ApplyFormObservation;
+  config: ApplyAgentConfig;
+  at: string;
+  reason: string;
+  suggestion: ApplyAnswer | null;
+}): ApplyExecutionOutcome {
+  const { control, observation, config, at } = input;
+  return {
+    kind: "suggestion",
+    answer: null,
+    note: `That answer was not entered because the person's facts do not support it: ${input.reason} Use only supported facts, or leave this field blank and continue with the other fields. ${control.required ? "The required question has been kept for the person if no supported answer is available." : "This field is optional; do not ask the person to fill it."}`,
+    question: control.required
+      ? buildPendingQuestion({
+          control,
+          jobId: config.application.jobId,
+          detectedAt: at,
+          suggestion: input.suggestion,
+          siblings: observation.controls,
+          reason: eligibilityReviewReason(control, config, input.reason),
+        })
+      : null,
+    controlRef: control.ref,
+    observation,
+  };
+}
+
+/** Where an answer the model proposed was not entered. */
+function notEntered(input: {
+  deps: ApplyExecutorDeps;
+  control: ApplyFormControl;
+  observation: ApplyFormObservation;
+  at: string;
+  decision: Extract<AnswerDecision, { kind: "leave" }>;
+}): ApplyExecutionOutcome {
+  const args = {
+    control: input.control,
+    observation: input.observation,
+    config: input.deps.config,
+    at: input.at,
+    reason: input.decision.reason,
+    suggestion: input.decision.suggestion,
+  };
+  return input.decision.permission || !input.deps.checkWrittenAnswer
+    ? leaveUnansweredForPerson(args)
+    : unsupportedAnswer(args);
 }
 
 function bareOrigin(value: string): string | null {
@@ -792,65 +1229,6 @@ export async function executeApplyProposal(
   const observation = await config.hands.observe();
   deps.guardState.lastOnSiteUrl = observation.url;
 
-  if (proposal.tool === "suggest_answer") {
-    const control = findControl(observation, proposal.ref);
-    if (!control) {
-      return {
-        kind: "refused",
-        reason: `There is no ${proposal.ref} on this page.`,
-        observation,
-      };
-    }
-    const resolution = resolveApplyAnswer({
-      control,
-      sources: config.sources,
-      salaryDisclosure: config.authority.salaryDisclosure,
-    });
-    if (resolution.status === "answered") {
-      return {
-        kind: "suggestion",
-        answer: resolution.answer,
-        note: `"${questionPrompt(control)}": ${resolution.answer.value} — from ${resolution.answer.provenanceLabel}.`,
-        question: null,
-        controlRef: control.ref,
-        observation,
-      };
-    }
-    if (resolution.status === "write_free_text") {
-      return {
-        kind: "suggestion",
-        answer: null,
-        note: `Nothing stored answers "${questionPrompt(control)}". It takes prose, so write it yourself from ${resolution.grounding.join(", ")}.`,
-        question: null,
-        controlRef: control.ref,
-        observation,
-      };
-    }
-    return {
-      kind: "suggestion",
-      answer: resolution.suggestion,
-      note: `Nothing can answer "${questionPrompt(control)}" honestly. ${resolution.reason}${
-        resolution.suggestion
-          ? ` The closest is "${resolution.suggestion.value}", which does not fit.`
-          : ""
-      } If it is required, finish and say this one needs the person.`,
-      // Recorded now so the person gets the exact question if the run ends
-      // without it being answered.
-      question: control.required
-        ? buildPendingQuestion({
-            control,
-            jobId: config.application.jobId,
-            detectedAt: at,
-            suggestion: resolution.suggestion,
-            siblings: observation.controls,
-            reason: resolution.reason,
-          })
-        : null,
-      controlRef: control.ref,
-      observation,
-    };
-  }
-
   // A page that moved on since the model looked is retried, not stopped: the
   // model gets what is there now and decides again.
   if (observation.signature !== seenSignature) {
@@ -880,6 +1258,43 @@ export async function executeApplyProposal(
         "That control is a security check. Only the person answers it; leave it exactly as it is and carry on with the rest of the form.",
       observation,
     };
+  }
+
+  // Validate attachment selection before leaving a form step. An earlier
+  // attempt may still hold a different resume on this retained page.
+  if (proposal.tool === "click" || proposal.tool === "submit_application") {
+    const action =
+      "ref" in proposal
+        ? observation.actions.find(
+            (candidate) => candidate.ref === proposal.ref,
+          )
+        : null;
+    if (
+      proposal.tool !== "click" ||
+      action?.kind === "advance" ||
+      action?.kind === "final"
+    ) {
+      const resume = config.sources.documents.find(
+        (document) => document.kind === "resume",
+      );
+      const staleUpload = observation.controls.find(
+        (control) =>
+          control.kind === "file" &&
+          control.questionKind === "resume" &&
+          control.answered &&
+          resume &&
+          resumeFormFileNames(resume.fileName).every((name) =>
+            fileFieldHoldsOtherFile(control.value, name),
+          ),
+      );
+      if (staleUpload && resume) {
+        return {
+          kind: "refused",
+          reason: `"${questionPrompt(staleUpload)}" still contains ${staleUpload.value.split(/[\\/]/u).at(-1)}. The selected resume is ${resume.fileName}.`,
+          observation,
+        };
+      }
+    }
   }
 
   switch (proposal.tool) {
@@ -1037,14 +1452,15 @@ export async function executeApplyProposal(
     }
 
     case "type": {
-      const control = findControl(observation, proposal.ref);
-      if (!control) {
+      const found = findControl(observation, proposal.ref);
+      if (!found) {
         return {
           kind: "refused",
           reason: `There is no ${proposal.ref} on this page.`,
           observation,
         };
       }
+      const control = await withModelQuestionKinds(deps, observation, found);
       if (!control.visible || control.disabled || control.readOnly) {
         return {
           kind: "refused",
@@ -1069,7 +1485,10 @@ export async function executeApplyProposal(
       // two different letters for the same job.
       if (isCoverLetterControl(control)) {
         const policy = config.writing?.coverLetterPolicy ?? "when_required";
-        if (!coverLetterPolicyAllows(control, policy)) {
+        if (
+          !approvedApplicationLetter(config, control) &&
+          !coverLetterPolicyAllows(control, policy)
+        ) {
           if (policy === "never" && control.required) {
             return {
               kind: "paused",
@@ -1082,6 +1501,8 @@ export async function executeApplyProposal(
                   jobId: config.application.jobId,
                   detectedAt: at,
                   suggestion: null,
+                  reason:
+                    "Your cover-letter setting is Never. Attach the required letter yourself or change that setting.",
                 }),
                 blocker: null,
               },
@@ -1096,7 +1517,7 @@ export async function executeApplyProposal(
             observation,
           };
         }
-        if (!config.letters) {
+        if (!config.letters && !approvedApplicationLetter(config, control)) {
           return {
             kind: "refused",
             reason: "Job Finder has no letter for this application.",
@@ -1128,9 +1549,17 @@ export async function executeApplyProposal(
             answer: {
               value: letter.letter.text,
               kind: "cover_letter",
-              sourceKind: "generated",
-              sourceId: "application.letter",
-              provenanceLabel: "the letter written for this application",
+              sourceKind: approvedApplicationLetter(config, control)
+                ? "answer_library"
+                : "generated",
+              sourceId: approvedApplicationLetter(config, control)
+                ? config.sources.approvedLetterText !== undefined
+                  ? "approved_application_letter"
+                  : `answerLibrary.${savedAnswerForQuestion(control, config.sources.reusableAnswers)?.id}`
+                : "application.letter",
+              provenanceLabel: approvedApplicationLetter(config, control)
+                ? "your letter for this application"
+                : "the letter written for this application",
               groundedIn: letter.letter.groundedIn,
             },
             at,
@@ -1139,63 +1568,19 @@ export async function executeApplyProposal(
         };
       }
 
-      // An answer about the person comes from the person. When their own facts
-      // answer this question, that is what goes in, whatever the model typed.
-      const resolution = resolveApplyAnswer({
+      // The model read the question and the person's facts and chose what to
+      // type (ADR 0041); decideAnswer keeps it to the person's own facts.
+      const decision = await decideAnswer({
+        deps,
         control,
-        sources: config.sources,
-        salaryDisclosure: config.authority.salaryDisclosure,
+        value: proposal.text,
+        groundedIn: proposal.groundedIn,
+        storedFactId: proposal.storedFactId,
       });
-      if (resolution.status === "needs_you") {
-        return leaveUnansweredForPerson({
-          control,
-          observation,
-          config,
-          at,
-          reason: resolution.reason,
-          suggestion: resolution.suggestion,
-        });
+      if (decision.kind === "leave") {
+        return notEntered({ deps, control, observation, at, decision });
       }
-      if (resolution.status !== "answered" && deps.checkWrittenAnswer) {
-        const check = await deps.checkWrittenAnswer(
-          questionPrompt(control),
-          proposal.text,
-        );
-        if (!check.supported) {
-          return {
-            kind: "suggestion",
-            answer: null,
-            note: `That answer was not written because it contains an unsupported applicant claim: ${check.reason} Use only supported facts, or leave this field blank and continue with the other fields. ${control.required ? "The required question has been kept for the person if no supported answer is available." : "This field is optional; do not ask the person to fill it."}`,
-            question: control.required
-              ? buildPendingQuestion({
-                  control,
-                  jobId: config.application.jobId,
-                  detectedAt: at,
-                  suggestion: null,
-                  siblings: observation.controls,
-                })
-              : null,
-            controlRef: control.ref,
-            observation,
-          };
-        }
-      }
-      const answer: ApplyAnswer =
-        resolution.status === "answered"
-          ? resolution.answer
-          : {
-              value: proposal.text,
-              kind: control.questionKind,
-              sourceKind: "generated",
-              sourceId: `written.${control.ref}`,
-              provenanceLabel: "written for this application",
-              groundedIn:
-                proposal.groundedIn && proposal.groundedIn.length > 0
-                  ? proposal.groundedIn
-                  : resolution.status === "write_free_text"
-                    ? resolution.grounding
-                    : ["the posting"],
-            };
+      const answer = decision.answer;
 
       const write = await writeUnderGuard(deps, {
         declaredValue: answer.value,
@@ -1223,55 +1608,35 @@ export async function executeApplyProposal(
     }
 
     case "select": {
-      const control = findControl(observation, proposal.ref);
-      if (!control) {
+      const found = findControl(observation, proposal.ref);
+      if (!found) {
         return {
           kind: "refused",
           reason: `There is no ${proposal.ref} on this page.`,
           observation,
         };
       }
-      const resolution = resolveApplyAnswer({
+      const control = await withModelQuestionKinds(deps, observation, found);
+      const choice = await decideAnswer({
+        deps,
         control,
-        sources: config.sources,
-        salaryDisclosure: config.authority.salaryDisclosure,
+        value: matchOption(control.options, proposal.option) ?? proposal.option,
+        storedFactId: proposal.storedFactId,
       });
-      if (resolution.status === "needs_you") {
-        return leaveUnansweredForPerson({
-          control,
-          observation,
-          config,
-          at,
-          reason: resolution.reason,
-          suggestion: resolution.suggestion,
-        });
+      if (choice.kind === "leave") {
+        return notEntered({ deps, control, observation, at, decision: choice });
       }
-      const groundedOption =
-        resolution.status === "answered"
-          ? matchOption(control.options, resolution.answer.value)
-          : null;
-      if (
-        resolution.status === "answered" &&
-        control.options.length > 0 &&
-        !groundedOption
-      ) {
+      const option =
+        control.options.length > 0
+          ? matchOption(control.options, choice.answer.value)
+          : choice.answer.value;
+      if (!option) {
         return {
           kind: "refused",
-          reason: `The saved answer for ${questionPrompt(control)} does not match an option on the form.`,
+          reason: `"${proposal.option}" is not one of the choices for "${questionPrompt(control)}": ${control.options.slice(0, 12).join(", ")}.`,
           observation,
         };
       }
-      const option =
-        groundedOption ??
-        (control.options.length > 0
-          ? (matchOption(control.options, proposal.option) ?? proposal.option)
-          : resolution.status === "answered"
-            ? resolution.answer.value
-            : proposal.option);
-      const usedGroundedAnswer =
-        resolution.status === "answered" &&
-        (groundedOption === option ||
-          (control.options.length === 0 && resolution.answer.value === option));
       const write = await writeUnderGuard(deps, {
         declaredValue: option,
         write: () => config.hands.chooseOption(control.ref, option),
@@ -1291,16 +1656,14 @@ export async function executeApplyProposal(
           label: questionPrompt(control),
           questionKind: control.questionKind,
           answer:
-            resolution.status === "answered" && usedGroundedAnswer
-              ? resolution.answer
-              : {
+            choice.answer.sourceKind === "generated"
+              ? {
+                  ...choice.answer,
                   value: option,
-                  kind: control.questionKind,
-                  sourceKind: "generated",
                   sourceId: `chosen.${control.ref}`,
-                  provenanceLabel: "chosen from the options on the form",
-                  groundedIn: ["the options this form offered"],
-                },
+                  provenanceLabel: "chosen on the form by Job Finder",
+                }
+              : { ...choice.answer, value: option },
           at,
         },
         observation: await config.hands.observe(),
@@ -1308,63 +1671,114 @@ export async function executeApplyProposal(
     }
 
     case "set_checkbox": {
-      const control = findControl(observation, proposal.ref);
-      if (!control) {
+      const found = findControl(observation, proposal.ref);
+      if (!found) {
         return {
           kind: "refused",
           reason: `There is no ${proposal.ref} on this page.`,
           observation,
         };
       }
-      const groundedRadioResolution =
-        control.kind === "radio"
-          ? resolveApplyAnswer({
-              control,
-              sources: config.sources,
-              salaryDisclosure: config.authority.salaryDisclosure,
-            })
-          : null;
+      let control = await withModelQuestionKinds(deps, observation, found);
+      // A radio button is a choice like a select's option: the model's pick
+      // stands when the person's facts support it (ADR 0041). A declaration
+      // is settled by the person's approvals below instead.
+      let radioAnswer: ApplyAnswer | null = null;
+      const eligibilityAnswer =
+        control.questionKind === "work_authorization" ||
+        control.questionKind === "visa_sponsorship";
+      const savedToggle = savedAnswerForQuestion(
+        control,
+        config.sources.reusableAnswers,
+      );
+      const ownToggle =
+        savedToggle?.id.startsWith("application_") &&
+        (!savedToggle.applicationScope ||
+          isAnswerFromThisApplication(
+            savedToggle,
+            config.application,
+            config.sources.posting.location,
+          ));
       if (
-        control.kind === "radio" &&
-        proposal.checked &&
-        groundedRadioResolution?.status === "needs_you"
+        ownToggle ||
+        ((control.kind === "radio" ||
+          control.answerControlType === "multi_choice") &&
+          proposal.checked &&
+          control.attestationKind === null) ||
+        (eligibilityAnswer && (control.kind === "checkbox" || proposal.checked))
       ) {
-        return leaveUnansweredForPerson({
+        // Eligibility is a factual answer even when worded as a declaration.
+        // A box in a checkbox group is one option of the group's question,
+        // so it is matched by its option, like a radio button; the person's
+        // answer to that group lists the options they chose.
+        const proposedOption =
+          control.kind === "checkbox" &&
+          control.answerControlType !== "multi_choice"
+            ? proposal.checked
+              ? "Yes"
+              : "No"
+            : control.label || control.value;
+        const choice = await decideAnswer({
+          deps,
           control,
-          observation,
-          config,
-          at,
-          reason: groundedRadioResolution.reason,
-          suggestion: groundedRadioResolution.suggestion,
+          value: proposedOption,
+          storedFactId: proposal.storedFactId,
         });
+        if (choice.kind === "leave") {
+          return notEntered({
+            deps,
+            control,
+            observation,
+            at,
+            decision: choice,
+          });
+        }
+        radioAnswer =
+          choice.answer.sourceKind === "generated"
+            ? {
+                ...choice.answer,
+                value: proposedOption,
+                sourceId: `chosen.${control.ref}`,
+                provenanceLabel: "chosen on the form by Job Finder",
+              }
+            : choice.answer;
       }
-      if (control.kind === "radio" && proposal.checked) {
-        if (groundedRadioResolution?.status === "answered") {
-          const groupControls = observation.controls.filter(
+      let checked = proposal.checked;
+      if (radioAnswer?.sourceId.startsWith("answerLibrary.application_")) {
+        if (control.kind === "radio") {
+          const selected = observation.controls.find(
             (candidate) =>
               candidate.kind === "radio" &&
               (control.choiceGroupKey
                 ? candidate.choiceGroupKey === control.choiceGroupKey
-                : candidate.ref === control.ref),
+                : candidate.ref === control.ref) &&
+              [candidate.value, candidate.label].some(
+                (value) =>
+                  normalizeSignal(value) ===
+                  normalizeSignal(radioAnswer!.value),
+              ),
           );
-          const offeredValues = groupControls.map(
-            (candidate) => candidate.label || candidate.value,
-          );
-          const groundedOption = matchOption(
-            offeredValues,
-            groundedRadioResolution.answer.value,
-          );
-          const proposedOption = control.label || control.value;
-          if (
-            !groundedOption ||
-            normalizeSignal(groundedOption) !== normalizeSignal(proposedOption)
-          ) {
+          if (!selected)
             return {
               kind: "refused",
-              reason: `That choice contradicts ${groundedRadioResolution.answer.provenanceLabel}. The grounded answer is "${groundedRadioResolution.answer.value}"; select its matching option instead.`,
+              reason:
+                "The person's answer is not one of this question's choices.",
               observation,
             };
-          }
+          control = selected;
+          checked = true;
+        } else if (control.answerControlType === "multi_choice") {
+          // decideAnswer accepted only an option the person included.
+          checked = true;
+        } else if (control.answerControlType === "boolean") {
+          const value = normalizeSignal(radioAnswer.value);
+          if (value !== "yes" && value !== "no")
+            return {
+              kind: "refused",
+              reason: "The person's answer does not match this checkbox.",
+              observation,
+            };
+          checked = value === "yes";
         }
       }
       // A declaration the person makes about themselves is theirs. This is the
@@ -1378,20 +1792,23 @@ export async function executeApplyProposal(
       // A "Yes" the person saved for this exact question earlier counts as
       // their approval: they answered it once and asked to keep it.
       const savedDeclaration =
-        control.attestationKind !== null && proposal.checked
-          ? resolveReusableAnswer(control, config.sources.reusableAnswers)
+        control.attestationKind !== null && checked
+          ? savedSuggestion(control, config)
           : null;
       const savedDeclarationSaysYes =
         savedDeclaration !== null &&
         /^(yes|true|agree|i agree|accept|checked|on|1)\b/iu.test(
           savedDeclaration.value.trim(),
         );
+      const declarationApproved =
+        control.attestationKind !== null &&
+        config.authority.preApprovedAttestationKinds.includes(
+          control.attestationKind,
+        );
       if (
         control.attestationKind !== null &&
-        proposal.checked &&
-        !config.authority.preApprovedAttestationKinds.includes(
-          control.attestationKind,
-        ) &&
+        checked &&
+        !declarationApproved &&
         !savedDeclarationSaysYes
       ) {
         return {
@@ -1413,7 +1830,7 @@ export async function executeApplyProposal(
       }
       const write = await writeUnderGuard(deps, {
         declaredValue: null,
-        write: () => config.hands.setToggle(control.ref, proposal.checked),
+        write: () => config.hands.setToggle(control.ref, checked),
       });
       if (!write.ok) {
         return { kind: "refused", reason: write.error, observation };
@@ -1423,40 +1840,40 @@ export async function executeApplyProposal(
       if (stop) {
         return { kind: "paused", pause: stop };
       }
+      const formValue =
+        control.kind === "radio" && checked
+          ? control.value || control.label
+          : checked
+            ? "Yes"
+            : "No";
       return {
         kind: "filled",
         filled: {
           ref: control.ref,
           label: questionPrompt(control),
           questionKind: control.questionKind,
+          // A declaration on in Settings is ticked because of that setting,
+          // whatever the person saved. A saved "Yes" keeps its source but
+          // records what the box shows, so the review finds it on the form.
           answer:
-            savedDeclarationSaysYes && savedDeclaration
-              ? savedDeclaration
-              : groundedRadioResolution?.status === "answered"
-                ? groundedRadioResolution.answer
-                : {
-                    value:
-                      control.kind === "radio" && proposal.checked
-                        ? control.value || control.label
-                        : proposal.checked
-                          ? "Yes"
-                          : "No",
-                    kind: control.questionKind,
-                    sourceKind: control.attestationKind
-                      ? "profile"
-                      : "generated",
-                    sourceId: control.attestationKind
-                      ? `authority.attestation.${control.attestationKind}`
-                      : `chosen.${control.ref}`,
-                    provenanceLabel: control.attestationKind
-                      ? "a declaration you approved in advance"
-                      : "chosen on the form",
-                    groundedIn: [
-                      control.attestationKind
-                        ? "a declaration you approved in advance"
-                        : "the form",
-                    ],
-                  },
+            savedDeclarationSaysYes && savedDeclaration && !declarationApproved
+              ? { ...savedDeclaration, value: formValue }
+              : (radioAnswer ?? {
+                  value: formValue,
+                  kind: control.questionKind,
+                  sourceKind: control.attestationKind ? "profile" : "generated",
+                  sourceId: control.attestationKind
+                    ? `authority.attestation.${control.attestationKind}`
+                    : `chosen.${control.ref}`,
+                  provenanceLabel: control.attestationKind
+                    ? "your Settings (on by default)"
+                    : "chosen on the form by Job Finder",
+                  groundedIn: [
+                    control.attestationKind
+                      ? "your Settings (on by default)"
+                      : "the form",
+                  ],
+                }),
           at,
         },
         observation: await config.hands.observe(),
@@ -1464,22 +1881,30 @@ export async function executeApplyProposal(
     }
 
     case "upload": {
-      const control = findControl(observation, proposal.ref);
-      if (!control) {
+      const found = findControl(observation, proposal.ref);
+      if (!found) {
         return {
           kind: "refused",
           reason: `There is no ${proposal.ref} on this page.`,
           observation,
         };
       }
+      const control = await withModelQuestionKinds(deps, observation, found);
       if (isCoverLetterControl(control)) {
         const policy = config.writing?.coverLetterPolicy ?? "when_required";
         // The person's own cover letter (Profile › Files) beats a written one
         // and beats the "only when required" rule: they added the file in
         // order to send it, so an optional letter field gets it too. Only
         // "never" keeps every letter field for them.
-        const ownLetter =
-          policy === "never"
+        const approvedText = approvedApplicationLetter(config, control);
+        const ownLetter = approvedText
+          ? config.sources.documents.find(
+              (candidate) =>
+                candidate.id === proposal.documentId &&
+                candidate.kind === "cover_letter" &&
+                candidate.reviewText?.text === approvedText,
+            )
+          : policy === "never"
             ? undefined
             : config.sources.documents.find(
                 (candidate) => candidate.kind === "cover_letter",
@@ -1498,6 +1923,16 @@ export async function executeApplyProposal(
           if (!ownUpload.ok) {
             return { kind: "refused", reason: ownUpload.error, observation };
           }
+          if (
+            fileFieldHoldsOtherFile(ownUpload.observedValue, ownLetter.fileName)
+          ) {
+            return {
+              kind: "refused",
+              reason:
+                "The form did not keep the selected file. Nothing was recorded as attached.",
+              observation: await config.hands.observe(),
+            };
+          }
           afterWrite(deps, questionPrompt(control));
           const ownStop = await guardStop(deps, observation.url);
           if (ownStop) {
@@ -1506,6 +1941,9 @@ export async function executeApplyProposal(
           return {
             kind: "attached",
             attachment: {
+              ...(ownLetter.reviewText
+                ? { reviewText: ownLetter.reviewText }
+                : {}),
               documentId: ownLetter.id,
               fileName: ownLetter.fileName,
               label: ownLetter.label,
@@ -1515,7 +1953,10 @@ export async function executeApplyProposal(
             observation: await config.hands.observe(),
           };
         }
-        if (!coverLetterPolicyAllows(control, policy)) {
+        if (
+          !approvedApplicationLetter(config, control) &&
+          !coverLetterPolicyAllows(control, policy)
+        ) {
           if (policy === "never" && control.required) {
             return {
               kind: "paused",
@@ -1528,6 +1969,8 @@ export async function executeApplyProposal(
                   jobId: config.application.jobId,
                   detectedAt: at,
                   suggestion: null,
+                  reason:
+                    "Your cover-letter setting is Never. Attach the required letter yourself or change that setting.",
                 }),
                 blocker: null,
               },
@@ -1542,7 +1985,7 @@ export async function executeApplyProposal(
             observation,
           };
         }
-        if (!config.letters) {
+        if (!config.letters && !approvedApplicationLetter(config, control)) {
           return {
             kind: "refused",
             reason: "Job Finder has no letter for this application.",
@@ -1583,6 +2026,19 @@ export async function executeApplyProposal(
         if (!letterUpload.ok) {
           return { kind: "refused", reason: letterUpload.error, observation };
         }
+        if (
+          fileFieldHoldsOtherFile(
+            letterUpload.observedValue,
+            letterFile.fileName,
+          )
+        ) {
+          return {
+            kind: "refused",
+            reason:
+              "The form did not keep the selected file. Nothing was recorded as attached.",
+            observation: await config.hands.observe(),
+          };
+        }
         afterWrite(deps, questionPrompt(control));
         const letterStop = await guardStop(deps, observation.url);
         if (letterStop) {
@@ -1591,6 +2047,10 @@ export async function executeApplyProposal(
         return {
           kind: "attached",
           attachment: {
+            reviewText: {
+              text: letter.letter.text,
+              groundedIn: letter.letter.groundedIn,
+            },
             documentId: letterFile.id,
             fileName: letterFile.fileName,
             label: letterFile.label,
@@ -1601,7 +2061,7 @@ export async function executeApplyProposal(
         };
       }
 
-      const document = config.sources.documents.find(
+      let document = config.sources.documents.find(
         (candidate) => candidate.id === proposal.documentId,
       );
       if (!document) {
@@ -1640,6 +2100,39 @@ export async function executeApplyProposal(
           observation,
         };
       }
+      if (!acceptsDocument(control, document)) {
+        // A plain-text copy of an Original Markdown resume preserves every
+        // byte. Never ask the writer to rewrite the person's resume for format.
+        const textCopy = {
+          ...document,
+          fileName: document.fileName.replace(/\.md$/iu, ".txt"),
+          mimeType: "text/plain",
+        };
+        if (
+          document.kind === "resume" &&
+          /\.md$/iu.test(document.fileName) &&
+          acceptsDocument(control, textCopy)
+        ) {
+          document = textCopy;
+        } else {
+          return {
+            kind: "paused",
+            pause: {
+              code: "document_needs_you",
+              summary: `The form does not accept ${document.fileName}. Attach a supported copy (${control.acceptedTypes?.join(", ")}).`,
+              question: buildPendingQuestion({
+                control,
+                jobId: config.application.jobId,
+                detectedAt: at,
+                suggestion: null,
+                reason:
+                  "The selected file format is not accepted by this form.",
+              }),
+              blocker: null,
+            },
+          };
+        }
+      }
       const bytes = await document.loadBytes();
       if (bytes.byteLength === 0) {
         return {
@@ -1660,6 +2153,14 @@ export async function executeApplyProposal(
       if (!write.ok) {
         return { kind: "refused", reason: write.error, observation };
       }
+      if (fileFieldHoldsOtherFile(write.observedValue, document.fileName)) {
+        return {
+          kind: "refused",
+          reason:
+            "The form did not keep the selected file. Nothing was recorded as attached.",
+          observation: await config.hands.observe(),
+        };
+      }
       afterWrite(deps, questionPrompt(control));
       const stop = await guardStop(deps, observation.url);
       if (stop) {
@@ -1668,6 +2169,7 @@ export async function executeApplyProposal(
       return {
         kind: "attached",
         attachment: {
+          ...(document.reviewText ? { reviewText: document.reviewText } : {}),
           documentId: document.id,
           fileName: document.fileName,
           label: document.label,
@@ -1712,6 +2214,25 @@ export async function executeApplyProposal(
   }
 }
 
+/** Only the person's explicit decision on this application's letter bypasses writing. */
+export function approvedApplicationLetter(
+  config: ApplyAgentConfig,
+  control: ApplyFormControl,
+): string | undefined {
+  if (config.sources.approvedLetterText !== undefined) {
+    return config.sources.approvedLetterText;
+  }
+  const saved = savedAnswerForQuestion(control, config.sources.reusableAnswers);
+  return saved?.id.startsWith("application_") &&
+    isAnswerFromThisApplication(
+      saved,
+      config.application,
+      config.sources.posting.location,
+    )
+    ? saved.answer
+    : undefined;
+}
+
 type LetterOutcome =
   | {
       kind: "ok";
@@ -1735,6 +2256,17 @@ async function provideApplicationLetter(
 ): Promise<LetterOutcome> {
   const { config } = deps;
   const letters = config.letters;
+  const approvedText = approvedApplicationLetter(config, control);
+  if (!letters && approvedText && control.kind !== "file") {
+    return {
+      kind: "ok",
+      letter: {
+        text: approvedText,
+        document: null,
+        groundedIn: ["your letter for this application"],
+      },
+    };
+  }
   if (!letters) {
     return {
       kind: "stop",
@@ -1755,6 +2287,7 @@ async function provideApplicationLetter(
     purpose: "cover_letter",
     delivery: coverLetterDeliveryFor(control),
     fileType: requiredLetterFileType(control),
+    ...(approvedText ? { approvedText } : {}),
   });
 
   const pauseWith = (summary: string): LetterOutcome => ({
@@ -1764,11 +2297,21 @@ async function provideApplicationLetter(
       pause: {
         code: "document_needs_you",
         summary,
+        ...(!produced.ok && produced.draftText
+          ? {
+              reviewDraft: {
+                text: produced.draftText,
+                reason: produced.reason,
+                groundedIn: request.groundedIn,
+              },
+            }
+          : {}),
         question: buildPendingQuestion({
           control,
           jobId: config.application.jobId,
           detectedAt: deps.now().toISOString(),
           suggestion: null,
+          reason: summary,
         }),
         blocker: null,
       },
@@ -1781,7 +2324,7 @@ async function provideApplicationLetter(
     );
   }
   // A letter with a gap in it must never go out; the person is asked instead.
-  if (!looksLikeUsableLetter(produced.text)) {
+  if (!approvedText && !looksLikeUsableLetter(produced.text)) {
     return pauseWith(
       "The letter Job Finder wrote for this application did not come out usable, so nothing was attached. Write or attach one here and it will be used.",
     );
@@ -1792,7 +2335,9 @@ async function provideApplicationLetter(
     letter: {
       text: produced.text,
       document: produced.document,
-      groundedIn: request.groundedIn,
+      groundedIn: approvedText
+        ? ["your letter for this application"]
+        : request.groundedIn,
     },
   };
 }

@@ -13,9 +13,9 @@ import { createMonotonicTimestamp } from "./resume-draft-commit-support";
 import { applyPatchToResumeDraft } from "./resume-workspace-patches";
 import {
   collectResearchContext,
-  evaluateResumeProposalGrounding,
   sanitizeResumeDraft,
 } from "./resume-workspace-helpers";
+import { evaluateCheckedResumeProposalGrounding } from "./resume-claim-checks";
 import { buildResumeRenderDocument } from "./resume-workspace-structure";
 import { createUniqueId } from "./shared";
 import {
@@ -80,6 +80,7 @@ export async function runResumeRevisionSpecialist(
     }),
     checkProposal: (patches) =>
       checkResumeAssistantProposal({
+        aiClient: ctx.aiClient,
         baselineDraft: state.draft,
         patches,
         job: state.job,
@@ -143,13 +144,16 @@ export async function runResumeRevisionSpecialist(
   );
   const gate =
     kept.length > 0
-      ? evaluateResumeProposalGrounding({
-          baselineDraft: state.draft,
-          patches: kept,
-          job: state.job,
-          profile: state.profile,
-          evaluatedAt: new Date().toISOString(),
-        })
+      ? await evaluateCheckedResumeProposalGrounding(
+          { aiClient: ctx.aiClient },
+          {
+            baselineDraft: state.draft,
+            patches: kept,
+            job: state.job,
+            profile: state.profile,
+            evaluatedAt: new Date().toISOString(),
+          },
+        )
       : { accepted: true, approvalBlockers: [] };
   return {
     note: reply.content,

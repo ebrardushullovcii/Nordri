@@ -392,6 +392,7 @@ export class ApplicationDocumentLibrary {
   async list(input: ListApplicationDocumentsInput) {
     const index = await this.readIndex();
     const latestById = new Map<string, ApplicationDocumentRevision>();
+    const approvedById = new Map<string, ApplicationDocumentRevision>();
     for (const revision of index.revisions) {
       if (
         revision.job.jobId !== input.jobId ||
@@ -399,21 +400,60 @@ export class ApplicationDocumentLibrary {
       ) {
         continue;
       }
+      if (revision.approvedAt !== null && revision.status !== "proposed") {
+        const approved = approvedById.get(revision.id);
+        if (!approved || approved.revision < revision.revision)
+          approvedById.set(revision.id, revision);
+      }
       const current = latestById.get(revision.id);
       if (!current || current.revision < revision.revision) {
         latestById.set(revision.id, revision);
       }
     }
     return ApplicationDocumentListResultSchema.parse({
+      approvedRevisions: [...approvedById.values()].filter(
+        (approved) =>
+          (latestById.get(approved.id)?.revision ?? 0) > approved.revision,
+      ),
       documents: [...latestById.values()].sort((left, right) =>
         right.updatedAt.localeCompare(left.updatedAt),
       ),
     });
   }
 
+  async getLatestApprovedCoverLetter(
+    jobId: string,
+    applicationRecordId?: string,
+  ) {
+    const index = await this.readIndex();
+    const approved = index.revisions
+      .filter(
+        (document) =>
+          document.kind === "cover_letter" &&
+          document.job.jobId === jobId &&
+          document.status !== "proposed" &&
+          document.approvedAt !== null,
+      )
+      .sort(
+        (left, right) =>
+          right.approvedAt!.localeCompare(left.approvedAt!) ||
+          right.revision - left.revision,
+      );
+    return (
+      approved.find(
+        (document) => document.job.applicationRecordId === applicationRecordId,
+      ) ??
+      approved[0] ??
+      null
+    );
+  }
+
   propose(input: {
     kind: ApplicationDocumentKind;
     documentId?: string;
+    /** Capture an attached or unchecked draft once without overwriting edits. */
+    createDocumentId?: string;
+    reviewReason?: string | null;
     expectedRevision?: number;
     grounding: ApplicationDocumentGrounding;
     /**
@@ -425,10 +465,24 @@ export class ApplicationDocumentLibrary {
     return this.runExclusive(async () => {
       const index = await this.readIndex();
       const documentId =
-        input.documentId ?? `application_document_${randomUUID()}`;
+        input.documentId ??
+        input.createDocumentId ??
+        `application_document_${randomUUID()}`;
       const latest = index.revisions
         .filter((revision) => revision.id === documentId)
         .sort((left, right) => right.revision - left.revision)[0];
+      if (input.createDocumentId && latest) {
+        if (
+          latest.job.jobId !== input.grounding.job.id ||
+          latest.job.applicationRecordId !==
+            input.grounding.applicationRecord.id
+        ) {
+          throw new ApplicationDocumentLibraryError(
+            "This document belongs to another application.",
+          );
+        }
+        return latest;
+      }
       if (input.documentId) {
         if (!latest || latest.revision !== input.expectedRevision) {
           throw new ApplicationDocumentLibraryError(
@@ -497,7 +551,8 @@ export class ApplicationDocumentLibrary {
         evidence,
         evidenceDigest: digest(evidence),
         authorship: "system_grounded",
-        requiresGroundingReview: false,
+        requiresGroundingReview: Boolean(input.reviewReason),
+        reviewReason: input.reviewReason?.slice(0, 2_000) ?? null,
         approvedAt: null,
         outputAsset: null,
         lastExportedAt: null,

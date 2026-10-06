@@ -605,3 +605,41 @@ describe("composed application submission runtime", () => {
     expect(projectedApplication?.lastAttemptState).toBe("paused");
   });
 });
+
+test("keeps exact validation feedback and allows correction after an attempted send", async () => {
+  const base = buildBrowserRuntime();
+  const runtime: ApplicationSubmissionBrowserRuntime = {
+    ...base.runtime,
+    executeExactlyOneFinalAction: () =>
+      Promise.resolve({
+        outcome: "not_submitted",
+        reason: "form_validation_failed",
+        observation: OBSERVATION,
+        control: CONTROL,
+        validationErrors: ["Select at least one skill."],
+        facts: {
+          ...emptyFacts(),
+          actionAttempted: true,
+          actionIssued: true,
+          actionCompleted: true,
+        },
+      }),
+  };
+  const h = await createHarness({ mode: "autonomous_submit", runtime });
+  const result = await runApplicationSubmissionRuntime(h.runtimeInput);
+  expect(result).toMatchObject({
+    status: "recorded_not_submitted",
+    outcome: {
+      outcome: "not_submitted",
+      retry: { eligible: true, blockReason: null },
+      browserAction: {
+        actionAttempted: true,
+        actionIssued: true,
+        reason: "form_validation_failed",
+        detail: "Select at least one skill.",
+      },
+    },
+  });
+  const record = (await h.repository.listApplicationRecords())[0];
+  expect(record?.lastAttemptState).toBe("ready");
+});

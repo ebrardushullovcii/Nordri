@@ -6,7 +6,6 @@ import {
   createOpenAiCompatibleJobFinderAiClient,
 } from "./index";
 import { NO_AI_PROVIDER_REASON } from "./openai-compatible";
-import { ResumeGenerationStrategyPolicySchema } from "./shared";
 import {
   createEnvironment,
   createJobPosting,
@@ -170,13 +169,16 @@ describe("ai provider config and fallback behavior", () => {
         NORDRI_AI_MODEL: "ordinary-model",
       });
 
-      await client.tailorResume({
-        profile: createProfile(),
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        job: createJobPosting(),
-        resumeText: "Resume text",
-      });
+      // The canned reply is no usable draft; this test reads only the request.
+      await client
+        .tailorResume({
+          profile: createProfile(),
+          searchPreferences: createPreferences(),
+          settings: createSettings(),
+          job: createJobPosting(),
+          resumeText: "Resume text",
+        })
+        .catch(() => undefined);
 
       const balancedBody = JSON.parse(balancedCapture.getCapturedBody()) as {
         model?: string;
@@ -197,16 +199,18 @@ describe("ai provider config and fallback behavior", () => {
         NORDRI_AI_AGGRESSIVE_REASONING_EFFORT: "high",
       });
 
-      await client.tailorResume({
-        profile: createProfile(),
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive",
-        },
-        settings: createSettings(),
-        job: createJobPosting(),
-        resumeText: "Resume text",
-      });
+      await client
+        .tailorResume({
+          profile: createProfile(),
+          searchPreferences: {
+            ...createPreferences(),
+            tailoringMode: "aggressive",
+          },
+          settings: createSettings(),
+          job: createJobPosting(),
+          resumeText: "Resume text",
+        })
+        .catch(() => undefined);
 
       const aggressiveBody = JSON.parse(
         aggressiveCapture.getCapturedBody(),
@@ -405,13 +409,12 @@ describe("ai provider config and fallback behavior", () => {
     });
   });
 
-  test("keeps optional shared-memory suggestions off the remote import critical path", async () => {
-    const originalFetch = globalThis.fetch;
-    const fetchSpy = vi.fn(() =>
-      Promise.reject(new Error("shared-memory import should stay local")),
-    );
-    globalThis.fetch = fetchSpy as typeof fetch;
-
+  test("R3-095/R3-223 reads reusable evidence with the model instead of a local rule reader", async () => {
+    const capture = mockCapturingJsonFetch({
+      choices: [
+        { message: { content: JSON.stringify({ candidates: [], notes: [] }) } },
+      ],
+    });
     try {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
@@ -421,27 +424,18 @@ describe("ai provider config and fallback behavior", () => {
         existingSearchPreferences: createPreferences(),
         documentBundle: createFastPathResumeBundle(),
       });
-
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(result.analysisProviderKind).toBe("deterministic");
-      expect(result.timing?.durationMs).toEqual(expect.any(Number));
-      expect(result.timing?.primaryProviderMs).toBeNull();
-      expect(result.timing?.deterministicFallbackMs).toEqual(
-        expect.any(Number),
+      expect(capture.getCapturedBody()).toContain(
+        "never in employer proof points",
       );
-      expect(
-        result.candidates.some(
-          (candidate) =>
-            candidate.target.section === "proof_point" &&
-            candidate.sourceBlockIds.length > 0,
-        ),
-      ).toBe(true);
+      expect(result.analysisProviderKind).toBe("openai_compatible");
+      expect(result.timing?.primaryProviderMs).toEqual(expect.any(Number));
+      expect(result.timing?.deterministicFallbackMs).toBeNull();
     } finally {
-      globalThis.fetch = originalFetch;
+      capture.restore();
     }
   });
 
-  test("bounds default remote core-stage latency and returns grounded local extraction", async () => {
+  test("bounds default remote core-stage latency and reports the section unread instead of guessing", async () => {
     vi.useFakeTimers();
     const originalFetch = globalThis.fetch;
     const errorSpy = vi
@@ -478,37 +472,25 @@ describe("ai provider config and fallback behavior", () => {
         .finally(() => {
           settled = true;
         });
+      const outcome = resultPromise.then(
+        () => null,
+        (error: unknown) => error,
+      );
 
       await vi.advanceTimersByTimeAsync(299_999);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
 
-      const result = await resultPromise;
-      // Silent attempts are retried inside the 300s budget (idle clock 120s).
+      // Silent attempts are retried inside the 300s budget (idle clock 120s);
+      // a timeout is not asked again after that, and nothing is guessed.
+      const error = await outcome;
       expect(fetchSpy).toHaveBeenCalledTimes(3);
-      expect(result.analysisProviderKind).toBe("deterministic");
-      // A timed-out stage used to return with no note and no reason, which made
-      // it indistinguishable from a stage the model actually answered.
-      expect(result.fallback).toEqual({
-        kind: "timeout",
-        reason: "Model request timed out after 300s",
-      });
-      expect(result.notes).toContain(
-        "Fell back to the deterministic staged resume importer after the model call failed.",
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "could not read your name, contact details and summary",
       );
-      expect(result.notes).toContain(
-        "Primary AI import stage failed: Model request timed out after 300s",
-      );
+      expect((error as Error).message).toContain("Nothing was guessed");
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("300s"));
-      expect(
-        result.candidates.some(
-          (candidate) =>
-            candidate.target.section === "identity" &&
-            candidate.target.key === "fullName" &&
-            candidate.value === "Casey Rowan" &&
-            candidate.sourceBlockIds.length > 0,
-        ),
-      ).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
       errorSpy.mockRestore();
@@ -516,7 +498,8 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("records a provider-error fallback reason when a core stage call fails", async () => {
+  test("asks the model again after a provider error, then reports the section unread", async () => {
+    vi.useFakeTimers();
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -525,39 +508,56 @@ describe("ai provider config and fallback behavior", () => {
     try {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
+      const outcome = client
+        .extractResumeImportStage({
+          stage: "experience",
+          existingProfile: createProfile(),
+          existingSearchPreferences: createPreferences(),
+          documentBundle: createFastPathResumeBundle(),
+        })
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      await vi.advanceTimersByTimeAsync(30_000);
+      const error = await outcome;
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "could not read your work history",
+      );
+      expect((error as Error).message).toContain("upstream stage failure");
+      expect(
+        errorSpy.mock.calls.filter((call) =>
+          String(call[0]).includes("extractResumeImportStage"),
+        ).length,
+      ).toBe(3);
+    } finally {
+      restoreFetch();
+      errorSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  test("leaves the fallback reason unset when a stage reaches the model", async () => {
+    const restoreFetch = mockJsonFetch({
+      choices: [
+        { message: { content: JSON.stringify({ candidates: [], notes: [] }) } },
+      ],
+    });
+    try {
+      const client =
+        createJobFinderAiClientFromEnvironment(createEnvironment());
       const result = await client.extractResumeImportStage({
-        stage: "experience",
+        stage: "shared_memory",
         existingProfile: createProfile(),
         existingSearchPreferences: createPreferences(),
         documentBundle: createFastPathResumeBundle(),
       });
-
-      expect(result.analysisProviderKind).toBe("deterministic");
-      expect(result.fallback).toEqual({
-        kind: "provider_error",
-        reason: "upstream stage failure",
-      });
-      expect(result.notes).toContain(
-        "Primary AI import stage failed: upstream stage failure",
-      );
+      expect(result.fallback ?? null).toBeNull();
     } finally {
       restoreFetch();
-      errorSpy.mockRestore();
     }
-  });
-
-  test("leaves the fallback reason unset when a core stage reaches the model", async () => {
-    const client = createJobFinderAiClientFromEnvironment(createEnvironment());
-    const result = await client.extractResumeImportStage({
-      stage: "shared_memory",
-      existingProfile: createProfile(),
-      existingSearchPreferences: createPreferences(),
-      documentBundle: createFastPathResumeBundle(),
-    });
-
-    // `shared_memory` is deterministic by design, so it never lost a model
-    // call and must not be reported as a degraded stage.
-    expect(result.fallback ?? null).toBeNull();
   });
 
   test("marks the OpenAI-compatible client as not ready when config is invalid", () => {
@@ -577,10 +577,7 @@ describe("ai provider config and fallback behavior", () => {
     });
   });
 
-  test("falls back from profile extraction with logged error details and merged notes", async () => {
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
+  test("reports a failed profile extraction instead of parsing the resume by rules", async () => {
     const restoreFetch = mockRejectedFetch(
       new Error("upstream extraction failure"),
     );
@@ -589,25 +586,15 @@ describe("ai provider config and fallback behavior", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const result = await client.extractProfileFromResume({
-        existingProfile: createProfile(),
-        existingSearchPreferences: createPreferences(),
-        resumeText: "Alex Vanguard\nLondon, UK\nReact engineer",
-      });
-
-      expect(result.analysisProviderKind).toBe("deterministic");
-      expect(result.notes).toContain(
-        "Fell back to the deterministic resume parser after the model call failed.",
-      );
-      expect(result.notes).toContain(
-        "Primary AI extraction failed: upstream extraction failure",
-      );
-      expect(errorSpy).toHaveBeenCalledWith(
-        "[AI Provider] extractProfileFromResume failed; falling back to deterministic client. upstream extraction failure",
-      );
+      await expect(
+        client.extractProfileFromResume({
+          existingProfile: createProfile(),
+          existingSearchPreferences: createPreferences(),
+          resumeText: "Alex Vanguard\nLondon, UK\nReact engineer",
+        }),
+      ).rejects.toThrow("upstream extraction failure");
     } finally {
       restoreFetch();
-      errorSpy.mockRestore();
     }
   });
 
@@ -677,9 +664,6 @@ describe("ai provider config and fallback behavior", () => {
   });
 
   test("uses the configured resume extraction timeout when normalizing abort-like provider failures", async () => {
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
     const restoreFetch = mockRejectedFetch(
       new DOMException("This operation was aborted", "AbortError"),
     );
@@ -691,134 +675,19 @@ describe("ai provider config and fallback behavior", () => {
         }),
       );
 
-      const result = await client.extractProfileFromResume({
-        existingProfile: createProfile(),
-        existingSearchPreferences: createPreferences(),
-        resumeText: "Alex Vanguard\nLondon, UK\nReact engineer",
-      });
-
-      expect(result.analysisProviderKind).toBe("deterministic");
-      expect(result.notes).toContain(
-        "Primary AI extraction failed: Model request timed out after 90s",
-      );
-      expect(errorSpy).toHaveBeenCalledWith(
-        "[AI Provider] extractProfileFromResume failed; falling back to deterministic client. Model request timed out after 90s",
-      );
-    } finally {
-      restoreFetch();
-      errorSpy.mockRestore();
-    }
-  });
-
-  test("keeps listing-asked skills on an aggressive draft when the model call fails", async () => {
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const restoreFetch = mockRejectedFetch(new Error("upstream draft failure"));
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-      const result = await client.createResumeDraft({
-        profile: createProfile(),
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive",
-        },
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          description: [
-            "Own the payments reconciliation service end to end.",
-            "Design ledger invariants, instrument settlement dashboards,",
-            "run incident response, and mentor two backend engineers.",
-            Array.from({ length: 40 }, (_, index) => `duty ${index}`).join(" "),
-          ].join(" "),
-          keySkills: ["TypeScript"],
-          minimumQualifications: ["Hands-on experience with Terraform."],
-        },
-        resumeText: "Resume text",
-      });
-
-      expect(result.generationProvenance).toMatchObject({
-        method: "deterministic",
-        reason: "provider_failed",
-      });
-      expect(result.coreSkills).toEqual(expect.arrayContaining(["Terraform"]));
-      expect(result.notes.join(" ")).toMatch(/Terraform/);
-      expect(result.notes).toContain(
-        "Fell back to the deterministic resume draft creator after the model call failed.",
-      );
-    } finally {
-      restoreFetch();
-      errorSpy.mockRestore();
-    }
-  });
-
-  test("does not add listing-only skills on provider failure when a conservative strategy is selected", async () => {
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const restoreFetch = mockRejectedFetch(new Error("upstream draft failure"));
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-      const result = await client.createResumeDraft({
-        profile: createProfile(),
-        searchPreferences: {
-          ...createPreferences(),
-          tailoringMode: "aggressive",
-        },
-        strategy: ResumeGenerationStrategyPolicySchema.parse({
-          strategyId: "strategy_keep_facts",
-          strategyName: "Keep every fact",
-          roleFamily: "Frontend Engineering",
-          baseResumeDocumentId: "resume_1",
-          templateId: "classic_ats",
-          headlinePolicy: "per_job_tailored",
-          skillsPolicy: "role_family_expanded",
-          coveragePolicy: "full_tailoring",
-          tailoringStrength: "conservative",
-          evidenceBoundaries: {
-            allowExactClaims: true,
-            allowParaphrasedClaims: true,
-            maxEvidenceRefsPerBullet: 8,
-            requireVerifierPass: true,
-          },
-          effectiveSource: "selection",
-          effectiveReason: "The user selected this strategy for the posting.",
-          recommendationSource: "none",
-          recommendationReason: null,
-          selectionSource: "user",
-          selectionReason: "Keep every fact for this job.",
+      await expect(
+        client.extractProfileFromResume({
+          existingProfile: createProfile(),
+          existingSearchPreferences: createPreferences(),
+          resumeText: "Alex Vanguard\nLondon, UK\nReact engineer",
         }),
-        settings: createSettings(),
-        job: {
-          ...createJobPosting(),
-          description: [
-            "Own the payments reconciliation service end to end.",
-            "Design ledger invariants, instrument settlement dashboards,",
-            "run incident response, and mentor two backend engineers.",
-            Array.from({ length: 40 }, (_, index) => `duty ${index}`).join(" "),
-          ].join(" "),
-          keySkills: ["TypeScript"],
-          minimumQualifications: ["Hands-on experience with Terraform."],
-        },
-        resumeText: "Resume text",
-      });
-
-      expect(result.coreSkills).not.toEqual(
-        expect.arrayContaining(["Terraform"]),
-      );
-      expect(result.notes.join(" ")).not.toMatch(/job-listing skill/i);
+      ).rejects.toThrow("Model request timed out after 90s");
     } finally {
       restoreFetch();
-      errorSpy.mockRestore();
     }
   });
 
-  test("records a timeout reason when the primary draft call times out", async () => {
+  test("a timed-out draft call says so and writes nothing (ADR 0041)", async () => {
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -830,31 +699,28 @@ describe("ai provider config and fallback behavior", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const result = await client.createResumeDraft({
-        profile: createProfile(),
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        // A real listing body: card-only postings skip the model on purpose
-        // (see the card-only test), so the timeout path needs text to tailor.
-        job: {
-          ...createJobPosting(),
-          description: [
-            "Own the payments reconciliation service end to end.",
-            "Design ledger invariants, instrument settlement dashboards,",
-            "run incident response, and mentor two backend engineers.",
-            Array.from({ length: 40 }, (_, index) => `duty ${index}`).join(" "),
-          ].join(" "),
-        },
-        resumeText: "Resume text",
-      });
-
-      expect(result.generationProvenance).toEqual({
-        method: "deterministic",
-        reason: "provider_timeout",
-        detail: "Model request timed out after 60s",
-      });
-      expect(result.notes).toContain(
-        "Primary AI draft creation failed: Model request timed out after 60s",
+      await expect(
+        client.createResumeDraft({
+          profile: createProfile(),
+          searchPreferences: createPreferences(),
+          settings: createSettings(),
+          // A real listing body: card-only postings skip the model on purpose
+          // (see the card-only test), so the timeout path needs text to tailor.
+          job: {
+            ...createJobPosting(),
+            description: [
+              "Own the payments reconciliation service end to end.",
+              "Design ledger invariants, instrument settlement dashboards,",
+              "run incident response, and mentor two backend engineers.",
+              Array.from({ length: 40 }, (_, index) => `duty ${index}`).join(
+                " ",
+              ),
+            ].join(" "),
+          },
+          resumeText: "Resume text",
+        }),
+      ).rejects.toThrow(
+        "The AI could not write this resume in time, so nothing was changed. Try again.",
       );
     } finally {
       restoreFetch();
@@ -927,7 +793,7 @@ describe("ai provider config and fallback behavior", () => {
     });
   });
 
-  test("falls back from tailoring with logged error details and merged notes", async () => {
+  test("a failed tailoring call says so, logs why and writes nothing (ADR 0041)", async () => {
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -939,27 +805,19 @@ describe("ai provider config and fallback behavior", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const result = await client.tailorResume({
-        profile: createProfile(),
-        searchPreferences: createPreferences(),
-        settings: createSettings(),
-        job: createJobPosting(),
-        resumeText: "Resume text",
-      });
-
-      expect(result.notes).toContain(
-        "Fell back to the deterministic resume tailorer after the model call failed.",
+      await expect(
+        client.tailorResume({
+          profile: createProfile(),
+          searchPreferences: createPreferences(),
+          settings: createSettings(),
+          job: createJobPosting(),
+          resumeText: "Resume text",
+        }),
+      ).rejects.toThrow(
+        "The AI could not write this resume, so nothing was changed. Try again.",
       );
-      expect(result.notes).toContain(
-        "Primary AI tailoring failed: upstream tailoring failure",
-      );
-      expect(result.generationProvenance).toEqual({
-        method: "deterministic",
-        reason: "provider_failed",
-        detail: "upstream tailoring failure",
-      });
       expect(errorSpy).toHaveBeenCalledWith(
-        "[AI Provider] tailorResume failed; falling back to deterministic client. upstream tailoring failure",
+        "[AI Provider] tailorResume failed. upstream tailoring failure",
       );
     } finally {
       restoreFetch();
@@ -967,14 +825,14 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("uses deterministic profile copilot reply when the model returns guidance-only but deterministic can structure the edit", async () => {
+  test("a run that prepares no edit and never finishes keeps the question for Ask again", async () => {
     const restoreFetch = mockJsonFetch({
       choices: [
         {
           message: {
             content: JSON.stringify({
               content:
-                "I reviewed the setup essentials context, but I could not turn that request into a safe structured profile edit.",
+                "Which number should it be? Your resume shows six years of work.",
               patchGroups: [],
             }),
           },
@@ -986,161 +844,25 @@ describe("ai provider config and fallback behavior", () => {
       const client =
         createJobFinderAiClientFromEnvironment(createEnvironment());
 
-      const reply = await client.reviseCandidateProfile({
-        profile: {
-          ...createProfile(),
-          yearsExperience: 6,
-        },
-        searchPreferences: createPreferences(),
-        context: { surface: "setup", step: "essentials" },
-        relevantReviewItems: [],
-        request: "change my experience to only 5 years",
-      });
-
-      expect(reply.patchGroups).toHaveLength(1);
-      expect(reply.patchGroups[0]?.operations[0]).toEqual({
-        operation: "replace_identity_fields",
-        value: {
-          yearsExperience: 5,
-        },
-      });
+      // No rule-made edit stands in for the model's answer (ADR 0041).
+      await expect(
+        client.reviseCandidateProfile({
+          profile: {
+            ...createProfile(),
+            yearsExperience: 6,
+          },
+          searchPreferences: createPreferences(),
+          context: { surface: "setup", step: "essentials" },
+          relevantReviewItems: [],
+          request: "change my experience",
+        }),
+      ).rejects.toThrow("nothing was changed");
     } finally {
       restoreFetch();
     }
   });
 
-  test("uses deterministic profile copilot reply when the model gives generic no-op guidance for an existing job source request", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              content:
-                "I reviewed that request in the profile context, but I could not turn it into a safe structured profile edit yet.",
-              patchGroups: [],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const reply = await client.reviseCandidateProfile({
-        profile: createProfile(),
-        searchPreferences: {
-          ...createPreferences(),
-          discovery: {
-            historyLimit: 5,
-            targets: [
-              {
-                id: "target_linkedin_jobs",
-                label: "LinkedIn Jobs",
-                startingUrl: "https://www.linkedin.com/jobs/search/",
-                enabled: true,
-                adapterKind: "auto",
-                customInstructions: null,
-                instructionStatus: "missing",
-                validatedInstructionId: null,
-                draftInstructionId: null,
-                lastDebugRunId: null,
-                lastVerifiedAt: null,
-                staleReason: null,
-              },
-            ],
-          },
-        },
-        context: { surface: "profile", section: "preferences" },
-        relevantReviewItems: [],
-        request: "please add linkedin jobs again",
-      });
-
-      expect(reply.patchGroups).toEqual([]);
-      expect(reply.content).toContain("already saved");
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("uses deterministic profile copilot reply when the model gives generic no-op guidance for a direct github url", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              content:
-                "I reviewed that request in the profile context, but I could not turn it into a safe structured profile edit yet.",
-              patchGroups: [],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const reply = await client.reviseCandidateProfile({
-        profile: {
-          ...createProfile(),
-          githubUrl: null,
-        },
-        searchPreferences: createPreferences(),
-        context: { surface: "profile", section: "preferences" },
-        relevantReviewItems: [],
-        request: "https://github.com/ebrardushullovcii",
-      });
-
-      expect(reply.patchGroups).toHaveLength(1);
-      expect(reply.patchGroups[0]?.operations[0]).toEqual({
-        operation: "replace_identity_fields",
-        value: {
-          githubUrl: "https://github.com/ebrardushullovcii",
-        },
-      });
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("uses deterministic profile copilot clarification when the model gives generic no-op guidance for visa sponsorship", async () => {
-    const restoreFetch = mockJsonFetch({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              content:
-                "I reviewed that request in the profile context, but I could not turn it into a safe structured profile edit yet.",
-              patchGroups: [],
-            }),
-          },
-        },
-      ],
-    });
-
-    try {
-      const client =
-        createJobFinderAiClientFromEnvironment(createEnvironment());
-
-      const reply = await client.reviseCandidateProfile({
-        profile: createProfile(),
-        searchPreferences: createPreferences(),
-        context: { surface: "profile", section: "preferences" },
-        relevantReviewItems: [],
-        request: "update visa sponsorship",
-      });
-
-      expect(reply.patchGroups).toEqual([]);
-      expect(reply.content).toContain("I need visa sponsorship");
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test("falls back cleanly for very large profile copilot requests when the primary model call fails", async () => {
+  test("reports the outage for very large profile copilot requests when the primary model call fails", async () => {
     const errorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -1165,9 +887,10 @@ describe("ai provider config and fallback behavior", () => {
       });
 
       expect(reply.content.trim().length).toBeGreaterThan(0);
-      expect(Array.isArray(reply.patchGroups)).toBe(true);
+      expect(reply.patchGroups).toHaveLength(0);
+      expect(reply.executionReceipt?.stopReason).toBe("permanent_failure");
       expect(errorSpy).toHaveBeenCalledWith(
-        "[AI Provider] reviseCandidateProfile failed; falling back to deterministic client. upstream profile failure",
+        "[AI Provider] reviseCandidateProfile failed. upstream profile failure",
       );
     } finally {
       restoreFetch();
@@ -1175,7 +898,7 @@ describe("ai provider config and fallback behavior", () => {
     }
   });
 
-  test("supplements sparse model experience records with grounded deterministic work modes and role skills", async () => {
+  test("returns the model's experience records as it read them, with no rule-read records beside them", async () => {
     const resumeLines = [
       "CASEY ROWAN",
       "Senior Frontend Engineer",
@@ -1324,42 +1047,22 @@ describe("ai provider config and fallback behavior", () => {
       });
       expect(result.timing?.durationMs).toBeGreaterThanOrEqual(0);
       expect(result.timing?.primaryProviderMs).toBeGreaterThanOrEqual(0);
-      expect(result.timing?.deterministicFallbackMs).toBeGreaterThanOrEqual(0);
-      const primaryCandidates = result.candidates.filter(
-        (candidate) =>
-          !candidate.notes.includes("deterministic_stage_fallback"),
-      );
-      const northstar = primaryCandidates.find(
-        (candidate) => candidate.target.recordId === "experience_1",
-      );
-      const cedar = primaryCandidates.find(
+      expect(result.timing?.deterministicFallbackMs).toBeNull();
+      expect(
+        result.candidates.map((candidate) => candidate.target.recordId),
+      ).toEqual(["experience_1", "experience_2"]);
+      expect(
+        result.candidates.some((candidate) =>
+          candidate.notes.includes("deterministic_stage_fallback"),
+        ),
+      ).toBe(false);
+      const cedar = result.candidates.find(
         (candidate) => candidate.target.recordId === "experience_2",
       );
-
-      expect(northstar?.value).toMatchObject({ workMode: [] });
-      expect(
-        northstar?.value &&
-          typeof northstar.value === "object" &&
-          !Array.isArray(northstar.value)
-          ? northstar.value.skills
-          : null,
-      ).toEqual([
-        "React",
-        "TypeScript",
-        "Vitest",
-        "Storybook",
-        "axe",
-        "Performance Optimization",
-        "Accessibility",
-      ]);
-      expect(cedar?.value).toMatchObject({ workMode: ["remote"] });
-      expect(
-        cedar?.value &&
-          typeof cedar.value === "object" &&
-          !Array.isArray(cedar.value)
-          ? cedar.value.skills
-          : null,
-      ).toEqual(["React", "GraphQL", "Node.js"]);
+      expect(cedar?.value).toMatchObject({
+        workMode: [],
+        skills: ["React", "GraphQL", "Node.js"],
+      });
     } finally {
       restoreFetch();
     }

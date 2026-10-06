@@ -1,7 +1,9 @@
 import {
+  hasModelReadResumeHeader,
   PROFILE_SETUP_PLACEHOLDER_HEADLINE,
   PROFILE_SETUP_PLACEHOLDER_SUMMARY,
   isInterruptedResumeImportRun,
+  isResumeImportRunInProgress,
   RESUME_IMPORT_INTERRUPTED_MESSAGE,
   type AssetStatus,
   type CandidateProfile,
@@ -113,17 +115,6 @@ interface ProfileResumePanelProps {
   profile: CandidateProfile;
 }
 
-function isResumeImportRunInProgress(
-  run: Pick<ResumeImportRun, "status"> | null,
-): boolean {
-  return (
-    run?.status === "queued" ||
-    run?.status === "parsing" ||
-    run?.status === "extracting" ||
-    run?.status === "reconciling"
-  );
-}
-
 /**
  * The resume strip's label and tone come from one derivation so they can
  * never disagree. The profile's own extraction status is authoritative: a
@@ -196,6 +187,8 @@ export function getResumeImportStageFallbackNotes(
 const PERSON_FACING_IMPORT_NOTE_PATTERNS: readonly RegExp[] = [
   /^\d+ optional proof suggestions? (?:is|are) available to review\b/u,
   /^paste plain-text resume content\b/u,
+  /^could not import\b/u,
+  /^job finder could not read\b/u,
 ];
 
 export function isPersonFacingImportNote(value: string): boolean {
@@ -408,7 +401,11 @@ export function ProfileResumePanel({
     reviewCandidates: latestResumeImportReviewCandidates,
   });
   const experienceLabel =
-    visibleYearsExperience === 1 ? "1 year" : `${visibleYearsExperience} years`;
+    visibleYearsExperience === null
+      ? "Years of experience need review"
+      : visibleYearsExperience === 1
+        ? "1 year"
+        : `${visibleYearsExperience} years`;
   const latestRunSummary = latestResumeImportRun
     ? latestResumeImportRun.status === "review_ready"
       ? `${latestResumeImportRun.candidateCounts.autoApplied} imported automatically, ${latestResumeImportRun.candidateCounts.needsReview} waiting for review.`
@@ -469,10 +466,18 @@ export function ProfileResumePanel({
       ? "Part of this import used the built-in reader."
       : null;
 
+  // The strip is one line when the resume is simply ready: "replace or
+  // refresh" repeats its own two buttons. Any state that needs reading
+  // (suggestions to review, a failed or unreadable import) keeps its line.
+  const compactDescription =
+    resumeTextReadyToAnalyze && latestResumeImportReviewCandidates.length === 0
+      ? null
+      : panelDescription;
+
   if (compact) {
     return (
       <section
-        className="grid gap-3 border-b border-(--surface-panel-border) bg-(--surface-overlay-strong) px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-4"
+        className="grid gap-2 border-b border-(--surface-panel-border) bg-(--surface-overlay-strong) px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-4"
         data-profile-resume-summary
       >
         <div className="grid min-w-0 gap-1">
@@ -495,9 +500,11 @@ export function ProfileResumePanel({
               </span>
             ) : null}
           </div>
-          <p className="text-sm leading-5 text-foreground-muted">
-            {panelDescription}
-          </p>
+          {compactDescription ? (
+            <p className="text-sm leading-5 text-foreground-muted">
+              {compactDescription}
+            </p>
+          ) : null}
           {latestRunWarning ? (
             <p
               className="text-sm leading-5 text-foreground-muted"
@@ -563,7 +570,9 @@ export function ProfileResumePanel({
             {/* F80: "Refresh" alone is a verb with no object, and the full
                 panel below already calls the same action "Refresh from
                 resume". One name for one action. */}
-            Refresh from resume
+            {hasModelReadResumeHeader(latestResumeImportRun)
+              ? "Refresh from resume"
+              : "Read my resume again"}
           </Button>
         </div>
       </section>
@@ -685,7 +694,9 @@ export function ProfileResumePanel({
                 variant="primary"
               >
                 <Sparkles className="size-4" />
-                Refresh from resume
+                {hasModelReadResumeHeader(latestResumeImportRun)
+                  ? "Refresh from resume"
+                  : "Read my resume again"}
               </Button>
             </div>
             <ResumeImportProgress

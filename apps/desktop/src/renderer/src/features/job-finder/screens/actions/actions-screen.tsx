@@ -1,3 +1,4 @@
+import { useQuestionAnswerDrafts } from "./use-question-answer-drafts";
 import { PlanSafeguardPauseCards } from "../../components/plan-safeguard-pause-cards";
 import {
   CONFIRM_STEP_DONE_ACTION,
@@ -6,6 +7,8 @@ import {
 } from "../../lib/job-finder-browser-handoff-copy";
 import type {
   ApplicationAttemptQuestion,
+  ApplyRunDetails,
+  JobFinderApplyRunDetailsQuery,
   ApplyGroupedManualAnswerInput,
   CandidateProfile,
   PlanSafeguardPause,
@@ -58,7 +61,7 @@ import {
 } from "../../components/collection-search-toolbar";
 import { PageHeaderStack } from "../../components/page-header";
 import { usePersistedCollectionView } from "../../hooks/use-persisted-collection-view";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 const terminalStates = new Set<UserActionRequest["state"]>([
   "resolved",
@@ -367,7 +370,7 @@ export function isSameSiteApplicationActive(
   });
 }
 
-function useMinutesSince(since: string | null): number | null {
+export function useMinutesSince(since: string | null): number | null {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!since) return;
@@ -384,6 +387,7 @@ function ActionCard(props: {
   isGroupedProjectPending: (groupKey: string) => boolean;
   isPending: boolean;
   jobLabel: string | null;
+  jobLocation?: string | undefined;
   /**
    * Returning a promise lets the question step wait for the bridge call and
    * say so when it is refused, instead of a click that records nothing.
@@ -397,6 +401,8 @@ function ActionCard(props: {
   ) => void;
   profile: CandidateProfile | null;
   questions: readonly ApplicationAttemptQuestion[];
+  answerDraft?: QuestionAnswerDraft;
+  onAnswerDraftChange?: (draft: QuestionAnswerDraft) => void | Promise<void>;
   request: UserActionRequest;
   /**
    * Closes a check that never finished and prepares the application again,
@@ -438,9 +444,12 @@ function ActionCard(props: {
     );
   // One shape for the whole card: a question step is a question and an answer
   // box, not a browser hand-off with an answer editor bolted underneath it.
+  const answerQuestions = questions.filter(
+    (question) => question.answerControlType !== "file",
+  );
   const isQuestionStep =
     request.kind === "manual_answer" &&
-    questions.length > 0 &&
+    answerQuestions.length > 0 &&
     !isLegacyCredentialQuestion;
   // A sign-in, account, or security-check step is a sentence and two buttons.
   // It used to stack five paraphrases of "do it in the browser and come back"
@@ -469,7 +478,7 @@ function ActionCard(props: {
   // A file question is answered in Profile > Files: adding or restoring a
   // fitting file there carries the application on by itself.
   const waitsForFile =
-    request.kind === "manual_upload" &&
+    (request.kind === "manual_upload" || request.kind === "manual_answer") &&
     request.scope.type === "application" &&
     Boolean(props.onOpenFiles) &&
     questions.some(
@@ -530,7 +539,9 @@ function ActionCard(props: {
             {request.state === "awaiting_user" ? null : (
               <Badge variant="outline">
                 {request.state === "verifying"
-                  ? "Checking"
+                  ? request.kind === "manual_answer"
+                    ? `${props.sameSiteApplicationActive ? "Waiting its turn" : "Inserting your answer"} (${checkingMinutes === 0 ? "under a minute" : `${checkingMinutes ?? 0} min`})`
+                    : "Checking"
                   : request.state.replaceAll("_", " ")}
               </Badge>
             )}
@@ -560,12 +571,12 @@ function ActionCard(props: {
                     waitsForSameSite && !checkingStalled
                     ? "Waiting for the other application on this site to finish. It carries on by itself after that; nothing is needed from you."
                     : checkingStalled
-                    ? `This check has not finished after ${checkingMinutes} minutes, so Job Finder has probably lost track of it. Nothing was sent. Prepare it again to start this application afresh with your answers.`
-                    : checkingWaits
-                      ? request.scope.type === "application"
-                        ? `Still checking after ${checkingMinutes} minutes. Another application on the same site is probably ahead of it; it carries on by itself when that one finishes.`
-                        : `Still checking after ${checkingMinutes} minutes. Another search is still running; this source is searched as soon as it ends.`
-                      : "Job Finder is checking this step and carries on by itself once it is done. Nothing is needed from you unless it asks again."
+                      ? `This check has not finished after ${checkingMinutes} minutes, so Job Finder has probably lost track of it. Nothing was sent. Prepare it again to start this application afresh with your answers.`
+                      : checkingWaits
+                        ? request.scope.type === "application"
+                          ? `Still checking after ${checkingMinutes} minutes. Another application on the same site is probably ahead of it; it carries on by itself when that one finishes.`
+                          : `Still checking after ${checkingMinutes} minutes. Another search is still running; this source is searched as soon as it ends.`
+                        : "Job Finder is checking this step and carries on by itself once it is done. Nothing is needed from you unless it asks again."
                   : stripScrapedGlyphs(summaryParts.message)}
           </p>
         </div>
@@ -619,6 +630,18 @@ function ActionCard(props: {
         </details>
       ) : null}
 
+      {questions
+        .filter((question) => question.answerControlType === "file")
+        .map((question) => (
+          <p
+            className="text-sm leading-6 text-foreground-soft"
+            key={question.id}
+          >
+            Add the required{" "}
+            {formatQuestionPrompt(question.prompt).toLowerCase()}.
+            {question.note ? ` ${question.note}` : ""}
+          </p>
+        ))}
       {isQuestionStep && isVerifying ? (
         <p
           aria-live="polite"
@@ -629,27 +652,36 @@ function ActionCard(props: {
           Answered. Job Finder is putting your answers in and carrying on; this
           step closes on its own when the form moves forward.
         </p>
-      ) : isQuestionStep ? (
-        <QuestionAnswerForm
-          isPending={isPending || isVerifying}
-          onAnswer={async (answers, saveForFuture) => {
-            // Every answer in one command, each tied to its question, so one
-            // revision moves the step on and no answer is lost between calls.
-            const first = answers[0];
-            if (!first) return;
-            await onCommand({
-              ...createCommand(request, "confirm_done"),
-              action: "submit_manual_answer",
-              answer: first.answer,
-              // Always tied to its question: an application keeps earlier
-              // questions on record, so a bare answer can be ambiguous.
-              answers: answers.map((entry) => ({ ...entry })),
-              saveForFuture,
-            });
-          }}
-          questions={questions}
-          requestId={request.id}
-        />
+      ) : null}
+      {isQuestionStep ? (
+        <div hidden={isVerifying}>
+          <QuestionAnswerForm
+            {...(props.answerDraft ? { draft: props.answerDraft } : {})}
+            {...(props.onAnswerDraftChange
+              ? { onDraftChange: props.onAnswerDraftChange }
+              : {})}
+            isPending={isPending || isVerifying}
+            onAnswer={async (answers, saveForFuture, hiringCountry) => {
+              // Every answer in one command, each tied to its question, so one
+              // revision moves the step on and no answer is lost between calls.
+              const first = answers[0];
+              if (!first) return;
+              await onCommand({
+                ...createCommand(request, "confirm_done"),
+                action: "submit_manual_answer",
+                answer: first.answer,
+                // Always tied to its question: an application keeps earlier
+                // questions on record, so a bare answer can be ambiguous.
+                answers: answers.map((entry) => ({ ...entry })),
+                saveForFuture,
+                ...(hiringCountry ? { hiringCountry } : {}),
+              });
+            }}
+            jobLocation={props.jobLocation}
+            questions={answerQuestions}
+            requestId={request.id}
+          />
+        </div>
       ) : null}
       {request.kind === "login" &&
       request.scope.type === "application" &&
@@ -673,8 +705,7 @@ function ActionCard(props: {
         </p>
       ) : isQuestionStep ||
         isBlockerStep ||
-        isVerifying ? // answer the question in the browser" contradicted the line above. // A step being checked needs nothing from the person; "Review and
-      null : waitsForFile ? (
+        isVerifying ? null : waitsForFile ? ( // answer the question in the browser" contradicted the line above. // A step being checked needs nothing from the person; "Review and
         // Requests written before the file hand-off carried this sentence
         // still get it once; newer ones already say it above.
         request.summary.includes("Profile › Files") ? null : (
@@ -1098,6 +1129,9 @@ export function ActionsScreen(props: {
    */
   onCommand: (command: UserActionCommandInput) => void | Promise<void>;
   onNavigate: (path: string) => void;
+  onGetApplyRunDetails?: (
+    query: JobFinderApplyRunDetailsQuery,
+  ) => Promise<ApplyRunDetails>;
   onProjectGroupedManualAnswer?: (
     command: ProjectGroupedManualAnswerCommand,
   ) => void;
@@ -1110,6 +1144,8 @@ export function ActionsScreen(props: {
   profile?: CandidateProfile;
   requests: readonly UserActionRequest[];
 }) {
+  const { answerDrafts, restoredApplications, updateAnswerDraft } =
+    useQuestionAnswerDrafts(props);
   const groupedDecisions = props.groupedDecisions ?? [];
   const pendingDecisions = groupedDecisions.filter(
     (decision) => decision.approval === "pending",
@@ -1228,7 +1264,7 @@ export function ActionsScreen(props: {
         // action it offers; the page header owns the credential boundary
         // only, so the promise is stated once per card instead of three
         // times on the same screen.
-        description={`Steps only you can do. Answer here, or finish in ${JOB_FINDER_BROWSER_NAME}; Job Finder notices when a step is done and carries on by itself. Passwords and security codes stay with you.`}
+        description="Steps only you can do. Passwords and security codes stay with you."
         title="Needs you"
       />
 
@@ -1422,16 +1458,23 @@ export function ActionsScreen(props: {
                               jobId: applicationScope.jobId,
                             })
                           : [];
+                        const draftKey = request.id;
+                        const answerDraft = answerDrafts.current.get(draftKey);
                         return (
                           <ActionCard
                             isGroupedProjectPending={
                               props.isGroupedProjectPending ?? (() => false)
                             }
                             isPending={props.isPending(request.id)}
+                            {...(answerDraft ? { answerDraft } : {})}
+                            onAnswerDraftChange={(draft) => {
+                              return updateAnswerDraft(request, draft);
+                            }}
+                            jobLocation={job?.location}
                             jobLabel={
                               job ? `${job.title} at ${job.company}` : null
                             }
-                            key={request.id}
+                            key={`${draftKey}-${request.kind}-${restoredApplications.has(draftKey) ? "restored" : "current"}`}
                             onCommand={props.onCommand}
                             {...(props.onStartOver
                               ? {
@@ -1471,8 +1514,8 @@ export function ActionsScreen(props: {
                                   questions
                                     .filter(
                                       (question) =>
-                                        question.answerControlType ===
-                                          "file" && question.kind !== "resume",
+                                        question.answerControlType === "file" &&
+                                        question.kind !== "resume",
                                     )
                                     .map(inferFileKindForQuestion),
                                 ),
@@ -1512,28 +1555,114 @@ export function ActionsScreen(props: {
  * bridge call the old "Use once" made, which already records the answer and
  * runs the retry that fills it in.
  */
+export type QuestionAnswerDraft = {
+  answers: Record<string, string | string[]>;
+  saveForFuture: boolean;
+  hiringCountry?: string | undefined;
+};
+
 export function QuestionAnswerForm(props: {
+  jobLocation?: string | undefined;
+  draft?: QuestionAnswerDraft;
+  onDraftChange?: (draft: QuestionAnswerDraft) => void | Promise<void>;
   isPending: boolean;
   onAnswer: (
     answers: readonly { questionId: string; answer: string }[],
     saveForFuture: boolean,
+    hiringCountry?: string,
   ) => void | Promise<void>;
   questions: readonly ApplicationAttemptQuestion[];
   requestId: string;
 }) {
   const { isPending, onAnswer, questions, requestId } = props;
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  // Remembered by default: the same question on the next application is
-  // answered without asking again. The person unticks it for a one-off.
-  const [saveForFuture, setSaveForFuture] = useState(true);
+  const [answers, setAnswers] = useState<Record<string, string | string[]>>(
+    () => props.draft?.answers ?? {},
+  );
+  const [saveForFuture, setSaveForFuture] = useState(
+    () =>
+      props.draft?.saveForFuture ??
+      !questions.some((question) =>
+        /neither.*(?:country|region)|ambiguous|does not (?:identify|name).*country/iu.test(
+          question.note ?? "",
+        ),
+      ),
+  );
+  const needsCountry = questions.some(
+    (question) =>
+      question.kind === "work_authorization" ||
+      question.kind === "visa_sponsorship",
+  );
+  const [hiringCountry, setHiringCountry] = useState(
+    props.draft?.hiringCountry ?? "",
+  );
+  const { onDraftChange } = props;
+  const lastDraft = useRef(
+    JSON.stringify({
+      answers,
+      saveForFuture,
+      ...(needsCountry ? { hiringCountry } : {}),
+    }),
+  );
+  const incomingDraft = JSON.stringify(props.draft);
+  const skipDraftSave = useRef(false);
+  useEffect(() => {
+    if (!props.draft) return;
+    setAnswers(props.draft.answers);
+    setSaveForFuture(props.draft.saveForFuture);
+    setHiringCountry(props.draft.hiringCountry ?? "");
+    lastDraft.current = JSON.stringify({
+      answers: props.draft.answers,
+      saveForFuture: props.draft.saveForFuture,
+      ...(needsCountry
+        ? { hiringCountry: props.draft.hiringCountry ?? "" }
+        : {}),
+    });
+    skipDraftSave.current = true;
+    // Only a changed saved value refreshes the form.
+  }, [incomingDraft]);
+  useEffect(() => {
+    if (skipDraftSave.current) {
+      skipDraftSave.current = false;
+      return;
+    }
+    const draft = {
+      answers,
+      saveForFuture,
+      ...(needsCountry ? { hiringCountry } : {}),
+    };
+    const serialized = JSON.stringify(draft);
+    if (serialized === lastDraft.current) return;
+    lastDraft.current = serialized;
+    void Promise.resolve(onDraftChange?.(draft)).catch(() => {
+      setFailure(
+        "Your unfinished answer could not be saved. Keep this form open and try again.",
+      );
+    });
+  }, [answers, saveForFuture, hiringCountry, needsCountry, onDraftChange]);
   const [working, setWorking] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const saveId = `${requestId}-save-answer`;
-  const readAnswer = (questionId: string) => answers[questionId] ?? "";
-  const missingRequired = questions.some(
-    (question) =>
-      question.isRequired !== false && !readAnswer(question.id).trim(),
-  );
+  const draftKeyFor = (question: ApplicationAttemptQuestion) =>
+    questions.filter((entry) => entry.prompt === question.prompt).length > 1
+      ? question.id
+      : question.prompt;
+  const readAnswer = (questionId: string) => {
+    const question = questions.find((entry) => entry.id === questionId);
+    const value = question
+      ? (answers[draftKeyFor(question)] ?? question.submittedAnswer ?? "")
+      : "";
+    return Array.isArray(value)
+      ? value.length
+        ? JSON.stringify(value)
+        : ""
+      : value;
+  };
+  const missingRequired =
+    (needsCountry && !hiringCountry.trim()) ||
+    questions.some(
+      (question) =>
+        question.isRequired !== false && !readAnswer(question.id).trim(),
+    );
   const isSingle = questions.length === 1;
 
   return (
@@ -1542,7 +1671,12 @@ export function QuestionAnswerForm(props: {
       data-testid="needs-you-question-form"
       onSubmit={(event) => {
         event.preventDefault();
-        if (missingRequired || isPending || working) {
+        if (
+          missingRequired ||
+          isPending ||
+          working ||
+          !event.currentTarget.reportValidity()
+        ) {
           return;
         }
         setFailure(null);
@@ -1558,6 +1692,7 @@ export function QuestionAnswerForm(props: {
               }))
               .filter((entry) => entry.answer.length > 0),
             saveForFuture,
+            ...(needsCountry ? ([hiringCountry.trim()] as const) : []),
           ),
         ).then(
           () => {
@@ -1578,6 +1713,32 @@ export function QuestionAnswerForm(props: {
         );
       }}
     >
+      {needsCountry ? (
+        <div className="grid gap-2">
+          <p className="text-(length:--text-small) text-foreground-soft">
+            Application location: {props.jobLocation?.trim() || "not specified"}
+            . Answer for the country that would hire you. Saved answers are used
+            again only for jobs in the same country and permit conditions.
+          </p>
+          <label
+            className="grid gap-1 text-sm"
+            htmlFor={`${requestId}-hiring-country`}
+          >
+            Which country would hire you for this job?
+            <Input
+              id={`${requestId}-hiring-country`}
+              value={hiringCountry}
+              maxLength={120}
+              required
+              onChange={(event) => setHiringCountry(event.target.value)}
+            />
+          </label>
+          <p className="text-xs text-foreground-soft">
+            Confirm with the employer if it is unclear. Your answers below are
+            your decision for that country, the job's hours and dates.
+          </p>
+        </div>
+      ) : null}
       {questions.map((question) => {
         const answerId = `${requestId}-answer-${question.id}`;
         const label = formatQuestionPrompt(question.prompt);
@@ -1595,16 +1756,18 @@ export function QuestionAnswerForm(props: {
 
         return (
           <div className="grid min-w-0 gap-1.5" key={question.id}>
-            <label
-              className="text-sm font-medium leading-6 text-foreground"
-              data-testid="needs-you-question-text"
-              htmlFor={answerId}
-            >
-              {/* Only the ones the site actually marks required hold the
+            {question.answerControlType === "multi_choice" ? null : (
+              <label
+                className="text-sm font-medium leading-6 text-foreground"
+                data-testid="needs-you-question-text"
+                htmlFor={answerId}
+              >
+                {/* Only the ones the site actually marks required hold the
                   button back, so the ones it does not are said to be
                   optional rather than looking like a missed step. */}
-              {question.isRequired === false ? `${label} (optional)` : label}
-            </label>
+                {question.isRequired === false ? `${label} (optional)` : label}
+              </label>
+            )}
             {showDescription ? (
               <p className="text-(length:--text-small) leading-5 text-foreground-soft">
                 {stripScrapedGlyphs(description)}
@@ -1618,14 +1781,80 @@ export function QuestionAnswerForm(props: {
                 {question.note}
               </p>
             ) : null}
-            {options.length > 0 ? (
+            {(question.suggestedAnswers ?? [])
+              .filter(
+                (suggestion) =>
+                  suggestion.sourceKind === "prior_answer" &&
+                  suggestion.sourceId?.startsWith("review."),
+              )
+              .map((suggestion) => (
+                <div key={suggestion.id} className="grid gap-2">
+                  <p className="text-sm">
+                    Suggested wording — review it before continuing:
+                  </p>
+                  <p className="whitespace-pre-wrap text-sm">
+                    {suggestion.text}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      setAnswers((current) => ({
+                        ...current,
+                        [draftKeyFor(question)]: suggestion.text,
+                      }))
+                    }
+                  >
+                    Use this wording
+                  </Button>
+                </div>
+              ))}
+            {question.answerControlType === "multi_choice" &&
+            options.length > 0 ? (
+              <fieldset className="grid gap-2">
+                <legend
+                  className="mb-1.5 text-sm font-medium leading-6 text-foreground"
+                  data-testid="needs-you-question-text"
+                >
+                  {question.isRequired === false
+                    ? `${label} (optional)`
+                    : label}
+                </legend>
+                {options.map((option) => {
+                  const stored = answers[draftKeyFor(question)];
+                  const selected = Array.isArray(stored) ? stored : [];
+
+                  return (
+                    <label
+                      key={option}
+                      className="flex items-center gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-4 shrink-0 accent-(--primary)"
+                        checked={selected.includes(option)}
+                        onChange={(event) =>
+                          setAnswers((current) => ({
+                            ...current,
+                            [draftKeyFor(question)]: event.target.checked
+                              ? [...selected, option]
+                              : selected.filter((value) => value !== option),
+                          }))
+                        }
+                      />
+                      {option}
+                    </label>
+                  );
+                })}
+              </fieldset>
+            ) : options.length > 0 ? (
               <select
                 className="h-10 min-w-0 rounded-(--radius-small) border border-(--control-border) bg-background px-3 text-sm text-foreground"
                 id={answerId}
                 onChange={(event) =>
                   setAnswers((current) => ({
                     ...current,
-                    [question.id]: event.target.value,
+                    [draftKeyFor(question)]: event.target.value,
                   }))
                 }
                 value={readAnswer(question.id)}
@@ -1649,20 +1878,47 @@ export function QuestionAnswerForm(props: {
                   onChange={(event) =>
                     setAnswers((current) => ({
                       ...current,
-                      [question.id]: event.target.checked ? "Yes" : "",
+                      [draftKeyFor(question)]: event.target.checked
+                        ? "Yes"
+                        : "",
                     }))
                   }
                   type="checkbox"
                 />
                 Tick this box on the form
               </label>
+            ) : question.inputConstraints ||
+              question.answerControlType === "date" ? (
+              <div className="grid gap-1">
+                <input
+                  className="h-10 w-full max-w-xs rounded-(--radius-small) border border-(--control-border) bg-background px-3 text-sm"
+                  id={answerId}
+                  type={question.inputConstraints?.type ?? "date"}
+                  min={question.inputConstraints?.min}
+                  max={question.inputConstraints?.max}
+                  step={question.inputConstraints?.step}
+                  required={question.isRequired !== false}
+                  value={readAnswer(question.id)}
+                  onChange={(event) =>
+                    setAnswers((current) => ({
+                      ...current,
+                      [draftKeyFor(question)]: event.target.value,
+                    }))
+                  }
+                />
+                {question.inputConstraints?.type === "month" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Choose the month and year.
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <Textarea
                 id={answerId}
                 onChange={(event) =>
                   setAnswers((current) => ({
                     ...current,
-                    [question.id]: event.target.value,
+                    [draftKeyFor(question)]: event.target.value,
                   }))
                 }
                 rows={3}

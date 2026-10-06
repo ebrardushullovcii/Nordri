@@ -338,7 +338,7 @@ describe("ApplicationsDetailFactStrip", () => {
     const primaryLabels = within(primaryDl)
       .getAllByRole("term")
       .map((term) => term.textContent);
-    expect(primaryLabels).toEqual(["Latest activity", "Preparation status"]);
+    expect(primaryLabels).toEqual(["Preparation status"]);
 
     fireEvent.click(screen.getByText("More about this application"));
 
@@ -500,13 +500,32 @@ describe("ApplicationsDetailFactStrip", () => {
     expect(screen.queryByText("Attempt failed")).toBeNull();
   });
 
+  it("does not reuse a queued-run activity sentence after failure", () => {
+    renderStrip({
+      record: {
+        ...baseRecord,
+        lastAttemptState: "failed",
+        lastActionLabel: "Applying to the remaining 5 jobs.",
+      },
+      visibleApplyResult: {
+        ...baseApplyResult,
+        state: "failed",
+        summary: "Could not apply",
+        detail: "Profile changed",
+      },
+    });
+    expect(screen.queryByText("Applying to the remaining 5 jobs.")).toBeNull();
+    expect(screen.getByText("Could not apply")).toBeTruthy();
+  });
   it("never repeats company, stage, or the full run id inside the fact region", () => {
     const { container } = renderStrip();
 
     expect(screen.queryByText("Signal Systems")).toBeNull();
     expect(screen.queryByText("Needs action")).toBeNull();
 
-    const runCell = container.querySelector('dd[title="run_abcdefgh"]');
+    const runCell = screen
+      .getByText("Latest preparation run")
+      .parentElement?.querySelector("dd");
     expect(runCell?.textContent).toContain("Submitted");
     expect(container.textContent).not.toContain("run_");
   });
@@ -534,7 +553,9 @@ describe("ApplicationsDetailFactStrip", () => {
     expect(text).not.toMatch(/In progress/);
     expect(text).not.toMatch(/Filling/);
     expect(screen.getByText("Could not apply")).not.toBeNull();
-    const runCell = container.querySelector('dd[title="run_abcdefgh"]');
+    const runCell = screen
+      .getByText("Latest preparation run")
+      .parentElement?.querySelector("dd");
     expect(runCell?.textContent).toContain("Failed");
   });
 
@@ -979,4 +1000,96 @@ it("labels a cancelled preparation history entry as cancelled by the person", ()
   );
   expect(screen.getAllByText("Cancelled by you")).toHaveLength(2);
   expect(screen.queryByText("Cancelled")).toBeNull();
+});
+
+it("counts answers from a Ready review card when legacy counters are zero", () => {
+  renderStrip({
+    record: {
+      ...baseRecord,
+      questionSummary: {
+        total: 0,
+        required: 0,
+        answered: 0,
+        unansweredRequired: 0,
+      },
+    },
+    visibleApplyResult: {
+      ...baseApplyResult,
+      state: "awaiting_review",
+      latestQuestionCount: 0,
+      latestAnswerCount: 0,
+      reviewCard: {
+        siteLabel: "Synthetic",
+        pageUrl: "https://example.test/apply",
+        preparedAt: baseApplyResult.updatedAt,
+        answers: [
+          {
+            question: "Name",
+            answer: "Synthetic Person",
+            source: "your profile",
+            written: false,
+            groundedIn: [],
+          },
+        ],
+        attachments: [],
+        letter: null,
+        waitingOnYou: [],
+      },
+    },
+  });
+  fireEvent.click(screen.getByText("More about this application"));
+  expect(screen.getByText(/1 question found.*1 answer filled/u)).toBeTruthy();
+  expect(screen.queryByText(/0 questions found/u)).toBeNull();
+  expect(screen.getByText("1 answered • 0 required left")).toBeTruthy();
+  expect(
+    screen.getByText("Form questions").nextElementSibling?.textContent,
+  ).toContain("1");
+});
+
+it("labels a ready application's latest run Ready to send", () => {
+  render(
+    <ApplicationsDetailPanelRunHistorySection
+      applyRunHistory={[
+        {
+          result: {
+            id: "ready_result",
+            runId: "ready_run",
+            jobId: "job_1",
+            applicationRecordId: "application_1",
+            state: "awaiting_review",
+            summary: "Ready to send",
+            detail: "Filled in",
+            startedAt: "2026-10-05T10:00:00Z",
+            updatedAt: "2026-10-05T10:00:00Z",
+          } as ApplyJobResultSummary,
+          run: null,
+        },
+      ]}
+      onSelectApplyRun={vi.fn()}
+      selectedApplyRunId="ready_run"
+    />,
+  );
+  expect(screen.getByText("Ready to send")).toBeTruthy();
+  expect(screen.queryByText("Awaiting Review")).toBeNull();
+});
+
+it("leaves site confirmation to recovery and does not expose internal run IDs", () => {
+  const result = {
+    ...baseApplyResult,
+    state: "submitted" as const,
+    runId: "internal-run-secret",
+    summary: "Submitted",
+    detail: "The site confirmed receipt.",
+  };
+  renderStrip({
+    record: {
+      ...baseRecord,
+      status: "submitted",
+      lastActionLabel: "The site confirmed receipt.",
+    },
+    visibleApplyResult: result,
+  });
+  expect(screen.queryByText("The site confirmed receipt.")).toBeNull();
+  expect(screen.queryByText(/Run internal/)).toBeNull();
+  expect(document.body.innerHTML).not.toContain("internal-run-secret");
 });

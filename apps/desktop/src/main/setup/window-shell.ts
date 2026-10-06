@@ -1,6 +1,8 @@
 import {
   app,
   BrowserWindow,
+  Menu,
+  type MenuItemConstructorOptions,
   dialog,
   type Event as ElectronEvent,
   type Rectangle,
@@ -15,7 +17,10 @@ import {
   restoreMainWindowBounds,
   type RestoredMainWindowBounds,
 } from "./window-state";
-import { bindMainWindowZoomShortcuts } from "./window-zoom";
+import {
+  applyMainWindowZoomCommand,
+  bindMainWindowZoomShortcuts,
+} from "./window-zoom";
 import {
   bindMainWindowLifecycle,
   type MainWindowFailure,
@@ -439,6 +444,36 @@ function recoverMainWindow(window: BrowserWindow, failure: MainWindowFailure) {
   window.webContents.reload();
 }
 
+export function buildMainWindowMenuTemplate(
+  platform: NodeJS.Platform = process.platform,
+): MenuItemConstructorOptions[] {
+  return [
+    ...(platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+    { role: "editMenu" },
+    {
+      label: "View",
+      // The keys themselves are handled by bindMainWindowZoomShortcuts; the
+      // menu shows them and routes clicks through the same zoom steps.
+      submenu: (
+        [
+          ["Zoom In", "CommandOrControl+=", "in"],
+          ["Zoom Out", "CommandOrControl+-", "out"],
+          ["Actual Size", "CommandOrControl+0", "reset"],
+        ] as const
+      ).map(([label, accelerator, command]) => ({
+        label,
+        accelerator,
+        registerAccelerator: false,
+        click: (_item, window) => {
+          if (window instanceof BrowserWindow) {
+            applyMainWindowZoomCommand(window.webContents, command);
+          }
+        },
+      })),
+    },
+  ];
+}
+
 export function createMainWindow(currentDir: string) {
   // Fail closed before any window exists when the optional tester geometry
   // environment is invalid: createMainWindowSafely logs the error and quits
@@ -494,13 +529,10 @@ export function createMainWindow(currentDir: string) {
   // post-load reassertion (which beats persisted Chromium host zoom restored
   // at commit time on reused user-data roots) agrees with the startup binder
   // instead of clobbering the requested value on did-finish-load.
-  bindMainWindowZoomShortcuts(
-    mainWindow.webContents,
-    process.platform,
-    startupGeometry?.zoomFactor === undefined
-      ? {}
-      : { initialZoomFactor: startupGeometry.zoomFactor },
-  );
+  bindMainWindowZoomShortcuts(mainWindow.webContents, process.platform, {
+    initialZoomFactor:
+      startupGeometry?.zoomFactor ?? savedState?.zoomFactor ?? 1,
+  });
   bindMainWindowNavigationGuards(mainWindow, rendererTarget);
   const lifecycle = bindMainWindowLifecycle(mainWindow, {
     showRecoveryDialog: (failure, canRetry) =>
@@ -558,7 +590,9 @@ export function createMainWindow(currentDir: string) {
     sendWindowControlsState(mainWindow);
   });
 
-  mainWindow.removeMenu();
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(buildMainWindowMenuTemplate()),
+  );
 
   if (rendererTarget.kind === "dev") {
     void mainWindow.loadURL(rendererTarget.url).catch((error: unknown) => {

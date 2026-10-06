@@ -1,5 +1,6 @@
 import { hasSubmissionConfirmationText } from "@nordri/browser-agent";
 import {
+  submissionConfirmationSummary,
   ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
@@ -25,6 +26,7 @@ function buildSentByPersonReceipt(
   result: ApplyJobResult,
   pageUrl: string | null | undefined,
   at: string,
+  confirmationText: string,
 ): ApplyJobResult["privacyReceipt"] {
   const receipt = result.privacyReceipt;
   if (!receipt || !result.applicationRecordId) return receipt ?? null;
@@ -60,8 +62,7 @@ function buildSentByPersonReceipt(
           observedAt: at,
           destination,
           artifactRefId: null,
-          summary:
-            "The site showed its confirmation after you sent the form yourself.",
+          summary: submissionConfirmationSummary(confirmationText),
         },
       ],
       retry: { eligible: false, blockReason: "submission_confirmed" },
@@ -135,6 +136,13 @@ export async function recordApplicationsSentByPerson(
       continue;
     }
 
+    let observedUrl: URL;
+    try {
+      observedUrl = new URL(page.url ?? "");
+    } catch {
+      continue;
+    }
+    if (!["http:", "https:"].includes(observedUrl.protocol)) continue;
     const at = new Date().toISOString();
     const sentResult = ApplyJobResultSchema.parse({
       ...current,
@@ -146,7 +154,12 @@ export async function recordApplicationsSentByPerson(
       updatedAt: at,
       completedAt: at,
       latestQuestionCount: 0,
-      privacyReceipt: buildSentByPersonReceipt(current, page.url, at),
+      privacyReceipt: buildSentByPersonReceipt(
+        current,
+        page.url,
+        at,
+        page.bodyText,
+      ),
     });
     await ctx.repository.upsertApplyJobResult(sentResult);
 
@@ -158,6 +171,12 @@ export async function recordApplicationsSentByPerson(
         ApplicationRecordSchema.parse({
           ...record,
           status: "submitted",
+          personSendReceipt: {
+            observedAt: at,
+            origin: observedUrl.origin,
+            safePath: observedUrl.pathname,
+            summary: submissionConfirmationSummary(page.bodyText),
+          },
           lastAttemptState: "submitted",
           lastActionLabel: SENT_BY_PERSON_SUMMARY,
           nextActionLabel: "View application",

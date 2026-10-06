@@ -58,8 +58,14 @@ describe("shouldStartFirstSearchAfterSetup", () => {
 
   it("hands Find jobs exactly one first-search request", () => {
     expect(consumeFirstSearchRequest()).toBe(false);
-    requestFirstSearchOnFindJobs();
-    expect(consumeFirstSearchRequest()).toBe(true);
+    requestFirstSearchOnFindJobs("plan_a");
+    expect(consumeFirstSearchRequest("plan_a")).toBe(true);
     expect(consumeFirstSearchRequest()).toBe(false);
   });
+});
+
+it("does not start the pending setup search after selecting another plan", () => {
+  requestFirstSearchOnFindJobs("plan_a");
+  expect(consumeFirstSearchRequest("plan_b")).toBe(false);
+  expect(consumeFirstSearchRequest("plan_a")).toBe(false);
 });

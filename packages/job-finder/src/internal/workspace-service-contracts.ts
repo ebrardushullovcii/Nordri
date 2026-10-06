@@ -1,3 +1,4 @@
+import type { ResumeBatchCheckpoint } from "@nordri/contracts";
 import type {
   JobFinderAiClient,
   ResumeVisionProvider,
@@ -12,6 +13,7 @@ import type {
   ApplicationAutomationMode,
   AppearanceTheme,
   ApplicationPacket,
+  RawApplyPage,
   CampaignRuleFunnelProjection,
   CandidateAsset,
   CandidateAssetListInput,
@@ -92,6 +94,7 @@ import type {
   UpdateApplicationDefaultsInput,
   UpdateWorkspaceBehaviorInput,
   UpdateAiBehaviorInput,
+  SaveUserActionAnswerDraftInput,
   UserActionCommandInput,
   CandidateAssetKind,
   AssistantChangeEntry,
@@ -120,6 +123,9 @@ export interface JobFinderWorkspaceResetOptions {
 }
 
 export interface JobFinderWorkspaceService {
+  refreshApprovedApplicationLetter(
+    document: import("@nordri/contracts").ApplicationDocumentRevision,
+  ): Promise<void>;
   shutdown(): Promise<void>;
   getWorkspaceSnapshot(): Promise<JobFinderWorkspaceSnapshot>;
   /**
@@ -137,6 +143,9 @@ export interface JobFinderWorkspaceService {
     input?: JobFinderOpenBrowserSessionInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
   checkBrowserSession(): Promise<JobFinderWorkspaceSnapshot>;
+  saveUserActionAnswerDraft(
+    input: SaveUserActionAnswerDraftInput,
+  ): Promise<void>;
   performUserAction(
     command: UserActionCommandInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
@@ -164,6 +173,7 @@ export interface JobFinderWorkspaceService {
     assetId: string;
     assetKind: CandidateAssetKind;
   }): Promise<number>;
+  withWorkspaceRestore(operation: () => Promise<void>): Promise<void>;
   resetWorkspace(
     seed: JobFinderRepositorySeed,
     options?: JobFinderWorkspaceResetOptions,
@@ -174,6 +184,7 @@ export interface JobFinderWorkspaceService {
     searchPreferences: JobSearchPreferences,
   ): Promise<JobFinderWorkspaceSnapshot>;
   runResumeImport(input: {
+    signal?: AbortSignal;
     baseResume: ResumeSourceDocument;
     documentBundle: ResumeDocumentBundle;
     importWarnings?: readonly string[];
@@ -368,7 +379,9 @@ export interface JobFinderWorkspaceService {
     signal?: AbortSignal,
     onProgress?: (event: SourceDebugProgressEvent) => void,
   ): Promise<JobFinderWorkspaceSnapshot>;
+  assessJobListing(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
   queueJobForReview(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
+  saveResumeBatchCheckpoint(checkpoint: ResumeBatchCheckpoint): Promise<void>;
   setJobResumeApplicationMode(
     jobId: string,
     resumeApplicationMode: ResumeApplicationMode,
@@ -442,7 +455,10 @@ export interface JobFinderWorkspaceService {
   setCampaignResumeStrategyDefault(
     input: SetCampaignResumeStrategyDefaultInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
-  generateResume(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
+  generateResume(
+    jobId: string,
+    options?: { language?: string | null },
+  ): Promise<JobFinderWorkspaceSnapshot>;
   getResumeWorkspace(jobId: string): Promise<JobFinderResumeWorkspace>;
   previewResumeDraft(
     draft: ResumeDraft,
@@ -461,7 +477,10 @@ export interface JobFinderWorkspaceService {
     jobId: string,
     revisionId: string,
   ): Promise<JobFinderWorkspaceSnapshot>;
-  regenerateResumeDraft(jobId: string): Promise<JobFinderWorkspaceSnapshot>;
+  regenerateResumeDraft(
+    jobId: string,
+    options?: { language?: string | null },
+  ): Promise<JobFinderWorkspaceSnapshot>;
   regenerateResumeSection(
     jobId: string,
     sectionId: string,
@@ -564,6 +583,9 @@ export interface JobFinderWorkspaceService {
     action: "approve" | "decline",
   ): Promise<JobFinderWorkspaceSnapshot>;
   revokeApplyRunApproval(runId: string): Promise<JobFinderWorkspaceSnapshot>;
+  inspectPreparedApplicationPage(
+    input: JobFinderPreparedApplicationPageInput,
+  ): Promise<RawApplyPage>;
   focusPreparedApplicationPage(
     input: JobFinderPreparedApplicationPageInput,
   ): Promise<JobFinderWorkspaceSnapshot>;
@@ -643,6 +665,10 @@ export interface JobFinderWorkspaceService {
    * gate-checked patches without storing any chat message.
    */
   /** Reads the job postings on a page the assistant was lent (no writes). */
+  addJobFromBrowserPage(input: {
+    html: string;
+    pageUrl: string;
+  }): Promise<import("@nordri/contracts").AddBrowserJobResult>;
   extractJobsFromPageText(input: {
     pageText: string;
     pageUrl: string;
@@ -754,6 +780,22 @@ export interface JobFinderDocumentManager {
    * Optional: a runtime that cannot render one leaves a form asking for a
    * letter file to the person rather than sending something else.
    */
+  /** Reads the latest approved letter, including an earlier approved revision. */
+  getApprovedApplicationLetter?(
+    jobId: string,
+    applicationRecordId?: string,
+  ): Promise<import("@nordri/contracts").ApplicationDocumentRevision | null>;
+  /**
+   * Keeps a letter the person wrote or accepted while answering a form's
+   * letter question as this application's approved letter.
+   */
+  saveApprovedApplicationLetter?(input: {
+    profile: import("@nordri/contracts").CandidateProfile;
+    job: SavedJob;
+    applicationRecord: import("@nordri/contracts").ApplicationRecord;
+    question: import("@nordri/contracts").ApplicationQuestionRecord;
+    text: string;
+  }): Promise<void>;
   renderLetterArtifact?(input: {
     text: string;
     job: SavedJob;
@@ -820,6 +862,8 @@ export interface CreateJobFinderWorkspaceServiceOptions {
   ) => void | Promise<void>;
   /** Publishes the terminal snapshot of a queue resumed after restart. */
   onDetachedApplyRunFinished?: () => void;
+  onResumeEvidenceFinished?: () => void;
+  onListingAssessmentFinished?: () => void;
   /**
    * Called when the person deliberately starts work (Search now, Apply, Run
    * now). The desktop host lifts a browser pause the person caused there

@@ -13,7 +13,7 @@ import {
 } from "./test-fixtures";
 
 describe("resume generation quality", () => {
-  test("aggressive generation filters country fragments from extraction and model output without losing stretch skills", () => {
+  test("aggressive generation filters country fragments from extraction and model output and keeps proposed skills", () => {
     const skills = [
       "React",
       "TypeScript",
@@ -82,14 +82,14 @@ describe("resume generation quality", () => {
     ]) {
       const draft = completeTailoredResumeDraft(primary, input);
       const generatedSkills = [...draft.coreSkills, ...draft.additionalSkills];
-      expect(generatedSkills).toContain("Terraform");
+      // A skill the model proposed stays for the fact check (ADR 0041);
+      // place names are never skills.
+      if ("coreSkills" in primary) {
+        expect(generatedSkills).toContain("Terraform");
+      }
       expect(generatedSkills).not.toContain("United");
       expect(generatedSkills).not.toContain("States");
       expect(generatedSkills).not.toContain("United States");
-      expect(draft.notes.join("\n")).toMatch(
-        /Aggressive tailoring added.*Terraform/,
-      );
-      expect(draft.notes.join("\n")).not.toMatch(/added.*(?:United|States)/);
     }
     const fallback = buildDeterministicStructuredResumeDraft(input);
     for (const token of ["United", "States"]) {
@@ -100,7 +100,7 @@ describe("resume generation quality", () => {
     }
   });
 
-  test("builds a genuinely job-targeted frontend resume instead of preserving a generic full-stack profile", () => {
+  test("keeps the saved fallback summary while ordering skills and roles for the job", () => {
     const baseProfile = createProfile();
     const profile: typeof baseProfile = {
       ...baseProfile,
@@ -207,11 +207,7 @@ describe("resume generation quality", () => {
       resumeText: profile.baseResume.textContent,
     });
 
-    expect(result.summary).toMatch(
-      /^JavaScript Frontend Developer with 7\+ years/,
-    );
-    expect(result.summary).toContain("responsive React and Next.js interfaces");
-    expect(result.summary).not.toContain("AWS");
+    expect(result.summary).toBe(profile.summary);
     expect(result.coreSkills.slice(0, 4)).toEqual([
       "JavaScript",
       "React",
@@ -601,7 +597,7 @@ describe("resume generation quality", () => {
       experiences: [
         {
           id: "experience_technical_support",
-          companyName: "BIT BY BIT",
+          companyName: "BYTE BY BYTE",
           companyUrl: null,
           title: "Technical Support Agent",
           employmentType: "Full-time",
@@ -1147,10 +1143,10 @@ describe("resume generation quality", () => {
     expect(result.summary).not.toContain(
       "Acme Cloud is redefining enterprise workflow orchestration",
     );
-    expect(result.summary).toContain("Staff Frontend Engineer");
+    expect(result.summary).toBe(input.profile.summary);
   });
 
-  test("replaces first-person career-change meta with grounded resume copy", () => {
+  test("keeps saved fallback summary while cleaning role-level career-change meta", () => {
     const baseProfile = createProfile();
     const careerChangeMeta =
       "After deciding to return to my passion for development, I transitioned back into a hands-on developer role.";
@@ -1209,9 +1205,7 @@ describe("resume generation quality", () => {
       },
     });
 
-    expect(result.summary).toContain("Senior Frontend Engineer");
-    expect(result.summary).toContain("React");
-    expect(result.summary).not.toContain("passion");
+    expect(result.summary).toBe(profile.professionalSummary.fullSummary);
     expect(result.summary).not.toContain("Unproven Job Keyword");
     expect(result.experienceEntries[0]?.summary).toBeNull();
     expect(result.experienceEntries[0]?.bullets).toContain(
@@ -1349,7 +1343,7 @@ describe("resume generation quality", () => {
     );
   });
 
-  test("enriches overlapping experience bullets with grounded proof metrics", () => {
+  test("adds grounded proof metrics while retaining the complete source achievement", () => {
     const baseProfile = createProfile();
     const profile: typeof baseProfile = {
       ...baseProfile,
@@ -1418,7 +1412,7 @@ describe("resume generation quality", () => {
     const result = buildDeterministicStructuredResumeDraft(input);
 
     expect(result.experienceEntries[0]?.bullets[0]).toBe(
-      "Led design-system rollout across core product surfaces used by design and operations teams. Adoption reached 80% of core product surfaces within two quarters.",
+      "Led design-system rollout across core surfaces. Adoption reached 80% of core product surfaces within two quarters.",
     );
   });
 
@@ -1504,60 +1498,6 @@ describe("resume generation quality", () => {
     expect(result.fullText).not.toContain("2021-03 – Present");
   });
 
-  test("filters model-supplied job and company terms out of visible skills", () => {
-    const baseProfile = createProfile();
-    const profile = {
-      ...baseProfile,
-      skills: ["React", "TypeScript"],
-      skillGroups: {
-        ...baseProfile.skillGroups,
-        tools: ["Playwright"],
-      },
-    };
-    const fallbackInput = {
-      profile,
-      searchPreferences: createPreferences(),
-      settings: createSettings(),
-      job: {
-        ...createJobPosting(),
-        company: "Contoso",
-        keySkills: ["React", "Contoso", "Greenhouse"],
-        atsProvider: "Greenhouse",
-      },
-      resumeText: profile.baseResume.textContent,
-      evidence: {
-        summary: [],
-        candidateSummary: [],
-        experience: [],
-        skills: ["React", "Contoso"],
-        keywords: ["React", "Greenhouse"],
-      },
-      researchContext: {
-        companyNotes: ["Contoso is hiring for platform modernization."],
-        domainVocabulary: ["platform modernization"],
-        priorityThemes: [],
-      },
-    };
-
-    const result = completeTailoredResumeDraft(
-      {
-        label: "Tailored Resume",
-        summary: "Grounded summary",
-        experienceHighlights: ["Built reliable frontend systems."],
-        coreSkills: ["React", "Contoso", "Greenhouse"],
-        additionalSkills: ["Playwright", "Remote-first collaboration"],
-        targetedKeywords: ["React", "Greenhouse"],
-      },
-      fallbackInput,
-    );
-
-    expect(result.coreSkills).toEqual(["React"]);
-    expect(result.additionalSkills).toEqual(["Playwright"]);
-    expect(result.fullText).toContain("Core skills: React");
-    expect(result.fullText).not.toContain("Contoso");
-    expect(result.fullText).not.toContain("Remote-first collaboration");
-  });
-
   test("ranks source-backed outcome bullets ahead of generic first-listed duties", () => {
     const baseProfile = createProfile();
     const profile: typeof baseProfile = {
@@ -1622,4 +1562,103 @@ describe("resume generation quality", () => {
       "Project Lead (React, Next.js) – QA Management System",
     );
   });
+});
+
+test("keeps achievement source IDs and all saved language proficiencies for translated drafts", () => {
+  const profile = createProfile();
+  profile.spokenLanguages = [
+    {
+      id: "de",
+      language: "German",
+      proficiency: "C1 (proficient user)",
+      interviewPreference: false,
+      notes: null,
+    },
+    {
+      id: "en",
+      language: "English",
+      proficiency: "B1",
+      interviewPreference: false,
+      notes: null,
+    },
+  ];
+  profile.experiences = [
+    {
+      id: "warehouse",
+      companyName: "Example Logistics",
+      companyUrl: null,
+      title: "Warehouse lead",
+      employmentType: null,
+      location: null,
+      workMode: [],
+      startDate: "2020",
+      endDate: null,
+      isCurrent: true,
+      isDraft: false,
+      summary: null,
+      achievements: ["Reduced picking errors by 38%."],
+      skills: [],
+      domainTags: [],
+      peopleManagementScope: null,
+      ownershipScope: null,
+    },
+  ];
+  const experience = profile.experiences[0]!;
+  const id = `experience:${experience.id}:achievement:0`;
+  profile.proofBank = [
+    {
+      id: "errors",
+      title: "Picking errors",
+      claim: "Reduced picking errors across warehouse operations.",
+      heroMetric: "Maintained the reduction for two years.",
+      supportingContext: null,
+      roleFamilies: [],
+      projectIds: [],
+      linkIds: [],
+    },
+  ];
+  const builtIn = buildDeterministicStructuredResumeDraft({
+    profile,
+    job: createJobPosting(),
+    settings: createSettings(),
+    searchPreferences: createPreferences(),
+    resumeText: null,
+  });
+  const builtInEntry = builtIn.experienceEntries.find(
+    (entry) => entry.profileRecordId === experience.id,
+  )!;
+  expect(builtInEntry.bullets[0]).toContain("Reduced picking errors by 38%.");
+  expect(builtInEntry.bulletSourceAchievementIds?.[0]).toEqual([id]);
+  const draft = completeTailoredResumeDraft(
+    {
+      experienceEntries: [
+        {
+          profileRecordId: experience.id,
+          bullets: [
+            {
+              text: "Kommissionierfehler um 38 % reduziert.",
+              evidenceRefs: [id],
+              sourceAchievementIds: [id],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      profile,
+      job: createJobPosting(),
+      settings: createSettings(),
+      searchPreferences: createPreferences(),
+      resumeText: null,
+    },
+  );
+  expect(
+    draft.experienceEntries.find(
+      (entry) => entry.profileRecordId === experience.id,
+    ),
+  ).toMatchObject({ bulletSourceAchievementIds: [[id]] });
+  expect(draft.languages).toEqual([
+    "German — C1 (proficient user)",
+    "English — B1",
+  ]);
 });

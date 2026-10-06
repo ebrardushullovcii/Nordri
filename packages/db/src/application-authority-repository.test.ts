@@ -2086,3 +2086,41 @@ describe("application authority repository", () => {
     },
   );
 });
+
+test("recording a refused automatic send clears the typed queue flag", async () => {
+  const repository = createInMemoryJobFinderRepository(createSeed());
+  const fixture = createAuthorityFixture(
+    "queued_refusal",
+    "confirm_before_submit",
+  );
+  await persistAuthorityFixture(repository, fixture);
+  const result = (
+    await repository.listApplyJobResults({ runId: fixture.preflight.runId })
+  )[0]!;
+  await repository.upsertApplyJobResult({
+    ...result,
+    automaticSendPending: true,
+  });
+  expect(
+    await repository.authorizeAndArmSubmissionAttempt({
+      preflight: fixture.preflight,
+      expectedIdempotencyRevision: 1,
+      mode: "confirm_before_submit",
+      marker: fixture.marker,
+      executionGrantId: fixture.grant?.id ?? null,
+      now: later,
+    }),
+  ).toMatchObject({ status: "armed" });
+  expect(
+    await repository.commitSubmissionOutcome({
+      outcome: createOutcome(fixture.preflight, "not_submitted"),
+      expectedIdempotencyRevision: 2,
+    }),
+  ).toMatchObject({ status: "recorded" });
+  expect(
+    (
+      await repository.listApplyJobResults({ runId: fixture.preflight.runId })
+    )[0],
+  ).toMatchObject({ automaticSendPending: false });
+  await repository.close();
+});

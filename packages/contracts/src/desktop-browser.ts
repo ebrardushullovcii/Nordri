@@ -25,6 +25,10 @@ export const DesktopBrowserAttentionSchema = z.object({
 /** Only display state crosses preload. Cookies, page content and CDP stay in main. */
 export const DesktopBrowserStateSchema = z.object({
   revision: z.number().int().nonnegative(),
+  unboundSendNotice: z
+    .object({ id: z.string().min(1).max(100), tabId: BrowserTabIdSchema })
+    .nullable()
+    .optional(),
   phase: z.enum([
     "closed",
     "ready",
@@ -63,6 +67,7 @@ export const DesktopBrowserCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("take_control") }).strict(),
   z.object({ type: z.literal("resume") }).strict(),
   z.object({ type: z.literal("new_tab") }).strict(),
+  z.object({ type: z.literal("close_finished_tabs") }).strict(),
   z
     .object({ type: z.literal("select_tab"), tabId: BrowserTabIdSchema })
     .strict(),
@@ -147,7 +152,22 @@ export type DesktopBrowserSnapshot = z.infer<
   typeof DesktopBrowserSnapshotSchema
 >;
 
+export const AddBrowserJobInputSchema = z
+  .object({ tabId: BrowserTabIdSchema })
+  .strict();
+export type AddBrowserJobInput = z.infer<typeof AddBrowserJobInputSchema>;
+export const AddBrowserJobResultSchema = z
+  .object({
+    jobId: z.string().min(1),
+    title: z.string(),
+    company: z.string(),
+    planName: z.string().nullable(),
+  })
+  .strict();
+export type AddBrowserJobResult = z.infer<typeof AddBrowserJobResultSchema>;
+
 export interface DesktopBrowserBridge {
+  addCurrentJob(input: AddBrowserJobInput): Promise<AddBrowserJobResult>;
   getState(): Promise<DesktopBrowserState>;
   command(command: DesktopBrowserCommand): Promise<DesktopBrowserState>;
   setViewport(viewport: DesktopBrowserViewport): Promise<void>;

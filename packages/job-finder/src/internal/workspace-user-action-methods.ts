@@ -1,6 +1,9 @@
+import { resolveApplyAuthorityForJob } from "./apply-authority-resolution";
+import { releaseFinishedApplicationPages } from "./application-page-lifecycle";
 import {
   DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   ApplicationAnswerRecordSchema,
+  compareApplicationAnswerRecency,
   type ApplicationAnswerRecord,
   type SubmitUserActionManualAnswerCommand,
   UserActionCommandSchema,
@@ -11,6 +14,8 @@ import {
 } from "@nordri/contracts";
 import {
   buildApplyFormObservation,
+  inferAttestationKind,
+  inferQuestionKind,
   selectObservedSignInAction,
 } from "@nordri/browser-agent";
 
@@ -20,6 +25,7 @@ import {
 } from "../user-action-domain";
 import {
   createReusableAnswerForQuestion,
+  eligibilityAnswerScope,
   normalizeAnswerQuestion,
 } from "./workspace-answer-memory";
 import {
@@ -159,22 +165,6 @@ function getApplicationResumptionFlightKey(request: UserActionRequest): string {
   return `${request.id}:${targetRevision}`;
 }
 
-/**
- * Deterministic recency ordering for answer records: revision desc, then
- * createdAt desc, then id desc. Revisions are unique per question in a
- * well-formed store, but the tie-breaks keep the latest selection stable.
- */
-function compareAnswerRecency(
-  left: ApplicationAnswerRecord,
-  right: ApplicationAnswerRecord,
-): number {
-  return (
-    right.revision - left.revision ||
-    Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-    right.id.localeCompare(left.id)
-  );
-}
-
 /** Latest persisted answer record for a question, with a deterministic tie-break. */
 function latestAnswerForQuestion(
   records: readonly ApplicationAnswerRecord[],
@@ -183,7 +173,10 @@ function latestAnswerForQuestion(
   let latest: ApplicationAnswerRecord | null = null;
   for (const record of records) {
     if (record.questionId !== questionId) continue;
-    if (latest === null || compareAnswerRecency(record, latest) < 0) {
+    if (
+      latest === null ||
+      compareApplicationAnswerRecency(record, latest) < 0
+    ) {
       latest = record;
     }
   }
@@ -262,10 +255,40 @@ async function persistManualAnswer(input: {
       .map((record) => record.questionId),
   );
   // A partially saved command can be retried after earlier questions already
-  // became answered. Only this exact command's records admit those questions.
+  // became answered. The current form can also detect an unanswered field
+  // whose persisted record was marked answered by an earlier failed check.
+  const attempts = await input.ctx.repository.listApplicationAttempts({
+    applicationRecordId: scope.applicationRecordId,
+  });
+  const latestAttempt = [...attempts].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  )[0];
+  const activeQuestionIds = latestAttempt
+    ? new Set(
+        latestAttempt.questions
+          .filter((question) => question.status === "detected")
+          .map((question) => question.id),
+      )
+    : null;
   const questions = allQuestions.filter(
     (question) =>
-      question.status === "detected" || retryQuestionIds.has(question.id),
+      retryQuestionIds.has(question.id) ||
+      ((question.status === "detected" ||
+        activeQuestionIds?.has(question.id) ||
+        activeQuestionIds?.has(
+          question.id.replace(
+            `apply_question_${scope.applicationRecordId}_`,
+            "",
+          ),
+        )) &&
+        (!activeQuestionIds ||
+          activeQuestionIds.has(question.id) ||
+          activeQuestionIds.has(
+            question.id.replace(
+              `apply_question_${scope.applicationRecordId}_`,
+              "",
+            ),
+          ))),
   );
 
   // A multi-question step arrives as one command with every answer tied to
@@ -331,6 +354,11 @@ async function persistManualAnswer(input: {
       recordSuffix: pairs.length === 1 ? "" : `_${pairIndex}`,
     });
   }
+  await input.ctx.repository.saveUserActionAnswerDraft({
+    requestId: input.request.id,
+    expectedRevision: input.resultingRevision,
+    draft: null,
+  });
   return pairs.map((pair) => ({
     prompt: pair.question.prompt,
     answer: pair.answer,
@@ -349,8 +377,9 @@ const OPEN_MANUAL_ANSWER_STATES = [
 /**
  * Other open question steps a just-given answer covers completely: every
  * question they still wait on (every required one at least) is the same
- * question, by its normalized wording. Within the same batch always; across
- * batches only when the person saved the answer for next time.
+ * question, by its normalized wording. Factual answers can cover the batch;
+ * declarations and context-dependent answers need deliberate saving to be
+ * reused on another application.
  */
 export async function findManualAnswerStepsCoveredBy(input: {
   ctx: Pick<WorkspaceServiceContext, "repository">;
@@ -419,7 +448,57 @@ export async function findManualAnswerStepsCoveredBy(input: {
       (question) =>
         question.status === "detected" && !answeredIds.has(question.id),
     );
+    const isPayQuestion = (question: ApplicationQuestionRecord) =>
+      question.kind === "salary_expectation" ||
+      inferQuestionKind({
+        label: question.prompt,
+        groupLabel: question.description ?? "",
+        placeholder: "",
+        kind: "other",
+      }) === "salary_expectation";
+    let payDisclosed = false;
+    if (waiting.some(isPayQuestion)) {
+      const job = (await ctx.repository.listSavedJobs()).find(
+        (entry) => entry.id === scope.jobId,
+      );
+      if (job) {
+        const result = (await ctx.repository.listApplyJobResults()).find(
+          (entry) => entry.id === scope.resultId,
+        );
+        const { authority } = await resolveApplyAuthorityForJob({
+          repository: ctx.repository,
+          job,
+          resumeSha256: result?.privacyReceipt?.resume.sha256,
+          applicationUrl: job.applicationUrl ?? job.canonicalUrl,
+          now: new Date().toISOString(),
+        });
+        payDisclosed = authority.salaryDisclosure === "answer_from_profile";
+      }
+    }
     const answers = waiting.flatMap((question) => {
+      if (!payDisclosed && isPayQuestion(question)) return [];
+      if (
+        question.kind === "work_authorization" ||
+        question.kind === "visa_sponsorship"
+      )
+        return [];
+      if (
+        !input.savedForFuture &&
+        /neither.*(?:country|region)|ambiguous|does not (?:identify|name).*country/iu.test(
+          question.note ?? "",
+        )
+      )
+        return [];
+      if (
+        !input.savedForFuture &&
+        inferAttestationKind({
+          label: question.prompt,
+          groupLabel: question.description ?? "",
+          placeholder: "",
+          kind: "other",
+        }) !== null
+      )
+        return [];
       const answer = answerByPrompt.get(
         normalizeAnswerQuestion(question.prompt),
       );
@@ -458,20 +537,33 @@ async function persistOneManualAnswer(input: {
 
   if (input.command.saveForFuture) {
     const profile = await input.ctx.repository.getProfile();
+    const job = (await input.ctx.repository.listSavedJobs()).find(
+      (entry) => entry.id === question.jobId,
+    );
+    const applicationScope = eligibilityAnswerScope({
+      kind: question.kind,
+      resultId: question.resultId,
+      applicationRecordId: question.applicationRecordId ?? null,
+      location: job?.location,
+      ...(input.command.hiringCountry
+        ? { hiringCountry: input.command.hiringCountry }
+        : {}),
+    });
     const normalizedPrompt = normalizeAnswerQuestion(question.prompt);
     const exactMatches = profile.answerBank.customAnswers.filter((candidate) =>
       [candidate.question, candidate.label].some(
-        (value) => normalizeAnswerQuestion(value) === normalizedPrompt,
+        (value) =>
+          normalizeAnswerQuestion(value) === normalizedPrompt &&
+          (candidate.applicationScope?.location ?? null) ===
+            (applicationScope?.location ?? null) &&
+          candidate.applicationScope?.hiringCountry ===
+            applicationScope?.hiringCountry,
       ),
     );
-    const conflicting = exactMatches.some(
-      (candidate) => candidate.answer.trim() !== answer,
-    );
-    if (conflicting) {
-      throw new Error(
-        "A different saved answer already exists for this exact question. Use this answer once or resolve the saved answer in Profile; nothing was overwritten.",
-      );
-    }
+    // The person kept "save for next time" on, so this answer becomes the
+    // saved one, replacing a different answer saved earlier for the same
+    // question. Failing here would leave the application stuck on a question
+    // the person already answered.
     if (exactMatches.length === 0) {
       await input.ctx.repository.saveProfile({
         ...profile,
@@ -482,20 +574,61 @@ async function persistOneManualAnswer(input: {
             createReusableAnswerForQuestion({
               answer,
               prompt: question.prompt,
+              ...(applicationScope ? { applicationScope } : {}),
               kind: question.kind,
             }),
           ],
         },
+      });
+    } else if (
+      exactMatches.some((candidate) => candidate.answer.trim() !== answer)
+    ) {
+      await input.ctx.repository.saveProfile({
+        ...profile,
+        answerBank: {
+          ...profile.answerBank,
+          customAnswers: profile.answerBank.customAnswers.map((candidate) =>
+            exactMatches.includes(candidate)
+              ? { ...candidate, answer }
+              : candidate,
+          ),
+        },
+      });
+    }
+  }
+
+  // A letter the person wrote or accepted here is the letter this
+  // application uses: preparation attaches it word for word and never
+  // drafts or asks about another one.
+  async function keepLetterApproved(): Promise<void> {
+    if (
+      question.kind !== "cover_letter" ||
+      !input.ctx.documentManager.saveApprovedApplicationLetter
+    )
+      return;
+    const [profile, savedJobs, applicationRecords] = await Promise.all([
+      input.ctx.repository.getProfile(),
+      input.ctx.repository.listSavedJobs(),
+      input.ctx.repository.listApplicationRecords(),
+    ]);
+    const job = savedJobs.find((entry) => entry.id === question.jobId);
+    const applicationRecord = applicationRecords.find(
+      (entry) => entry.id === scope.applicationRecordId,
+    );
+    if (job && applicationRecord) {
+      await input.ctx.documentManager.saveApprovedApplicationLetter({
+        profile,
+        job,
+        applicationRecord,
+        question,
+        text: answer,
       });
     }
   }
 
   const recordId = `manual_answer_${input.request.id}_${input.resultingRevision}${input.recordSuffix}`;
   const records = await input.ctx.repository.listApplicationAnswerRecords({
-    runId: scope.runId,
-    jobId: scope.jobId,
-    resultId: scope.resultId,
-    applicationRecordId: scope.applicationRecordId,
+    questionId: question.id,
   });
   const existingById = records.find((record) => record.id === recordId) ?? null;
   // The exact retry reuses the already-persisted record as the basis of the
@@ -505,6 +638,9 @@ async function persistOneManualAnswer(input: {
 
   const record = ApplicationAnswerRecordSchema.parse({
     id: recordId,
+    ...(input.command.hiringCountry
+      ? { hiringCountry: input.command.hiringCountry }
+      : {}),
     runId: scope.runId,
     jobId: scope.jobId,
     applicationRecordId: scope.applicationRecordId,
@@ -544,6 +680,7 @@ async function persistOneManualAnswer(input: {
   if (existingById) {
     if (JSON.stringify(existingById) === JSON.stringify(record)) {
       // Exact idempotent retry of the deterministic record id.
+      await keepLetterApproved();
       return;
     }
     throw new Error(
@@ -583,6 +720,7 @@ async function persistOneManualAnswer(input: {
       );
     }
   }
+  await keepLetterApproved();
 }
 /**
  * A hand-off made when the browser refused a new tab. Before that error was
@@ -1384,6 +1522,22 @@ export function createWorkspaceUserActionMethods(
           commandCommit.request.resolvedAt ?? new Date().toISOString(),
         eventId: `event_user_action_${command.action}_${command.requestId}`,
         dismissal: command.action === "skip" ? "skipped" : "cancelled",
+      });
+    }
+
+    if (
+      (command.action === "cancel" || command.action === "skip") &&
+      commandCommit.request.scope.type === "application"
+    ) {
+      await releaseFinishedApplicationPages({
+        ...ctx,
+        ...(commandCommit.request.scope.applicationRecordId
+          ? {
+              applicationRecordId:
+                commandCommit.request.scope.applicationRecordId,
+            }
+          : {}),
+        jobId: commandCommit.request.scope.jobId,
       });
     }
 

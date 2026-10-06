@@ -1,3 +1,4 @@
+import { estimateResumeBatchMinutesLeft } from "@nordri/contracts";
 import type { ReviewQueueItem, TailoredAsset } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui";
 import { cn } from "@renderer/lib/cn";
@@ -35,20 +36,19 @@ import { Link } from "react-router-dom";
 import { buildJobFinderContextRoute } from "../../lib/job-finder-context-navigation";
 import {
   APPLICATION_PREPARATION_BATCH_LIMIT,
-  TAILORED_DRAFT_PREPARATION_LIMIT,
   countQueueStageReady,
   countTailoredDraftPreparationEligible,
   describeTailoredDraftPreparationBlocker,
   getReviewQueueResumePolicyCaption,
   getReviewQueueWorkflowStatus,
   getTailoredDraftPreparationResultMessage,
-  isResumeGenerationInProgress,
   isTailoredDraftPreparationEligible,
   type TailoredDraftPreparationViewState,
 } from "./review-queue-status";
 
 interface ReviewQueueListPanelProps {
   campaignId?: string;
+  interruptedResumeJobIds?: readonly string[];
   draftPreparation?: TailoredDraftPreparationViewState;
   isJobPending: (jobId: string) => boolean;
   /** Writes missing first resumes for the chosen jobs, or all eligible jobs. */
@@ -77,6 +77,7 @@ interface ReviewQueueListPanelProps {
 
 export function ReviewQueueListPanel({
   campaignId = "",
+  interruptedResumeJobIds = [],
   draftPreparation = {
     attemptedCount: 0,
     completedCount: 0,
@@ -209,10 +210,10 @@ export function ReviewQueueListPanel({
   const draftEligibleCount = useMemo(
     () =>
       countTailoredDraftPreparationEligible(
-        queue,
+        queue.filter((item) => !interruptedResumeJobIds.includes(item.jobId)),
         unavailableApplicationJobIds,
       ),
-    [queue, unavailableApplicationJobIds],
+    [queue, unavailableApplicationJobIds, interruptedResumeJobIds],
   );
   const [resumeSelection, setResumeSelection] = useState<{
     campaignId: string;
@@ -226,7 +227,9 @@ export function ReviewQueueListPanel({
           isTailoredDraftPreparationEligible(
             item,
             unavailableApplicationJobIds,
-          ) && !isJobPending(item.jobId),
+          ) &&
+          !isJobPending(item.jobId) &&
+          !interruptedResumeJobIds.includes(item.jobId),
       )
       .map((item) => item.jobId),
   );
@@ -240,16 +243,20 @@ export function ReviewQueueListPanel({
     if (!eligibleResumeIds.has(jobId)) return;
     const next = new Set(selectedResumeIds);
     if (next.has(jobId)) next.delete(jobId);
-    else if (next.size < TAILORED_DRAFT_PREPARATION_LIMIT) next.add(jobId);
+    else next.add(jobId);
     setResumeSelection({ campaignId, jobIds: [...next] });
   });
-  const readyToApplyCount = useMemo(
+  const totalReadyToApplyCount = useMemo(
     () =>
-      Math.min(
-        countQueueStageReady(queue, unavailableApplicationJobIds),
-        applicationBatchLimit,
+      countQueueStageReady(
+        queue.filter((item) => !isJobPending(item.jobId)),
+        unavailableApplicationJobIds,
       ),
-    [applicationBatchLimit, queue, unavailableApplicationJobIds],
+    [isJobPending, queue, unavailableApplicationJobIds],
+  );
+  const readyToApplyCount = Math.min(
+    totalReadyToApplyCount,
+    applicationBatchLimit,
   );
   const safeguardBlockerSentence = safeguardBlocker?.trim()
     ? stripInternalCodeParenthetical(safeguardBlocker)
@@ -265,10 +272,7 @@ export function ReviewQueueListPanel({
   const isDraftPreparationRunning = draftPreparation.status === "running";
   const draftPreparationResultMessage =
     getTailoredDraftPreparationResultMessage(draftPreparation);
-  const draftRunCount = Math.min(
-    draftEligibleCount,
-    TAILORED_DRAFT_PREPARATION_LIMIT,
-  );
+  const draftRunCount = draftEligibleCount;
   // The three row handlers keep one identity for the life of the panel. Each
   // closes over the queue, so a `useCallback` on it would be rebuilt whenever
   // any job changed and every row would re-render with it — which is exactly
@@ -306,17 +310,15 @@ export function ReviewQueueListPanel({
 
   return (
     <section className="surface-panel-shell relative flex min-w-0 flex-col overflow-hidden rounded-(--radius-field) border border-(--surface-panel-border) xl:h-full xl:min-h-0">
-      <div className="flex flex-wrap items-start justify-between gap-3 px-5 pb-2 pt-5">
-        <p className="font-display text-[11px] font-bold uppercase tracking-(--tracking-caps) text-muted-foreground">
-          Jobs
-        </p>
-      </div>
       {/* A search field, a density switch and named views are list
           management for a list that usually holds one to eight rows. Only the
-          search survives, and only once there is more than one row to search. */}
+          search survives, and only once there is more than one row to search.
+          The page title already names the list, so no label row sits above
+          it (ADR 0044). */}
       {queue.length > 1 ? (
         <CollectionSearchToolbar
           compact
+          placement="panel"
           label="Find a shortlisted job"
           onQueryChange={view.setQuery}
           placeholder="Search jobs"
@@ -344,6 +346,17 @@ export function ReviewQueueListPanel({
                   {draftPreparation.completedCount +
                     draftPreparation.failedCount}{" "}
                   of {draftPreparation.totalCount} finished
+                  {(() => {
+                    const minutes = estimateResumeBatchMinutesLeft(
+                      draftPreparation.durationsMs ?? [],
+                      draftPreparation.totalCount -
+                        draftPreparation.completedCount -
+                        draftPreparation.failedCount,
+                    );
+                    return !draftPreparation.stopRequested && minutes !== null
+                      ? ` · about ${minutes} min left`
+                      : "";
+                  })()}
                 </p>
                 {draftPreparation.stopRequested ? null : (
                   <Button
@@ -381,12 +394,24 @@ export function ReviewQueueListPanel({
               </>
             ) : (
               <>
+                {visibleQueue.length < queue.length ? (
+                  <p
+                    className="text-xs text-foreground-muted"
+                    data-testid="shortlist-bulk-filter-scope"
+                  >
+                    Bulk actions use this plan’s full shortlist of{" "}
+                    {queue.length} jobs, including{" "}
+                    {queue.length - visibleQueue.length} hidden by this filter.
+                  </p>
+                ) : null}
                 {draftEligibleCount > 0 ? (
                   <Button
                     className="whitespace-normal text-sm font-medium normal-case tracking-normal"
                     data-testid="create-missing-resumes"
                     disabled={draftPreparationBlocker !== null}
-                    onClick={() => onPrepareTailoredDrafts()}
+                    onClick={() =>
+                      onPrepareTailoredDrafts([...eligibleResumeIds])
+                    }
                     size="sm"
                     type="button"
                     variant="secondary"
@@ -406,6 +431,13 @@ export function ReviewQueueListPanel({
                   >
                     Choose jobs
                   </Button>
+                ) : null}
+                {totalReadyToApplyCount > readyToApplyCount ? (
+                  <p className="text-sm text-foreground-soft">
+                    {totalReadyToApplyCount} ready jobs. {readyToApplyCount}{" "}
+                    start now; {totalReadyToApplyCount - readyToApplyCount}{" "}
+                    remain after this batch.
+                  </p>
                 ) : null}
                 {readyToApplyCount > 0 && onApplyToAllReady ? (
                   safeguardBlockerSentence ? (
@@ -432,7 +464,9 @@ export function ReviewQueueListPanel({
                     >
                       {readyToApplyCount === 1
                         ? "Apply to the 1 ready job"
-                        : `Apply to all ${readyToApplyCount} ready jobs`}
+                        : totalReadyToApplyCount > readyToApplyCount
+                          ? `Apply to next ${readyToApplyCount} ready jobs`
+                          : `Apply to all ${readyToApplyCount} ready jobs`}
                     </Button>
                   )
                 ) : null}
@@ -446,16 +480,15 @@ export function ReviewQueueListPanel({
             </p>
           ) : choosingResumes ? (
             <p className="m-0 text-xs text-foreground-muted">
-              {selectedResumeIds.size} selected. Choose up to{" "}
-              {TAILORED_DRAFT_PREPARATION_LIMIT} jobs. Existing resumes are
-              kept.
+              {selectedResumeIds.size} selected. Select the jobs you want.
+              Existing resumes are kept.
             </p>
           ) : draftEligibleCount > 0 ? (
             <p className="m-0 text-xs text-foreground-muted">
-              Up to two at once. Stop any time; finished resumes are kept.
-              {draftEligibleCount > TAILORED_DRAFT_PREPARATION_LIMIT
-                ? ` ${TAILORED_DRAFT_PREPARATION_LIMIT} per batch; ${draftEligibleCount - TAILORED_DRAFT_PREPARATION_LIMIT} more after that.`
-                : ""}
+              {draftEligibleCount > 2
+                ? `${draftEligibleCount} missing resumes. 2 start now; ${draftEligibleCount - 2} ${draftEligibleCount === 3 ? "waits its turn" : "wait their turn"}. `
+                : "Up to two at once. "}
+              Stop any time; finished resumes are kept.
             </p>
           ) : null}
           {!isDraftPreparationRunning &&
@@ -496,7 +529,7 @@ export function ReviewQueueListPanel({
         <div className="flex min-h-0 flex-1 items-center justify-center px-5 pb-5 pt-4">
           <div className="grid w-full max-w-136 justify-items-center gap-4">
             <EmptyState
-              title="No shortlisted jobs yet"
+              title="No shortlisted jobs in this plan"
               description="Shortlist a job from Find jobs. It shows up here, ready for a resume and an application."
             />
             <Button asChild size="lg">
@@ -545,11 +578,7 @@ export function ReviewQueueListPanel({
                 })}
                 choosingResumes={choosingResumes && !isDraftPreparationRunning}
                 resumeSelected={selectedResumeIds.has(item.jobId)}
-                resumeSelectionDisabled={
-                  !eligibleResumeIds.has(item.jobId) ||
-                  (!selectedResumeIds.has(item.jobId) &&
-                    selectedResumeIds.size >= TAILORED_DRAFT_PREPARATION_LIMIT)
-                }
+                resumeSelectionDisabled={!eligibleResumeIds.has(item.jobId)}
                 onToggleResume={toggleResume}
                 jobId={item.jobId}
                 key={item.jobId}
@@ -567,8 +596,12 @@ export function ReviewQueueListPanel({
                       )
                 }
                 selected={selectedItem?.jobId === item.jobId}
-                showProgress={isResumeGenerationInProgress(item) || isPending}
-                statusLabel={workflowStatus.label}
+                showProgress={workflowStatus.label === "Writing resume"}
+                statusLabel={
+                  item.listingAssessmentPending
+                    ? "Assessing listing"
+                    : workflowStatus.label
+                }
                 statusTone={workflowStatus.tone}
                 title={item.title}
               />

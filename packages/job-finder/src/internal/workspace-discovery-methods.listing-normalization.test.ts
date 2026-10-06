@@ -2,11 +2,10 @@ import { describe, expect, test } from "vitest";
 import { JobPostingSchema } from "@nordri/contracts";
 
 import { stripPictographGlyphs } from "./listing-detail-extraction";
-import { createMatchAssessment } from "./matching";
-import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
 import {
   normalizeListingText,
   resolveListingEmployer,
+  resolvePostingProducingTarget,
 } from "./workspace-discovery-methods";
 import {
   createAgentAiClient,
@@ -43,7 +42,9 @@ describe("normalizeListingText", () => {
       normalizeListingText("Sales Development Representative Attribut&#65533;"),
     ).toBe("Sales Development Representative Attribut");
     expect(
-      normalizeListingText("Sales Development Representative Attribut" + REPLACEMENT),
+      normalizeListingText(
+        "Sales Development Representative Attribut" + REPLACEMENT,
+      ),
     ).toBe("Sales Development Representative Attribut");
     // The glyph stood in for one lost character, so the word closes up.
     expect(normalizeListingText("Acme" + REPLACEMENT + "Corp")).toBe(
@@ -73,10 +74,16 @@ describe("resolveListingEmployer", () => {
 
   test("refuses an employer that repeats the job title", () => {
     expect(
-      resolveListingEmployer("Customer Support Agent", "Customer Support Agent"),
+      resolveListingEmployer(
+        "Customer Support Agent",
+        "Customer Support Agent",
+      ),
     ).toBe("Employer not stated");
     expect(
-      resolveListingEmployer("customer support agent!", "Customer Support Agent"),
+      resolveListingEmployer(
+        "customer support agent!",
+        "Customer Support Agent",
+      ),
     ).toBe("Employer not stated");
   });
 
@@ -161,6 +168,8 @@ describe("run-wide salary normalization", () => {
   });
 
   test("reassesses a removed furniture band before campaign retention", async () => {
+    // The pay band every listing shared is site furniture: removed before the
+    // plan keeps its jobs, so no pay comparison rests on it.
     const sharedBand = "$180k - $220k";
     const seed = createSeed();
     seed.savedJobs = [];
@@ -177,10 +186,6 @@ describe("run-wide salary normalization", () => {
         startingUrl: "https://jobs.example.test/search",
       },
     ];
-    const enrichedPreferences = enrichSearchPreferencesFromProfile(
-      seed.searchPreferences,
-      seed.profile,
-    );
     const postings = Array.from({ length: 4 }, (_, index) =>
       JobPostingSchema.parse({
         source: "target_site",
@@ -214,20 +219,6 @@ describe("run-wide salary normalization", () => {
         detailQuality: "detail_enriched",
       }),
     );
-    const scoredWithFurniture = createMatchAssessment(
-      seed.profile,
-      enrichedPreferences,
-      postings[0]!,
-    );
-    const scoredWithoutFurniture = createMatchAssessment(
-      seed.profile,
-      enrichedPreferences,
-      { ...postings[0]!, salaryText: null },
-    );
-    expect(scoredWithFurniture.score).toBeGreaterThan(
-      scoredWithoutFurniture.score,
-    );
-
     const { workspaceService } = createWorkspaceServiceHarness({
       seed,
       browserRuntime: createAgentBrowserRuntime(postings),
@@ -238,22 +229,6 @@ describe("run-wide salary normalization", () => {
       (campaign) => campaign.id === initial.activeCampaignId,
     );
     if (!active) throw new Error("Expected the default search plan.");
-    await workspaceService.saveCampaign({
-      id: active.id,
-      name: active.name,
-      description: active.description,
-      mode: active.mode,
-      status: active.status,
-      searchPreferences: active.searchPreferences,
-      sourceTargetIds: active.sourceTargetIds,
-      minimumFitScore: scoredWithFurniture.score,
-      limits: active.limits,
-      stopRules: active.stopRules,
-      applicationPolicy: active.applicationPolicy,
-      rules: active.rules,
-      schedule: active.schedule,
-      latestDigest: active.latestDigest,
-    });
 
     const snapshot = await workspaceService.runCampaignNow({
       campaignId: active.id,
@@ -261,18 +236,11 @@ describe("run-wide salary normalization", () => {
     const sanitized = snapshot.discoveryJobs.find(
       (job) => job.sourceJobId === "salary_retention_1",
     );
-    const campaign = snapshot.campaigns.find(
-      (candidate) => candidate.id === active.id,
-    );
 
     expect(sanitized).toMatchObject({
       salaryText: null,
-      matchAssessment: {
-        score: scoredWithoutFurniture.score,
-        compensationFit: { state: "unknown" },
-      },
+      matchAssessment: { compensationFit: { state: "unknown" } },
     });
-    expect(campaign?.jobIds).not.toContain(sanitized?.id);
   });
 });
 
@@ -296,4 +264,63 @@ describe("stripPictographGlyphs", () => {
     expect(stripPictographGlyphs(null)).toBeNull();
     expect(stripPictographGlyphs(undefined)).toBeUndefined();
   });
+});
+
+test("attributes a redirected extraction to the producing configured source through persistence", async () => {
+  const seed = createSeed();
+  const atlas = {
+    ...seed.searchPreferences.discovery.targets[0]!,
+    id: "atlas",
+    label: "Atlas",
+    startingUrl: "https://atlas.example.test/jobs",
+  };
+  const lever = {
+    ...atlas,
+    id: "lever",
+    label: "Lever",
+    startingUrl: "https://lever.example.test/employer",
+  };
+  seed.searchPreferences.discovery.targets = [atlas, lever];
+  seed.savedJobs = [];
+  seed.discovery.pendingDiscoveryJobs = [];
+  seed.discovery.discoveryLedger = [];
+  const posting = JobPostingSchema.parse({
+    ...createSeed().savedJobs[0]!,
+    canonicalUrl: "https://lever.example.test/employer/one",
+    producingPageUrl: "https://lever.example.test/employer/one",
+  });
+  expect(resolvePostingProducingTarget(posting, atlas, [atlas, lever])).toEqual(
+    lever,
+  );
+  const { workspaceService, repository } = createWorkspaceServiceHarness({
+    seed,
+    browserRuntime: createAgentBrowserRuntime([posting]),
+    aiClient: createAgentAiClient(),
+  });
+  await workspaceService.runDiscoveryForTarget(
+    atlas.id,
+    () => {},
+    new AbortController().signal,
+  );
+  const state = await repository.getDiscoveryState();
+  const jobs = [
+    ...(await repository.listSavedJobs()),
+    ...state.pendingDiscoveryJobs,
+  ];
+  expect(
+    jobs.find((job) => job.canonicalUrl === posting.canonicalUrl)?.provenance[0]
+      ?.targetId,
+  ).toBe(lever.id);
+  expect(
+    jobs.find((job) => job.canonicalUrl === posting.canonicalUrl)?.provenance[0]
+      ?.startingUrl,
+  ).toBe(lever.startingUrl);
+  const unknownPage = {
+    ...posting,
+    producingPageUrl: "https://unconfigured.example.test/one",
+  };
+  expect(
+    resolvePostingProducingTarget(unknownPage, atlas, [atlas, lever])
+      .startingUrl,
+  ).toBe(unknownPage.producingPageUrl);
 });

@@ -58,4 +58,67 @@ describe("posting URL identity", () => {
     expect(jobs.map((job) => job.canonicalUrl)).toEqual(urls);
     expect(new Set(jobs.map((job) => job.sourceJobId)).size).toBe(2);
   });
+
+  test("keeps a posting's apply link apart from its own page", () => {
+    const prompt = buildJobsExtractionPrompt({
+      pageHostLabel: "careers.example.test",
+      pageType: "job_detail",
+      effectiveMaxJobs: 1,
+    });
+    expect(prompt).toContain(
+      "Never use an apply, sign-in or share link as canonicalUrl",
+    );
+    const [job] = normalizeExtractedJobs({
+      payload: {
+        jobs: [
+          {
+            canonicalUrl: "https://careers.example.test/jobs/112",
+            applicationUrl: "/apply/112",
+            title: "Data Analyst",
+            company: "Northwind",
+            location: "Berlin, Germany",
+            description: "Analyse data.",
+            workMode: [],
+            applyPath: "unknown",
+            easyApplyEligible: false,
+          },
+        ],
+      },
+      pageHostLabel: "careers.example.test",
+      pageUrl: "https://careers.example.test/jobs/112",
+      pageType: "job_detail",
+      effectiveMaxJobs: 1,
+    });
+    expect(job?.canonicalUrl).toBe("https://careers.example.test/jobs/112");
+    expect(job?.applicationUrl).toBe("https://careers.example.test/apply/112");
+  });
+});
+
+describe("page extraction instructions", () => {
+  test.each(["search_results", "job_detail"] as const)(
+    "%s separates employer, facts and application route (R3-013, R3-180, R3-098, R3-104, R3-014)",
+    (pageType) => {
+      const prompt = buildJobsExtractionPrompt({
+        pageHostLabel: "board.example.test",
+        pageType,
+        effectiveMaxJobs: 5,
+      });
+      expect(prompt).toContain(
+        "board URL token or logo abbreviation is not its display name",
+      );
+      expect(prompt).toContain("MPS/UPS");
+      expect(prompt).toContain("no-CV/application-form-only");
+      expect(prompt).toContain("citizenship guides");
+      expect(prompt).toContain("return null and keep canonicalUrl");
+    },
+  );
+  test("requires explicit exclusions even for wide searches (R3-040)", () => {
+    expect(
+      buildJobsExtractionPrompt({
+        pageHostLabel: "board.example.test",
+        pageType: "search_results",
+        effectiveMaxJobs: 5,
+      }),
+    ).toContain("Explicit exclusions always apply");
+  });
 });

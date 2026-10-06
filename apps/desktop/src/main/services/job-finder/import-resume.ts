@@ -3,7 +3,7 @@ import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   JobFinderWorkspaceSnapshotSchema,
-  isInterruptedResumeImportRun,
+  canRetrySavedResumeImport,
   type ResumeImportProgressEvent,
   type ResumeImportRun,
   type ResumeSourceDocument,
@@ -20,6 +20,7 @@ import { getJobFinderDocumentsDirectory } from "./paths";
 export interface ImportResumeFromSourcePathOptions {
   onProgress?: (event: ResumeImportProgressEvent) => void;
   useVision?: boolean;
+  signal?: AbortSignal;
   /**
    * The name the person knows the file by. Set when importing the private
    * working copy again, whose own name carries a timestamp prefix.
@@ -78,9 +79,9 @@ export async function retryInterruptedResumeImport(
   latestRun: ResumeImportRun | null,
   options: Omit<ImportResumeFromSourcePathOptions, "fileName"> = {},
 ) {
-  if (!latestRun || !isInterruptedResumeImportRun(latestRun)) {
+  if (!latestRun || !canRetrySavedResumeImport(latestRun)) {
     throw new ResumeImportRetryUnavailableError(
-      "There is no stopped import to start again. Choose your resume file to import it.",
+      "There is no failed import to try again. Choose your resume file to import it.",
     );
   }
   const workingCopy = resolveResumeWorkingCopyPath({
@@ -105,9 +106,27 @@ export async function retryInterruptedResumeImport(
   });
 }
 
+let activeDesktopImports = 0;
+
+export function isDesktopResumeImportActive(): boolean {
+  return activeDesktopImports > 0;
+}
+
 export async function importResumeFromSourcePath(
   sourcePath: string,
   options: ImportResumeFromSourcePathOptions = {},
+) {
+  activeDesktopImports += 1;
+  try {
+    return await importResumeFile(sourcePath, options);
+  } finally {
+    activeDesktopImports -= 1;
+  }
+}
+
+async function importResumeFile(
+  sourcePath: string,
+  options: ImportResumeFromSourcePathOptions,
 ) {
   const targetDirectory = getJobFinderDocumentsDirectory();
   const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
@@ -239,18 +258,33 @@ export async function importResumeFromSourcePath(
       ? "Reading your resume and filling in your profile. Anything that would replace details you already saved waits for your review."
       : "Checking what can be recovered from this file.",
   );
-  const snapshot = await jobFinderWorkspaceService.runResumeImport({
-    baseResume,
-    documentBundle: extractedResume.bundle,
-    importWarnings: [...extractedResume.warnings, ...visionWarnings],
-    visionArtifact: generatedVisionArtifact.artifact,
-  });
+  const snapshot = await jobFinderWorkspaceService
+    .runResumeImport({
+      baseResume,
+      ...(options.signal ? { signal: options.signal } : {}),
+      documentBundle: extractedResume.bundle,
+      importWarnings: [...extractedResume.warnings, ...visionWarnings],
+      visionArtifact: generatedVisionArtifact.artifact,
+    })
+    .catch(async (error: unknown) => {
+      const saved = await jobFinderWorkspaceService.getWorkspaceSnapshot();
+      if (
+        saved.profile.baseResume.id === resumeId &&
+        saved.latestResumeImportRun?.sourceResumeId === resumeId &&
+        saved.latestResumeImportRun.status === "failed"
+      ) {
+        return saved;
+      }
+      throw error;
+    });
 
   reportProgress(
     "saving_results",
-    hasReadableResumeContent
-      ? "Saving the imported resume and review items."
-      : "Saving the import issue and recovery guidance.",
+    snapshot.latestResumeImportRun?.status === "failed"
+      ? "Your file is saved. You can try again or continue manually."
+      : hasReadableResumeContent
+        ? "Saving the imported resume and review items."
+        : "Saving the import issue and recovery guidance.",
   );
   return JobFinderWorkspaceSnapshotSchema.parse(snapshot);
 }

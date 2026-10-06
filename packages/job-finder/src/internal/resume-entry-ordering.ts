@@ -56,12 +56,16 @@ export interface ParsedResumeEntryDateRange {
   hasUnparseableDateRange: boolean;
   isCurrent: boolean;
   startMonth: number | null;
+  /** The boundary names only a year, so it covers the whole year. */
+  startYearOnly: boolean;
+  endYearOnly: boolean;
 }
 
 interface ParsedDateSegment {
   isCurrent: boolean;
   month: number | null;
   unparseable: boolean;
+  yearOnly?: boolean;
 }
 
 function toMonthIndex(year: number, month: number): number {
@@ -224,6 +228,7 @@ function parseDateSegment(
       isCurrent: false,
       month: toMonthIndex(Number(yearOnly.groups.year), month),
       unparseable: false,
+      yearOnly: true,
     };
   }
 
@@ -268,6 +273,8 @@ export function parseResumeEntryDateRange(
       hasUnparseableDateRange: false,
       isCurrent: false,
       startMonth: null,
+      startYearOnly: false,
+      endYearOnly: false,
     };
   }
 
@@ -290,7 +297,11 @@ export function parseResumeEntryDateRange(
   );
   const currentMonth = getCurrentMonthIndex(now);
   const futureMonths = [startMonth, endMonth].filter(
-    (month): month is number => month !== null && month > currentMonth,
+    (month, index): month is number =>
+      month !== null &&
+      ((index === 0 ? startSegment.yearOnly : endSegment.yearOnly)
+        ? Math.floor(month / 12) > Math.floor(currentMonth / 12)
+        : month > currentMonth),
   );
 
   return {
@@ -304,6 +315,8 @@ export function parseResumeEntryDateRange(
     hasUnparseableDateRange,
     isCurrent,
     startMonth,
+    startYearOnly: startSegment.yearOnly === true,
+    endYearOnly: !isCurrent && endSegment.yearOnly === true,
   };
 }
 
@@ -527,10 +540,17 @@ export function moveSectionEntry(input: {
   };
 }
 
+interface DateSpan {
+  start: number;
+  end: number;
+  startYearOnly: boolean;
+  endYearOnly: boolean;
+}
+
 function getEffectiveDateSpan(
   parsed: ParsedResumeEntryDateRange,
   now = new Date(),
-): { end: number; start: number } | null {
+): DateSpan | null {
   const start = parsed.startMonth ?? parsed.endMonth;
   const end = parsed.isCurrent
     ? getCurrentMonthIndex(now)
@@ -545,7 +565,12 @@ function getEffectiveDateSpan(
     return null;
   }
 
-  return { start: Math.min(start, end), end: Math.max(start, end) };
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end),
+    startYearOnly: parsed.startYearOnly,
+    endYearOnly: parsed.endYearOnly,
+  };
 }
 
 /**
@@ -567,13 +592,16 @@ function getSpanOverlapMonths(
   return overlapEnd < overlapStart ? 0 : overlapEnd - overlapStart + 1;
 }
 
-function spansOverlapBeyondTolerance(
-  left: { end: number; start: number },
-  right: { end: number; start: number },
-): boolean {
-  return (
-    getSpanOverlapMonths(left, right) > RESUME_ENTRY_OVERLAP_TOLERANCE_MONTHS
-  );
+function spansOverlapBeyondTolerance(left: DateSpan, right: DateSpan): boolean {
+  // A year-only boundary covers its whole year: roles that meet in the same
+  // year ("2019 – 2023", then "2023 – Present") hand over within it.
+  const [earlier, later] =
+    left.start <= right.start ? [left, right] : [right, left];
+  const tolerance =
+    earlier.endYearOnly || later.startYearOnly
+      ? 12
+      : RESUME_ENTRY_OVERLAP_TOLERANCE_MONTHS;
+  return getSpanOverlapMonths(left, right) > tolerance;
 }
 
 export function buildResumeEntryDateQualityIssues(
@@ -593,6 +621,12 @@ export function buildResumeEntryDateQualityIssues(
     }));
 
     for (const { entry, parsed } of parsedEntries) {
+      const name =
+        [entry.title, entry.subtitle].filter(Boolean).join(" — ") ||
+        section.label;
+      const dates =
+        entry.dateRange ??
+        [entry.startDate, entry.endDate].filter(Boolean).join(" – ");
       if (
         parsed.hasMissingDateRange &&
         missingDateQualitySectionKinds.has(section.kind)
@@ -604,8 +638,7 @@ export function buildResumeEntryDateQualityIssues(
           sectionId: section.id,
           entryId: entry.id,
           bulletId: null,
-          message:
-            "This entry is missing a date range, so Resume Studio keeps it below confidently dated entries.",
+          message: `${name}: add a date or year if you know it.`,
         });
       } else if (
         parsed.hasUnparseableDateRange ||
@@ -623,8 +656,7 @@ export function buildResumeEntryDateQualityIssues(
           sectionId: section.id,
           entryId: entry.id,
           bulletId: null,
-          message:
-            "This entry has an ambiguous date range, so Resume Studio keeps it below confidently dated entries.",
+          message: `${name}: check “${dates}”. The date could not be read; your wording was kept.`,
         });
       }
 
@@ -636,8 +668,7 @@ export function buildResumeEntryDateQualityIssues(
           sectionId: section.id,
           entryId: entry.id,
           bulletId: null,
-          message:
-            "This entry's end date appears earlier than its start date. Check the date range before trusting chronology.",
+          message: `${name}: the end date in “${dates}” appears earlier than the start. Check the dates.`,
         });
       }
 
@@ -649,8 +680,7 @@ export function buildResumeEntryDateQualityIssues(
           sectionId: section.id,
           entryId: entry.id,
           bulletId: null,
-          message:
-            "This entry includes a future date. Check the date range before export or approval.",
+          message: `${name}: “${dates}” includes a future date. Check the dates.`,
         });
       }
     }
@@ -660,6 +690,12 @@ export function buildResumeEntryDateQualityIssues(
     );
     if (currentEntries.length > 1) {
       for (const { entry } of currentEntries) {
+        const name =
+          [entry.title, entry.subtitle].filter(Boolean).join(" — ") ||
+          section.label;
+        const dates =
+          entry.dateRange ??
+          [entry.startDate, "Present"].filter(Boolean).join(" – ");
         issues.push({
           id: `issue_date_duplicate_current_${entry.id}`,
           severity: "info",
@@ -667,8 +703,7 @@ export function buildResumeEntryDateQualityIssues(
           sectionId: section.id,
           entryId: entry.id,
           bulletId: null,
-          message:
-            "Multiple entries are marked current. Check whether the Present roles should both appear as active.",
+          message: `${name}: “${dates}” and another entry are marked current. Check whether both roles are still active.`,
         });
       }
     }
@@ -702,6 +737,15 @@ export function buildResumeEntryDateQualityIssues(
     }
 
     for (const entryId of overlapEntryIds) {
+      const entry = parsedEntries.find(
+        (value) => value.entry.id === entryId,
+      )!.entry;
+      const name =
+        [entry.title, entry.subtitle].filter(Boolean).join(" — ") ||
+        section.label;
+      const dates =
+        entry.dateRange ??
+        [entry.startDate, entry.endDate].filter(Boolean).join(" – ");
       issues.push({
         id: `issue_date_overlap_${entryId}`,
         severity: "info",
@@ -709,8 +753,7 @@ export function buildResumeEntryDateQualityIssues(
         sectionId: section.id,
         entryId,
         bulletId: null,
-        message:
-          "This entry's date range overlaps another entry in the section. Check whether the chronology is intentional.",
+        message: `${name}: “${dates}” may overlap another ${section.label.toLowerCase()} entry. Concurrent roles are fine; check the months if only years were supplied.`,
       });
     }
   }

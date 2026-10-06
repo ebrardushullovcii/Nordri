@@ -1,3 +1,4 @@
+import { groupCompanyConflicts } from "./same-company-sends";
 import { createHash } from "node:crypto";
 
 import {
@@ -864,33 +865,25 @@ export function deriveSimultaneousApplicationConflicts(input: {
 
   const conflicts: AutomaticConflictInput[] = [];
   for (const entries of byCompany.values()) {
-    const ordered = [...entries].sort((left, right) =>
-      left.applicationRecordId.localeCompare(right.applicationRecordId),
+    const ordered = [...entries].sort(
+      (left, right) =>
+        left.appliedAt.localeCompare(right.appliedAt) ||
+        left.applicationRecordId.localeCompare(right.applicationRecordId),
     );
-    for (let firstIndex = 0; firstIndex < ordered.length; firstIndex += 1) {
-      const first = ordered[firstIndex]!;
-      for (
-        let secondIndex = firstIndex + 1;
-        secondIndex < ordered.length;
-        secondIndex += 1
-      ) {
-        const second = ordered[secondIndex]!;
-        const pair = `${first.applicationRecordId}\u0000${second.applicationRecordId}`;
-        // Include the verified submission timestamps so a later submission
-        // occurrence for the same two records gets a stable fresh identity.
-        // Replaying the same evidence still derives the same id.
-        const occurrence = `${pair}\u0000${first.appliedAt}\u0000${second.appliedAt}`;
-        const digest = createHash("sha256").update(occurrence).digest("hex");
-        conflicts.push({
-          conflictId: `automatic_simultaneous_application:${digest}`,
-          applicationRecordId: first.applicationRecordId,
-          conflictingApplicationRecordId: second.applicationRecordId,
-          explanation: `Two verified applications (${first.applicationRecordId} and ${second.applicationRecordId}) were recorded for the conservatively normalized company "${first.companyName}" within the active ${input.windowDays}-day window.`,
-          recoveryGuidance:
-            "Review both durable application records and resolve or dismiss this conflict before preparing more applications for the company.",
-        });
-      }
-    }
+    if (ordered.length < 2) continue;
+    const first = ordered[0]!;
+    const second = ordered[1]!;
+    const digest = createHash("sha256")
+      .update(`${first.companyKey}\0${first.appliedAt}\0${input.windowDays}`)
+      .digest("hex");
+    conflicts.push({
+      conflictId: `automatic_simultaneous_application:${digest}`,
+      applicationRecordId: first.applicationRecordId,
+      conflictingApplicationRecordId: second.applicationRecordId,
+      explanation: `More than one verified application was sent to ${first.companyName} in the last ${input.windowDays} days. Those sends have already happened; future application work for this company needs your decision.`,
+      recoveryGuidance:
+        "Review the applications for this company, then resolve or dismiss this hold before starting more. Sent applications are not paused.",
+    });
   }
   return conflicts;
 }
@@ -1129,6 +1122,11 @@ async function persistAutomaticSimultaneousConflicts(input: {
         nextSafeguards = result.safeguards;
       }
     }
+    nextSafeguards = groupCompanyConflicts(
+      { ...current, safeguards: nextSafeguards },
+      records,
+      await input.ctx.repository.listSavedJobs(),
+    ).safeguards;
     if (JSON.stringify(nextSafeguards) === JSON.stringify(current.safeguards)) {
       return;
     }

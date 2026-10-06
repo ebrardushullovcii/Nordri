@@ -1,3 +1,6 @@
+import { assertPersonAnswerAuthority } from "../person-answer-authority";
+import { projectWorkspaceAttention } from "../attention";
+import { readAssistantWorkState, runningSearchState } from "../work-state";
 import {
   AssistantTaskPlanStepSchema,
   NonEmptyStringSchema,
@@ -7,14 +10,17 @@ import {
 import { z } from "zod";
 
 import { AssistantToolError, argText, defineTool, json } from "../tool-kit";
-import { getAssistantSearchReadiness } from "../prompt";
+import {
+  getAssistantSavedSearch,
+  getAssistantSearchReadiness,
+} from "../prompt";
 import {
   allJobs,
   compactApplication,
   compactJob,
   plural,
   trackerAgenda,
-  unresolvedUserActions,
+  outstandingReviews,
 } from "./format";
 
 const Id = NonEmptyStringSchema.max(200);
@@ -30,13 +36,14 @@ export const getWorkspaceSummaryTool = defineTool({
   name: "get_workspace_summary",
   group: "workspace",
   description:
-    "Where the job search stands: enabled job-source IDs and URLs, whether a search can start and its missing requirements, profile readiness, jobs found and shortlisted, applications and their states, running work, Needs you count, the active search plan and the saved apply mode. A resume is not required for searching.",
+    "Where the job search stands: enabled job-source IDs and URLs, whether a search can start and its missing requirements, profile readiness, jobs found and shortlisted, applications and their states, running work, Needs you count, the selected search plan, the plan and sources of the running search, and the saved apply mode. A resume is not required for searching.",
   parameters: json.object({}),
   input: z.object({}).passthrough(),
   label: () => "Reading your workspace",
   effect: "read",
-  async execute(_input, { service }) {
+  async execute(_input, { service, ports }) {
     const snapshot = await service.getWorkspaceSnapshot();
+    const work = readAssistantWorkState(ports, snapshot);
     const applications = snapshot.applicationRecords;
     const byStatus = new Map<string, number>();
     for (const record of applications) {
@@ -47,13 +54,13 @@ export const getWorkspaceSummaryTool = defineTool({
         run.state,
       ),
     );
-    const needsYou = unresolvedUserActions(snapshot);
+    const attention = projectWorkspaceAttention(snapshot);
     const campaign = snapshot.campaigns.find(
       (entry) => entry.id === snapshot.activeCampaignId,
     );
     const searchReadiness = getAssistantSearchReadiness(snapshot);
     return {
-      summary: `${plural(snapshot.discoveryJobs.length, "job")} found, ${snapshot.reviewQueue.length} shortlisted, ${plural(applications.length, "application")}, ${needsYou.length} waiting on the person. ${
+      summary: `${plural(snapshot.discoveryJobs.length, "job")} found, ${snapshot.reviewQueue.length} shortlisted, ${plural(applications.length, "application")}, ${attention.count} Needs you items, ${attention.readyToSend.length} ready to send, ${attention.resumeReviews.length} resume reviews. ${
         searchReadiness.runningRunId
           ? "A search is already running."
           : searchReadiness.canStartSearch
@@ -61,6 +68,14 @@ export const getWorkspaceSummaryTool = defineTool({
             : searchReadiness.missingRequirements.join(" ")
       }`,
       data: {
+        ...work,
+        searchPlanCapabilities: {
+          namedPlans: true,
+          recurringSchedules: true,
+          assistantCanCreate: true,
+          manageWith: "save_search_plan",
+          screen: "search_plans",
+        },
         profile: {
           setup: snapshot.profileSetupState.status,
           name: snapshot.profile.fullName,
@@ -79,12 +94,16 @@ export const getWorkspaceSummaryTool = defineTool({
           jobIds: run.jobIds,
         })),
         search: {
+          latestSavedSearch: getAssistantSavedSearch(snapshot),
           state: snapshot.discoveryRunState,
           activeRunId: snapshot.activeDiscoveryRun?.id ?? null,
+          running: runningSearchState(snapshot),
           ...searchReadiness,
           enabledSources: searchReadiness.enabledSources.slice(0, 40),
         },
-        needsYou: needsYou.length,
+        needsYou: attention.count,
+        readyToSend: attention.readyToSend.length,
+        resumeReviews: attention.resumeReviews.length,
         tracker: (() => {
           const agenda = trackerAgenda(snapshot, Date.now());
           return {
@@ -92,7 +111,7 @@ export const getWorkspaceSummaryTool = defineTool({
             dueSoon: agenda.filter((item) => !item.overdue).length,
           };
         })(),
-        activeSearchPlan: campaign
+        selectedSearchPlan: campaign
           ? { id: campaign.id, name: campaign.name }
           : null,
         applyMode:
@@ -143,23 +162,42 @@ export const listNeedsYouTool = defineTool({
   effect: "read",
   async execute(_input, { service }) {
     const snapshot = await service.getWorkspaceSnapshot();
-    const requests = unresolvedUserActions(snapshot);
+    const attention = projectWorkspaceAttention(snapshot);
+    const reviews = outstandingReviews(snapshot);
+    const count = attention.count + reviews.length;
     return {
       summary:
-        requests.length === 0
+        count === 0
           ? "Nothing is waiting on the person."
-          : `${plural(requests.length, "step")} waiting on the person.`,
-      data: requests.slice(0, 40).map((request) => ({
-        id: request.id,
-        revision: request.revision,
-        kind: request.kind,
-        state: request.state,
-        title: request.title,
-        summary: request.summary,
-        instructions: request.instructions.slice(0, 6),
-        scope: request.scope,
-        url: request.actionUrl,
-      })),
+          : `${plural(attention.count, "Needs you item")}, ${attention.readyToSend.length} ready to send, ${attention.resumeReviews.length} resume reviews waiting on the person.`,
+      data: {
+        needsYou: {
+          requests: attention.requests.map((request) => ({
+            id: request.id,
+            revision: request.revision,
+            kind: request.kind,
+            state: request.state,
+            title: request.title,
+            summary: request.summary,
+            instructions: request.instructions.slice(0, 6),
+            scope: request.scope,
+            url: request.actionUrl,
+          })),
+          groupedDecisions: attention.groupedDecisions,
+          applications: attention.applications.map((record) => ({
+            id: record.id,
+            jobId: record.jobId,
+            title: record.title,
+            company: record.company,
+            reason: record.nextActionLabel ?? record.lastActionLabel,
+            route: `/job-finder/applications?applicationRecordId=${encodeURIComponent(record.id)}`,
+          })),
+          safeguards: attention.safeguards,
+          count: attention.count,
+        },
+        readyToSend: reviews.filter((item) => item.kind === "application_send"),
+        resumeReviews: reviews.filter((item) => item.kind === "resume_review"),
+      },
     };
   },
 });
@@ -182,7 +220,7 @@ export const resolveNeedsYouTool = defineTool({
   name: "resolve_needs_you",
   group: "workspace",
   description:
-    "Acts on one Needs you step: answer its question(s) with what the person told you (answers tie each answer to its question id), open its page in the browser, mark it done after the person did it, or skip it. When the answer is a lasting fact about the person (work authorization, sponsorship, notice period), set saveForLater so later applications answer the same question themselves instead of stopping again. Never enter passwords or create accounts; those steps belong to the person.",
+    "Acts on one Needs you step: answer its question(s) with what the person told you (answers tie each answer to its question id), open its page in the browser, mark it done after the person did it, or skip it. Set saveForLater only when the person chose to save the answers for future applications. Never save an answer you inferred or chose as the person's own answer; get their approval first. Never enter passwords or create accounts; those steps belong to the person.",
   parameters: json.object(
     {
       requestId: json.string(),
@@ -256,6 +294,29 @@ export const resolveNeedsYouTool = defineTool({
           "Give the answer the person stated; ask them if they have not said it.",
         );
       }
+      const details =
+        request.scope.type === "application"
+          ? await service.getApplyRunDetails(
+              request.scope.runId,
+              request.scope.jobId,
+              request.scope.applicationRecordId ?? null,
+            )
+          : null;
+      const promptFor = (questionId?: string) =>
+        details?.questionRecords.find((question) =>
+          questionId
+            ? question.id === questionId
+            : question.status !== "answered",
+        )?.prompt ?? `${request.title}: ${request.summary ?? ""}`;
+      await assertPersonAnswerAuthority(session, {
+        answers: answers.length
+          ? answers.map((entry) => ({
+              question: promptFor(entry.questionId),
+              answer: entry.answer,
+            }))
+          : [{ question: promptFor(), answer }],
+        saveForFuture: input.saveForLater,
+      });
       pending =
         (await settle(
           service.performUserAction({
@@ -650,11 +711,11 @@ export const reportMissingCapabilityTool = defineTool({
   name: "report_missing_capability",
   group: "workspace",
   description:
-    "Records that the person asked for something none of your tools can do, so it can be added. Then tell the person plainly what you could not do; never claim it was done.",
+    "Records an action the person asked you to perform that none of your tools can do, so it can be added. This is a write, not a lookup. Never call for advice-only questions, privacy explanations, or when the person says not to change anything. Then tell the person plainly what you could not do; never claim it was done.",
   parameters: json.object({ description: json.string() }, ["description"]),
   input: z.object({ description: z.string().trim().min(1).max(1_000) }),
   label: () => "Noting something I cannot do yet",
-  effect: "read",
+  effect: "local_write",
   async execute(input, { session }) {
     await session.reportGap(input.description);
     return { summary: "Recorded." };
@@ -667,6 +728,7 @@ const APP_ROUTES = {
   find_jobs: "/job-finder/discovery",
   shortlisted: "/job-finder/review-queue",
   applications: "/job-finder/applications",
+  tracker: "/job-finder/applications?view=tracker",
   needs_you: "/job-finder/actions",
   settings: "/job-finder/settings",
   companies: "/job-finder/companies",
@@ -677,12 +739,16 @@ export const openInAppTool = defineTool({
   name: "open_in_app",
   group: "workspace",
   description:
-    "Opens a screen or a record in the app for the person. Only when they ask to see it; the sidebar never moves them by itself.",
+    "Opens a screen or a record in the app for the person. Use screen tracker for saved interviews, reminders and stages, optionally with applicationRecordId. Create or schedule a named search plan with save_search_plan, then open search_plans if they ask to see it. Open screens only when asked to see them.",
   parameters: json.object({
     screen: json.enumOf(Object.keys(APP_ROUTES)),
     jobId: json.string("Opens that job (its resume when resume is true)."),
     applicationRecordId: json.string(),
     resume: json.boolean(),
+    section: json.enumOf(
+      ["basics", "experience", "background", "preferences", "sources", "files"],
+      "Profile tab to show. Languages are in background.",
+    ),
   }),
   input: z.object({
     screen: z
@@ -691,19 +757,58 @@ export const openInAppTool = defineTool({
     jobId: Id.optional(),
     applicationRecordId: Id.optional(),
     resume: z.boolean().optional(),
+    section: z
+      .enum([
+        "basics",
+        "experience",
+        "background",
+        "preferences",
+        "sources",
+        "files",
+      ])
+      .optional(),
   }),
   label: () => "Opening it in the app",
   effect: "read",
-  execute(input, { session }) {
+  async execute(input, { session }) {
+    if (
+      input.screen &&
+      (input.jobId || input.applicationRecordId) &&
+      !(input.applicationRecordId && input.screen === "tracker") &&
+      input.screen !==
+        (input.applicationRecordId
+          ? "applications"
+          : input.resume
+            ? "shortlisted"
+            : "find_jobs")
+    ) {
+      throw new AssistantToolError(
+        "invalid_input",
+        "Choose one destination per call. To show a tracker after writing a resume, open tracker last.",
+      );
+    }
+    if (input.section && input.screen !== "profile")
+      throw new AssistantToolError(
+        "invalid_input",
+        "A Profile tab requires screen profile.",
+      );
     const route = input.applicationRecordId
-      ? `/job-finder/applications?applicationRecordId=${encodeURIComponent(input.applicationRecordId)}`
+      ? `/job-finder/applications?${input.screen === "tracker" ? "view=tracker&" : ""}applicationRecordId=${encodeURIComponent(input.applicationRecordId)}`
       : input.jobId
         ? input.resume
           ? `/job-finder/review-queue/${encodeURIComponent(input.jobId)}/resume`
           : `/job-finder/discovery?jobId=${encodeURIComponent(input.jobId)}`
-        : APP_ROUTES[input.screen ?? "home"];
-    session.openInApp(route);
-    return Promise.resolve({ summary: `Opened ${route}.` });
+        : input.screen === "profile" && input.section
+          ? `${APP_ROUTES.profile}?section=${input.section}`
+          : APP_ROUTES[input.screen ?? "home"];
+    const display = await session.openInApp(route);
+    return {
+      summary:
+        display?.status === "displayed"
+          ? `The renderer confirms ${display.displayedRoute}${display.section ? ` (${display.section})` : ""} is displayed with no covering overlay.`
+          : `Navigation was not confirmed: ${display?.reason ?? "no renderer acknowledgment"}. Do not claim the destination is visible.`,
+      data: { route, requested: true, display: display ?? null },
+    };
   },
 });
 

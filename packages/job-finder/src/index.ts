@@ -86,3 +86,5 @@ export * from "./assistant";
 
 export { savedResumeDigestMatches } from "./internal/resume-file-integrity";
 export { resolveApprovedResumeExportForApply } from "./internal/matching-review-queue";
+
+export { ApplicationLetterGroundingError } from "./internal/application-letter-provider";

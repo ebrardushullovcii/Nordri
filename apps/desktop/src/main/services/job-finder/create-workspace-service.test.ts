@@ -1,3 +1,5 @@
+import * as browserRuntimeModule from "@nordri/browser-runtime";
+import { getEmbeddedBrowser } from "../browser/embedded-browser";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -153,6 +155,33 @@ describe("createDesktopBrowserRuntime", () => {
 
     expect(session.driver).not.toBe("catalog_seed");
     expect(session.driver).toBe("embedded_browser_agent");
+  });
+
+  test("wires the host's live working count into application reservations", () => {
+    const factory = vi.spyOn(browserRuntimeModule, "createBrowserAgentRuntime");
+    const embedded = getEmbeddedBrowser();
+    const capacity = vi
+      .spyOn(embedded, "hasAutomationTabCapacity")
+      .mockReturnValue(false);
+    const working = vi.spyOn(embedded, "workingTabCount").mockReturnValue(2);
+    const total = vi.spyOn(embedded, "openTabCount").mockReturnValue(12);
+    const env = {
+      NORDRI_ENABLE_TEST_API: "1",
+      NORDRI_BROWSER_HOST: "embedded",
+    };
+    createDesktopBrowserRuntime({
+      env,
+      aiClient: createDesktopJobFinderAiClient(env),
+      desktopTestApiEnabled: true,
+    });
+    const host = factory.mock.calls.at(-1)?.[0].browserHost;
+    expect(host?.openTabCount?.()).toBe(12);
+    expect(host?.workingTabCount?.()).toBe(2);
+    expect(host?.hasAutomationTabCapacity?.()).toBe(false);
+    capacity.mockRestore();
+    working.mockRestore();
+    total.mockRestore();
+    factory.mockRestore();
   });
 
   test("reports the connected Chrome lane when the browser host is external", async () => {

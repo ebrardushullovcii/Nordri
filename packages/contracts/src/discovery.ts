@@ -1,3 +1,4 @@
+import { ApplyAgentTimingSchema } from "./agent-timing";
 import { z } from "zod";
 
 import { ApplicationAutomationModeSchema } from "./application-authority";
@@ -181,6 +182,7 @@ export type CompensationCurrencyStatus = z.infer<
 
 const CompensationAmountSchema = z.number().int().nonnegative().nullable();
 export const CompensationPreferenceObjectSchema = z.object({
+  basis: z.enum(["base", "total_ote"]).optional(),
   minimum: CompensationAmountSchema.default(null),
   maximum: CompensationAmountSchema.default(null),
   interval: CompensationIntervalSchema.default("year"),
@@ -273,6 +275,9 @@ export function applyCompensationPreferenceChange(
 }
 
 export const JobSearchPreferencesObjectSchema = z.object({
+  searchSelectivity: z
+    .enum(["best_matches", "balanced", "wide_net"])
+    .optional(),
   targetRoles: z.array(NonEmptyStringSchema).default([]),
   jobFamilies: z.array(NonEmptyStringSchema).default([]),
   locations: z.array(NonEmptyStringSchema).default([]),
@@ -282,6 +287,22 @@ export const JobSearchPreferencesObjectSchema = z.object({
   targetIndustries: z.array(NonEmptyStringSchema).default([]),
   targetCompanyStages: z.array(NonEmptyStringSchema).default([]),
   employmentTypes: z.array(NonEmptyStringSchema).default([]),
+  shiftPreference: z.enum(["day", "night", "any"]).optional(),
+  weeklyHours: z
+    .object({
+      minimum: z.number().min(0).max(168).nullable(),
+      maximum: z.number().min(0).max(168).nullable(),
+    })
+    .refine(
+      (hours) =>
+        hours.minimum === null ||
+        hours.maximum === null ||
+        hours.minimum <= hours.maximum,
+      {
+        message: "Maximum weekly hours must be at least the minimum.",
+      },
+    )
+    .optional(),
   minimumSalaryUsd: z.number().int().min(0).nullable(),
   targetSalaryUsd: z.number().int().min(0).nullable().default(null),
   salaryCurrency: NonEmptyStringSchema.nullable().default("USD"),
@@ -319,6 +340,9 @@ function normalizeCompensationCompatibility(
     ? value.compensation
     : value.minimumSalaryUsd !== null || value.targetSalaryUsd !== null
       ? {
+          ...(value.compensation.basis
+            ? { basis: value.compensation.basis }
+            : {}),
           minimum: value.minimumSalaryUsd,
           maximum: value.targetSalaryUsd,
           interval: "year" as const,
@@ -661,6 +685,40 @@ export const TitleFamilyMatchSchema = z.enum(titleFamilyMatchValues);
  */
 export type TitleFamilyMatch = z.infer<typeof TitleFamilyMatchSchema>;
 
+/**
+ * The model's verdict on how one listing fits the person (ADR 0041). The
+ * model reads the listing and the person's goals and decides; the scorer
+ * builds the assessment from this verdict instead of its own title, place and
+ * keyword rules. `batch` verdicts come from the search's per-page judging of
+ * many jobs at once; `full` comes from reading and assessing one listing.
+ * The fingerprints record what the verdict was made from, so a later change
+ * to the profile or the listing can be judged again.
+ */
+export const FitJudgmentSchema = z.object({
+  source: z.enum(["batch", "full"]),
+  judgedAt: IsoDateTimeSchema,
+  contextFingerprint: NonEmptyStringSchema.nullable().default(null),
+  postingFingerprint: NonEmptyStringSchema.nullable().default(null),
+  score: z.number().int().min(0).max(100),
+  recommendation: FitRecommendationSchema,
+  role: RoleSuitabilityStateSchema.default("unknown"),
+  roleExplanation: NonEmptyStringSchema.max(320).nullable().default(null),
+  preferences: PreferenceAlignmentStateSchema.default("unknown"),
+  preferencesExplanation: NonEmptyStringSchema.max(320)
+    .nullable()
+    .default(null),
+  locationReach: MatchLocationReachSchema.default("unknown"),
+  reasons: z.array(NonEmptyStringSchema).max(4).default([]),
+  gaps: z.array(NonEmptyStringSchema).max(4).default([]),
+  /** The model's one sentence on the main reason for its recommendation. */
+  summary: NonEmptyStringSchema.max(320).nullable().optional(),
+  /** The listing says it is closed, filled or no longer taking applications. */
+  listingClosed: z.boolean().default(false),
+  /** The listing's own words for that, as the model quoted them. */
+  listingClosedEvidence: NonEmptyStringSchema.max(240).nullable().default(null),
+});
+export type FitJudgment = z.infer<typeof FitJudgmentSchema>;
+
 export const MatchAssessmentSchema = z.object({
   scorerVersion: z.number().int().positive().default(1),
   contextFingerprint: NonEmptyStringSchema.nullable().default(null),
@@ -689,6 +747,9 @@ export const MatchAssessmentSchema = z.object({
     "Review the listing and resume evidence before applying.",
   ),
   requirements: z.array(JobRequirementAssessmentSchema).default([]),
+  requirementsSource: z.enum(["model", "deterministic"]).optional(),
+  /** The model's verdict this assessment was built from; absent until judged. */
+  judgment: FitJudgmentSchema.nullable().optional(),
 });
 export type MatchAssessment = z.infer<typeof MatchAssessmentSchema>;
 
@@ -950,6 +1011,13 @@ export const ListingDetailFetchSchema = z.object({
   outcome: ListingDetailFetchOutcomeSchema,
   method: z.enum(["json_ld", "page_text"]).nullable().default(null),
   detail: NonEmptyStringSchema.nullable().default(null),
+  /** The linked vacancy names a different role from the saved posting. */
+  identityConflict: z
+    .object({
+      expectedTitle: NonEmptyStringSchema,
+      observedTitle: NonEmptyStringSchema,
+    })
+    .optional(),
   /** A server-requested earliest retry time after rate limiting. */
   retryAfterAt: IsoDateTimeSchema.nullable().optional(),
 });
@@ -990,7 +1058,32 @@ export const ListingDetailCaptureSchema = z.object({
 });
 export type ListingDetailCapture = z.infer<typeof ListingDetailCaptureSchema>;
 
+export const ListingRejectionCategorySchema = z.enum([
+  "role",
+  "place",
+  "preferences",
+  "closed",
+  "not_a_listing",
+  "person_exclusion",
+  "unreadable",
+]);
+export const RejectedListingSchema = z.object({
+  title: z.string(),
+  url: UrlStringSchema,
+  category: ListingRejectionCategorySchema,
+  reason: NonEmptyStringSchema,
+});
 export const JobPostingSchema = z.object({
+  needsRenderedPage: z.boolean().optional(),
+  searchRejection: z
+    .object({
+      category: ListingRejectionCategorySchema,
+      reason: NonEmptyStringSchema,
+    })
+    .nullable()
+    .optional(),
+  /** The observed page that produced this extraction, independent of the run target. */
+  producingPageUrl: UrlStringSchema.optional(),
   source: JobSourceSchema,
   sourceJobId: NonEmptyStringSchema,
   discoveryMethod: JobDiscoveryMethodSchema.default("catalog_seed"),
@@ -1272,10 +1365,21 @@ export const SavedJobDiscoveryProvenanceSchema = z.object({
   providerKey: SourceIntelligenceProviderKeySchema.nullable().default(null),
   providerBoardToken: NonEmptyStringSchema.nullable().default(null),
   titleTriageOutcome: DiscoveryTitleTriageOutcomeSchema.default("pass"),
+  sourceLabel: NonEmptyStringSchema.optional(),
   // What this one source showed for the job. A job seen on several sources is
   // built from exactly one of these sightings (ADR 0030), so each keeps its own
   // listing and application link instead of the latest one overwriting the job.
   // Optional: provenance written before these fields existed stays valid.
+  /** Display facts from this posting, kept together when its route wins. */
+  listingFacts: JobPostingSchema.pick({
+    title: true,
+    company: true,
+    location: true,
+    salaryText: true,
+    seniority: true,
+    description: true,
+    summary: true,
+  }).optional(),
   /** The listing page this source linked to. */
   listingUrl: NonEmptyStringSchema.nullable().optional(),
   /** The application link this source's collection carried. */
@@ -1324,7 +1428,7 @@ export type EmployerExclusionReference = z.infer<
 const DiscoveryFeedbackObjectSchema = z.object({
   version: z.literal(1),
   revision: z.number().int().positive(),
-  reasons: z.array(DiscoveryFeedbackReasonSchema).min(1).max(9),
+  reasons: z.array(DiscoveryFeedbackReasonSchema).max(9),
   recordedAt: IsoDateTimeSchema,
   // Status the job held when it was hidden, so "Show again" can undo the
   // dismissal exactly instead of downgrading every hidden job to discovered.
@@ -1405,6 +1509,8 @@ export type SavedJob = JobPosting & {
   id: string;
   /** Search plans that currently retain this shared global job row. */
   campaignIds?: string[];
+  personSupplied?: boolean | undefined;
+  planAssessments?: Record<string, MatchAssessment> | undefined;
   status: z.infer<typeof ApplicationStatusSchema>;
   matchAssessment: MatchAssessment;
   provenance: SavedJobDiscoveryProvenance[];
@@ -1420,6 +1526,10 @@ export type SavedJob = JobPosting & {
 type SavedJobInput = z.input<typeof JobPostingSchema> & {
   id: string;
   campaignIds?: string[] | undefined;
+  personSupplied?: boolean | undefined;
+  planAssessments?:
+    | Record<string, z.input<typeof MatchAssessmentSchema>>
+    | undefined;
   status: z.input<typeof ApplicationStatusSchema>;
   matchAssessment: z.input<typeof MatchAssessmentSchema>;
   provenance?: z.input<typeof SavedJobDiscoveryProvenanceSchema>[] | undefined;
@@ -1442,6 +1552,8 @@ export const SavedJobSchema: z.ZodType<SavedJob, z.ZodTypeDef, SavedJobInput> =
   JobPostingSchema.extend({
     id: NonEmptyStringSchema,
     campaignIds: z.array(NonEmptyStringSchema).default([]),
+    personSupplied: z.boolean().optional(),
+    planAssessments: z.record(MatchAssessmentSchema).optional(),
     status: ApplicationStatusSchema,
     matchAssessment: MatchAssessmentSchema,
     provenance: z.array(SavedJobDiscoveryProvenanceSchema).default([]),
@@ -1577,6 +1689,7 @@ export type ReviewQueueResumeReviewState = z.infer<
 >;
 
 export const ReviewQueueItemSchema = z.object({
+  listingAssessmentPending: z.boolean().optional(),
   jobId: NonEmptyStringSchema,
   title: NonEmptyStringSchema,
   company: NonEmptyStringSchema,
@@ -1684,6 +1797,7 @@ export type ApplicationQuestionStatus = z.infer<
 export const applicationBlockerCodeValues = [
   "missing_candidate_answer",
   "requires_manual_review",
+  "application_closed",
   "unsupported_apply_path",
   "missing_resume",
   "missing_consent",
@@ -1766,6 +1880,13 @@ export type ApplicationAttemptSuggestedAnswer = z.infer<
   typeof ApplicationAttemptSuggestedAnswerSchema
 >;
 
+export const ApplicationQuestionInputConstraintsSchema = z.object({
+  type: z.enum(["number", "date", "month"]),
+  min: z.string().optional(),
+  max: z.string().optional(),
+  step: z.string().optional(),
+});
+
 export const ApplicationAttemptQuestionSchema = z.object({
   id: NonEmptyStringSchema,
   prompt: NonEmptyStringSchema,
@@ -1776,6 +1897,7 @@ export const ApplicationAttemptQuestionSchema = z.object({
   description: NonEmptyStringSchema.nullable().optional(),
   kind: ApplicationQuestionKindSchema.default("other"),
   answerControlType: ApplicationQuestionControlTypeSchema.optional(),
+  inputConstraints: ApplicationQuestionInputConstraintsSchema.optional(),
   isRequired: z.boolean().default(true),
   /**
    * Why this one came back to the person, in their own words. Set when an
@@ -1958,6 +2080,7 @@ export const ApplicationAttemptSchema = z.object({
   visualCheckpoints: z.array(ApplyVisualCheckpointSchema).default([]),
   nextActionLabel: NonEmptyStringSchema.nullable(),
   executionTimings: z.array(ApplyExecutionTimingSchema).default([]),
+  agentTiming: ApplyAgentTimingSchema.optional(),
   userActionResumption: ApplicationUserActionResumptionSchema.optional(),
 });
 export type ApplicationAttempt = z.infer<typeof ApplicationAttemptSchema>;
@@ -2004,6 +2127,7 @@ export const ApplyExecutionResultSchema = z.object({
   visualCheckpoints: z.array(ApplyVisualCheckpointSchema).default([]),
   nextActionLabel: NonEmptyStringSchema.nullable(),
   executionTimings: z.array(ApplyExecutionTimingSchema).default([]),
+  agentTiming: ApplyAgentTimingSchema.optional(),
   externalWrites: z
     .array(ApplicationAttemptExternalWriteEvidenceSchema)
     .optional(),
@@ -2024,6 +2148,12 @@ export const AgentDebugFindingsSchema = z.object({
 export type AgentDebugFindings = z.infer<typeof AgentDebugFindingsSchema>;
 
 export const DiscoveryAgentMetadataSchema = z.object({
+  coveredPageUrls: z.array(UrlStringSchema).optional(),
+  deferredListingPageUrls: z.array(UrlStringSchema).optional(),
+  duplicateListingPageUrls: z.array(UrlStringSchema).optional(),
+  duplicateListings: z.number().int().nonnegative().optional(),
+  unreadableListings: z.array(RejectedListingSchema).optional(),
+  pagesCovered: z.number().int().nonnegative().optional(),
   steps: z.number().int().nonnegative().default(0),
   incomplete: z.boolean().default(false),
   transcriptMessageCount: z.number().int().nonnegative().default(0),
@@ -2171,7 +2301,24 @@ export const BrowserAgentRunCheckpointSchema: z.ZodType<
   phaseEvidence: SourceDebugPhaseEvidenceSchema,
 });
 
+export const DiscoverySourceListingCountsSchema = z.object({
+  sourceId: NonEmptyStringSchema,
+  label: NonEmptyStringSchema,
+  startingUrl: UrlStringSchema,
+  inspected: z.number().int().nonnegative(),
+  saved: z.number().int().nonnegative(),
+  rejected: z.number().int().nonnegative(),
+  duplicates: z.number().int().nonnegative(),
+  deferred: z.number().int().nonnegative(),
+  pagesCovered: z.number().int().nonnegative().nullable(),
+});
+export type DiscoverySourceListingCounts = z.infer<
+  typeof DiscoverySourceListingCountsSchema
+>;
 export const DiscoveryTargetExecutionSchema = z.object({
+  sourceCounts: z.array(DiscoverySourceListingCountsSchema).optional(),
+  inspectedJobIds: z.array(NonEmptyStringSchema).optional(),
+  uniqueInspectionsKnown: z.boolean().optional(),
   targetId: NonEmptyStringSchema,
   adapterKind: JobSourceAdapterKindSchema,
   resolvedAdapterKind: JobSourceSchema.nullable().default(null),
@@ -2182,6 +2329,10 @@ export const DiscoveryTargetExecutionSchema = z.object({
   startedAt: IsoDateTimeSchema.nullable().default(null),
   completedAt: IsoDateTimeSchema.nullable().default(null),
   requestedJobBudget: z.number().int().positive().nullable().default(null),
+  jobsInspected: z.number().int().nonnegative().optional(),
+  rejectedListings: z.array(RejectedListingSchema).optional(),
+  listingsDeferred: z.number().int().nonnegative().optional(),
+  pagesCovered: z.number().int().nonnegative().optional(),
   jobsReviewed: z.number().int().nonnegative().default(0),
   jobsFound: z.number().int().nonnegative().default(0),
   jobsPersisted: z.number().int().nonnegative().default(0),
@@ -2213,6 +2364,13 @@ export type DiscoveryTargetExecution = z.infer<
 >;
 
 export const DiscoveryActivityEventSchema = z.object({
+  progress: z
+    .object({
+      phase: z.enum(["reading_listings", "judging_fit"]),
+      completed: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+    })
+    .optional(),
   id: NonEmptyStringSchema,
   runId: NonEmptyStringSchema,
   timestamp: IsoDateTimeSchema,
@@ -2537,6 +2695,15 @@ export const ApplicationRecordSchema = z.object({
   lastActionLabel: NonEmptyStringSchema,
   nextActionLabel: NonEmptyStringSchema.nullable(),
   lastUpdatedAt: IsoDateTimeSchema,
+  personSendReceipt: z
+    .object({
+      observedAt: IsoDateTimeSchema,
+      origin: UrlStringSchema,
+      safePath: z.string().startsWith("/").max(4096),
+      summary: NonEmptyStringSchema.max(500),
+    })
+    .strict()
+    .optional(),
   lastAttemptState: ApplicationAttemptStateSchema.nullable().default(null),
   questionSummary: ApplicationAttemptQuestionSummarySchema.default({}),
   latestBlocker:

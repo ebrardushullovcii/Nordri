@@ -336,8 +336,17 @@ function buildDiscoveryTask(
   input: BuildJobFinderTaskCenterModelInput,
 ): JobFinderTaskCenterItem | null {
   const recentRuns = input.workspace.recentDiscoveryRuns ?? [];
-  const liveEvent = input.liveDiscoveryEvents?.at(-1) ?? null;
+  const observedLiveEvent = input.liveDiscoveryEvents?.at(-1) ?? null;
   const activeRun = input.workspace.activeDiscoveryRun;
+  const newestRun =
+    activeRun ?? newestBy(recentRuns, (candidate) => candidate.startedAt);
+  const liveEvent =
+    observedLiveEvent &&
+    newestRun &&
+    observedLiveEvent.runId !== newestRun.id &&
+    observedLiveEvent.timestamp < newestRun.startedAt
+      ? null
+      : observedLiveEvent;
   // A new search publishes activity before its workspace snapshot arrives.
   // Never combine that activity with the previous search's sources or counts.
   const run = liveEvent
@@ -379,11 +388,14 @@ function buildDiscoveryTask(
   const targetsCompleted = run?.summary.targetsCompleted ?? 0;
   const now = input.now ?? Date.now();
   const stopState = getDiscoveryStopState(run, now);
-  const status = discoveryStatus(
-    run,
-    input.isDiscoveryPending || Boolean(liveEvent),
-    now,
-  );
+  const status =
+    run?.runPhase === "interrupted"
+      ? "interrupted"
+      : discoveryStatus(
+          run,
+          input.isDiscoveryPending || Boolean(liveEvent),
+          now,
+        );
   const compatibleHistory = recentRuns.filter(
     (candidate) =>
       candidate.id !== run?.id &&
@@ -464,7 +476,7 @@ function resumeStatus(
     return "failed";
   }
 
-  return "interrupted";
+  return "active";
 }
 
 function buildResumeTask(
@@ -497,7 +509,13 @@ function buildResumeTask(
       status === "active"
         ? input.resumeImportProgress
           ? resumeStageLabels[input.resumeImportProgress.stage]
-          : "Waiting for file selection"
+          : run?.status === "extracting"
+            ? "Building profile suggestions"
+            : run?.status === "reconciling"
+              ? "Saving your review items"
+              : run?.status === "parsing"
+                ? "Reading your resume"
+                : "Waiting for file selection"
         : status === "completed"
           ? "Ready for review"
           : status === "failed"
@@ -619,8 +637,13 @@ function buildApplyTasks(
         resumeActionLabel: "Verify outcome",
       }
     : null;
-  const runItem = buildApplyRunTask(input);
-  return [verificationItem, runItem].filter(
+  const runs = input.workspace.applyRuns ?? [];
+  const newest = newestBy(runs, (run) => run.updatedAt);
+  const displayedRuns = runs.filter(
+    (run) => run.state === "running" || run.id === newest?.id,
+  );
+  const runItems = displayedRuns.map((run) => buildApplyRunTask(input, run));
+  return [verificationItem, ...runItems].filter(
     (item): item is JobFinderTaskCenterItem =>
       item !== null &&
       // With an outcome to verify, the run card shows only while it runs.
@@ -633,9 +656,10 @@ function buildApplyTasks(
 
 function buildApplyRunTask(
   input: BuildJobFinderTaskCenterModelInput,
+  selectedRun?: ApplyRunSummary,
 ): JobFinderTaskCenterItem | null {
   const runs = input.workspace.applyRuns ?? [];
-  const run = newestBy(runs, (candidate) => candidate.updatedAt);
+  const run = selectedRun ?? newestBy(runs, (candidate) => candidate.updatedAt);
   if (!run) {
     return null;
   }
@@ -981,7 +1005,7 @@ function buildTailoredDraftsTask(
       ? "Stopping · finishing the resumes already started"
       : "Preparing shortlisted resumes",
     sourceLabel: "Shortlisted jobs",
-    countLabel: `${completedCount} of ${totalCount} prepared${
+    countLabel: `${completedCount} of ${totalCount} ${preparation.cancelledCount ? `finished · ${preparation.cancelledCount} removed` : "prepared"}${
       failedCount > 0 ? ` · ${failedCount} failed` : ""
     }`,
     historyEstimateLabel: null,

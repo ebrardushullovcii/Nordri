@@ -1,3 +1,4 @@
+import { preserveCompletedAssessment } from "./fit-judgment-apply";
 import type {
   BrowserSessionState,
   DiscoveryLedgerEntry,
@@ -103,7 +104,22 @@ export function mergePendingJobs(
 ): SavedJob[] {
   const nextById = new Map(currentJobs.map((job) => [job.id, job]));
   for (const job of nextJobs) {
-    nextById.set(job.id, job);
+    const current = nextById.get(job.id);
+    nextById.set(job.id, {
+      ...job,
+      ...(current?.planAssessments || job.planAssessments
+        ? {
+            planAssessments: {
+              ...current?.planAssessments,
+              ...job.planAssessments,
+            },
+          }
+        : {}),
+      matchAssessment: preserveCompletedAssessment(
+        current?.matchAssessment,
+        job.matchAssessment,
+      ),
+    });
   }
   return [...nextById.values()].sort(compareDiscoveryJobs);
 }
@@ -117,6 +133,18 @@ export function mergeSavedJobs(
     const currentJob = nextById.get(job.id);
     const jobWithPersistedLocalChoices = {
       ...job,
+      ...(currentJob?.planAssessments || job.planAssessments
+        ? {
+            planAssessments: {
+              ...currentJob?.planAssessments,
+              ...job.planAssessments,
+            },
+          }
+        : {}),
+      matchAssessment: preserveCompletedAssessment(
+        currentJob?.matchAssessment,
+        job.matchAssessment,
+      ),
       resumeApplicationMode:
         currentJob?.resumeApplicationMode ?? job.resumeApplicationMode,
       resumeTailoringMode:

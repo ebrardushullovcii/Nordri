@@ -40,6 +40,7 @@ import {
 } from "@nordri/contracts";
 import type { JobFinderRepository } from "@nordri/db";
 
+import { getEmbeddedBrowser } from "../browser/embedded-browser";
 import { getJobFinderRepositoryForWorkspaceService } from "./create-workspace-service";
 import { getJobFinderWorkspaceService } from "./workspace-service";
 
@@ -98,6 +99,7 @@ export interface CreateJobFinderApplicationAuthorityServiceOptions {
   resolveRepository?: () => Promise<JobFinderRepository>;
   now?: () => string;
   idFactory?: () => string;
+  releaseApplicationPage?: (resultId: string) => void;
 }
 
 const APPROVED_ANSWERS_REQUIRED_MESSAGE =
@@ -286,7 +288,7 @@ function parseMutationResult(
 
 /**
  * Creates the management-only authority slice. It deliberately owns no
- * preflight, grant, arm, browser, or final-submit operation.
+ * preflight, grant, arm, navigation, or final-submit operation.
  */
 export function createJobFinderApplicationAuthorityService(
   options: CreateJobFinderApplicationAuthorityServiceOptions,
@@ -773,6 +775,8 @@ export function createJobFinderApplicationAuthorityService(
           expectedIdempotencyRevision: idempotency.revision,
           outcome,
         });
+        if (resolution.status === "recorded")
+          options.releaseApplicationPage?.(uncertainOutcome.resultId);
         return ResolveSubmissionOutcomeResultSchema.parse({
           status: resolution.status,
           outcome: resolution.outcome,
@@ -789,6 +793,8 @@ let defaultService: JobFinderApplicationAuthorityService | null = null;
 
 export function getJobFinderApplicationAuthorityService(): JobFinderApplicationAuthorityService {
   defaultService ??= createJobFinderApplicationAuthorityService({
+    releaseApplicationPage: (resultId) =>
+      getEmbeddedBrowser().releaseOwnedTabs(resultId),
     resolveRepository: async () => {
       const workspaceService = await getJobFinderWorkspaceService();
       const repository =

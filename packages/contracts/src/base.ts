@@ -76,14 +76,58 @@ export function isPreparedApplicationStatus(record: {
  * be the same untruth in a new place. Missing values render as
  * "not recorded".
  */
+export const DiscoverySourceRunReportSchema = z.object({
+  targetId: NonEmptyStringSchema,
+  inspected: z.number().int().nonnegative().nullable(),
+  saved: z.number().int().nonnegative(),
+  rejected: z.number().int().nonnegative().nullable(),
+  duplicates: z.number().int().nonnegative(),
+  deferred: z.number().int().nonnegative().nullable(),
+  pagesCovered: z.number().int().nonnegative().nullable(),
+});
+export type DiscoverySourceRunReport = z.infer<
+  typeof DiscoverySourceRunReportSchema
+>;
+
+export function formatDiscoverySourceAccounting(
+  source: DiscoverySourceRunReport,
+): string {
+  const count = (value: number | null, label: string) => {
+    if (value === null) return `${label} not recorded`;
+    const noun =
+      value === 1
+        ? label === "duplicates"
+          ? "duplicate"
+          : label === "pages covered"
+            ? "page covered"
+            : label
+        : label;
+    return `${value} ${noun}`;
+  };
+  return [
+    count(source.inspected, "inspected"),
+    count(source.saved, "saved"),
+    count(source.rejected, "rejected"),
+    count(source.duplicates, "duplicates"),
+    count(source.deferred, "deferred"),
+    count(source.pagesCovered, "pages covered"),
+  ].join(" · ");
+}
+
 export const DiscoveryRunReportSchema = z.object({
+  sources: z.array(DiscoverySourceRunReportSchema).optional(),
+  rejected: z.number().int().nonnegative().nullable().optional(),
+  deferred: z.number().int().nonnegative().nullable().optional(),
+  pagesCovered: z.number().int().nonnegative().nullable().optional(),
   /** Schema generation, so a later counting change is detectable. */
-  version: z.literal(1).default(1),
+  version: z.union([z.literal(1), z.literal(2)]).default(1),
   /** When the counts were frozen. */
   measuredAt: IsoDateTimeSchema,
   /** Listings this run reviewed, duplicates and rejects included. */
   found: z.number().int().nonnegative().nullable().default(null),
-  /** Listing identities this run introduced for the first time. */
+  /** Distinct job identities encountered, after merging duplicate postings. */
+  unique: z.number().int().nonnegative().nullable().optional(),
+  /** Jobs this run added to the device for the first time. */
   new: z.number().int().nonnegative().nullable().default(null),
   /** Distinct listings this run durably persisted or staged. */
   saved: z.number().int().nonnegative().nullable().default(null),
@@ -816,3 +860,55 @@ export const WriteClipboardTextResultSchema = z.object({
 export type WriteClipboardTextResult = z.infer<
   typeof WriteClipboardTextResultSchema
 >;
+
+/** The same frozen accounting sentence for history, plans, Home and Activity. */
+export function formatDiscoveryAccounting(
+  report: Pick<
+    DiscoveryRunReport,
+    | "found"
+    | "unique"
+    | "new"
+    | "retained"
+    | "duplicates"
+    | "rejected"
+    | "deferred"
+    | "pagesCovered"
+  >,
+): string {
+  const count = (value: number | null | undefined, label: string) =>
+    value == null
+      ? null
+      : `${value} ${value === 1 && label === "pages covered" ? "page covered" : label}`;
+  return [
+    count(report.found, "postings seen"),
+    count(report.unique, "unique jobs"),
+    count(report.new, "new to you"),
+    count(report.retained, "kept by this plan"),
+    count(report.duplicates, "duplicates merged"),
+    ...(report.rejected !== undefined
+      ? [
+          count(report.rejected, "rejected"),
+          count(report.deferred, "deferred"),
+          count(report.pagesCovered, "pages covered"),
+        ]
+      : []),
+  ]
+    .filter((segment) => segment !== null)
+    .join(" · ");
+}
+
+/** Add the missing scheme on a public domain; leave malformed input for validation. */
+export function normalizePublicLinkUrl(value: string): string {
+  let normalized = value.trim();
+  if (
+    !/^[a-z][a-z\d+.-]*:/i.test(normalized) &&
+    /^[^\s/@:]+\.[^\s/@:]+(?::\d+)?(?:[/?#].*)?$/.test(normalized)
+  ) {
+    normalized = `https://${normalized}`;
+  }
+  try {
+    return new URL(normalized).toString();
+  } catch {
+    return normalized;
+  }
+}

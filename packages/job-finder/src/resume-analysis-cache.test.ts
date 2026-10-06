@@ -123,9 +123,9 @@ describe("resume analysis cache", () => {
     expect(baseline).not.toBeNull();
 
     const incompatible = [
-      { promptVersion: "resume-analysis-prompts-v2" },
+      { promptVersion: "resume-analysis-prompts-v1" },
       { schemaVersion: "resume-analysis-schema-v2" },
-      { policyVersion: "resume-analysis-policy-v2" },
+      { policyVersion: "resume-analysis-policy-v1" },
       {
         textProviderStatus: {
           ...status,

@@ -248,8 +248,9 @@ function buildCandidateReason(candidate: ResumeImportFieldCandidate): string {
     case "work_eligibility":
       return "Your resume says this about where you can work. It differs from what you saved, so confirm which one application forms should use.";
     case "narrative":
+      return "Check this story before using it in your resume.";
     case "proof_point":
-      return "Narrative suggestions should be reviewed before they shape resume summaries or proof selection.";
+      return "Check this achievement before saving it for future applications.";
     case "answer_bank":
       return "Reusable screener answers should be confirmed before apply flows reuse them.";
     case "application_identity":
@@ -276,7 +277,9 @@ export function shouldIncludeCandidateInSetupReview(
     case "skill":
       return candidate.target.key === "skills";
     case "search_preferences":
-      return ["targetRoles", "locations"].includes(candidate.target.key);
+      return ["targetRoles", "locations", "workModes"].includes(
+        candidate.target.key,
+      );
     case "work_eligibility":
       return true;
     case "experience":
@@ -316,11 +319,27 @@ export function toReviewDraft(
     label: candidate.label,
     reason: buildCandidateReason(candidate),
     severity: mapCandidateToSeverity(candidate),
-    proposedValue: summarizeValue(
-      isSearchLocationCandidateTarget(candidate.target)
-        ? sanitizeSearchLocationCandidateValue(candidate.value)
-        : candidate.value,
-    ),
+    proposedValue:
+      candidate.target.section === "proof_point" &&
+      candidate.value &&
+      typeof candidate.value === "object" &&
+      !Array.isArray(candidate.value)
+        ? [
+            candidate.value.claim,
+            candidate.value.heroMetric,
+            candidate.value.supportingContext,
+          ]
+            .filter(
+              (value): value is string =>
+                typeof value === "string" && value.length > 0,
+            )
+            .filter((value, index, values) => values.indexOf(value) === index)
+            .join(" · ") || null
+        : summarizeValue(
+            isSearchLocationCandidateTarget(candidate.target)
+              ? sanitizeSearchLocationCandidateValue(candidate.value)
+              : candidate.value,
+          ),
     sourceSnippet: getSourceSnippet(candidate, documentBundle),
     sourceCandidateId: candidate.id,
     sourceRunId: candidate.runId,

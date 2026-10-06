@@ -37,6 +37,7 @@ vi.mock("../job-finder/create-workspace-service", () => ({
 }));
 vi.mock("../job-finder/import-resume", () => ({
   importResumeFromSourcePath: vi.fn(),
+  isDesktopResumeImportActive: () => false,
 }));
 vi.mock("../job-finder/paths", () => ({
   getJobFinderUserDataDirectory: () => path.resolve(".tmp"),
@@ -58,6 +59,7 @@ vi.mock("./assistant-browser-port", () => ({
 import { ResumeExportArtifactSummarySchema } from "@nordri/contracts";
 import type { JobFinderWorkspaceService } from "@nordri/job-finder";
 import { getJobFinderWorkspaceService } from "../job-finder/workspace-service";
+import { getEmbeddedBrowser } from "../browser/embedded-browser";
 import { createAssistantHostPorts } from "./assistant-ports";
 
 let directory: string | null = null;
@@ -243,4 +245,14 @@ describe("assistant approved resume files", () => {
       ports.loadDocumentFile("approved_resume_job_1"),
     ).rejects.toThrow();
   });
+});
+
+it("R3-169 minimizes Browser before app navigation without closing or reloading tabs", async () => {
+  const command = vi.fn(() => Promise.resolve());
+  vi.mocked(getEmbeddedBrowser).mockReturnValue({
+    command,
+  } as unknown as ReturnType<typeof getEmbeddedBrowser>);
+  const ports = createAssistantHostPorts({ browserHost: "embedded" });
+  await ports.prepareAppNavigation?.();
+  expect(command).toHaveBeenCalledExactlyOnceWith({ type: "minimize" });
 });

@@ -81,6 +81,40 @@ const ResumeImportCandidateSetInputSchema = z.object({
   notes: z.array(z.string().trim().min(1)).default([]),
 });
 
+type ResumeImportCandidateSet = z.infer<
+  typeof ResumeImportCandidateSetInputSchema
+>;
+
+/**
+ * A save revises the candidates it names and keeps the rest. Each save used
+ * to replace the whole set, so a model that re-recorded one field (a region,
+ * say) wiped the name, email and phone it had recorded a turn earlier, and
+ * the import finished with an empty Basics section.
+ */
+export function mergeImportCandidateSets(
+  previous: ResumeImportCandidateSet,
+  next: ResumeImportCandidateSet,
+): ResumeImportCandidateSet {
+  const targetOf = (
+    candidate: ResumeImportCandidateSet["candidates"][number],
+  ) =>
+    [
+      candidate.target.section,
+      candidate.target.key,
+      candidate.target.recordId ?? "",
+    ].join("\u0000");
+  const revised = new Set(next.candidates.map(targetOf));
+  return {
+    candidates: [
+      ...previous.candidates.filter(
+        (candidate) => !revised.has(targetOf(candidate)),
+      ),
+      ...next.candidates,
+    ],
+    notes: [...new Set([...previous.notes, ...next.notes])],
+  };
+}
+
 const resumeImportTargetSectionsByStage = {
   identity_summary: ["identity", "contact", "location", "search_preferences"],
   experience: ["experience"],
@@ -878,7 +912,7 @@ export async function runResumeImportStageAgentTask(input: {
     capability: "resume_import",
     systemPrompt: [
       `You are importing the ${input.request.stage} portion of a resume into typed profile candidates.`,
-      "Use the tools to inspect the parsed document blocks and any layout or vision evidence. Populate candidates only from evidence in the document, with exact source block ids, confidence, alternatives, and review notes when ambiguity remains.",
+      "Read the complete resume with read_resume_document and the saved details with read_existing_profile before recording candidates. Each stage needs the contact header, section boundaries and all descriptions, even when parser section hints are wrong. Use layout or vision evidence to resolve wrapped lines. Populate candidates only from evidence in the document, with exact source block ids, confidence, alternatives, and review notes when ambiguity remains.",
       "Resolve ambiguity by inspecting more document evidence before finishing. Do not overwrite the saved profile directly; the reconciliation layer will keep genuinely uncertain candidates available for user review.",
       buildResumeImportStageInstructions(input.request.stage),
     ].join(" "),
@@ -998,7 +1032,7 @@ export async function runResumeImportStageAgentTask(input: {
       {
         name: "record_import_candidates",
         description:
-          "Write or revise the typed candidates extracted for this stage. Every candidate must cite real source block ids from the document.",
+          "Write or revise the typed candidates extracted for this stage. Candidates are kept per target: a candidate for a target you already recorded replaces it, and targets you leave out keep what you recorded before, so you can correct one field without repeating the others. Every candidate must cite real source block ids from the document.",
         inputSchema: ResumeImportCandidateSetInputSchema,
         parameters: jsonObject(
           {
@@ -1078,11 +1112,12 @@ export async function runResumeImportStageAgentTask(input: {
         permission: "draft_write",
         execute(toolInput, context) {
           const parsed = ResumeImportCandidateSetInputSchema.parse(toolInput);
+          const draft = mergeImportCandidateSets(context.draft, parsed);
           return {
-            draft: parsed,
-            summary: `${parsed.candidates.length} import candidate(s) recorded`,
+            draft,
+            summary: `${parsed.candidates.length} import candidate(s) recorded, ${draft.candidates.length} in total`,
             progressMade:
-              JSON.stringify(context.draft) !== JSON.stringify(parsed),
+              JSON.stringify(context.draft) !== JSON.stringify(draft),
           };
         },
       },
@@ -1451,7 +1486,7 @@ export async function runProfileCopilotAgentTask(input: {
       {
         name: "set_work_eligibility_fields",
         description:
-          "Propose work-eligibility facts: authorizedWorkCountries (array of countries or regions such as European Union), requiresVisaSponsorship (boolean), remoteEligible, willingToRelocate, willingToTravel (booleans), preferredRelocationRegions (array), noticePeriodDays (number), availableStartDate, securityClearance. Only facts the person stated or their resume states outright.",
+          "Propose work-eligibility facts: authorizedWorkCountries (array of countries or regions such as European Union), requiresVisaSponsorship (boolean), remoteEligible, willingToRelocate, willingToTravel (booleans), preferredRelocationRegions (array), noticePeriodDays (number), availableStartDate, securityClearance. Only facts the person stated or their resume states outright. A permit limited to study, training or an internship is not authorization to work in that country.",
         inputSchema: WorkEligibilityFieldsInputSchema,
         parameters: jsonObject(
           {

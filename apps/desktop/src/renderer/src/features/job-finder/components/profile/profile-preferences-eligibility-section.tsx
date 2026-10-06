@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { SupportingFactsField } from "./supporting-facts-field";
 import { candidateAnswerKindValues } from "@nordri/contracts";
 import type {
   Control,
@@ -199,6 +200,92 @@ export function ProfilePreferencesEligibilitySection(props: {
             label={PROFILE_WORK_CONSTRAINT_COPY.remoteEligible.label}
             name="eligibility.remoteEligible"
           />
+        </div>
+        <div className="grid gap-3">
+          <h4 className="text-sm font-medium">Limited work permission</h4>
+          <p className="text-xs text-foreground-muted">
+            Save student or other limited permits here. Job Finder checks these
+            limits against each job and leaves uncertain authorization and
+            sponsorship questions for you. Reusable answers do not override
+            these limits.
+          </p>
+          {watch("eligibility.limitedWorkPermissions").map(
+            (permission, index) => (
+              <div className="grid gap-3" key={index}>
+                <label className="grid gap-1 text-sm">
+                  Permit country
+                  <ProfileInput
+                    {...register(
+                      `eligibility.limitedWorkPermissions.${index}.country`,
+                    )}
+                    placeholder="Germany"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm">
+                  Permit limits
+                  <ProfileTextarea
+                    {...register(
+                      `eligibility.limitedWorkPermissions.${index}.conditions`,
+                    )}
+                    placeholder="Student work permission; include hours, dates and other limits you know"
+                  />
+                </label>
+                <Controller
+                  control={profileControl}
+                  name={`eligibility.limitedWorkPermissions.${index}.requiresFutureSponsorship`}
+                  render={({ field }) => (
+                    <label className="grid gap-1 text-sm">
+                      Will you need sponsorship for future work in this country?
+                      <select
+                        className={profileSelectTriggerClassName}
+                        {...field}
+                      >
+                        <option value="">Not set</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </label>
+                  )}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() =>
+                    props.profileForm.setValue(
+                      "eligibility.limitedWorkPermissions",
+                      getValues("eligibility.limitedWorkPermissions").filter(
+                        (_, itemIndex) => itemIndex !== index,
+                      ),
+                      { shouldDirty: true },
+                    )
+                  }
+                >
+                  Remove permit
+                </Button>
+              </div>
+            ),
+          )}
+          <Button
+            disabled={props.busy}
+            type="button"
+            variant="secondary"
+            onClick={() =>
+              props.profileForm.setValue(
+                "eligibility.limitedWorkPermissions",
+                [
+                  ...getValues("eligibility.limitedWorkPermissions"),
+                  {
+                    country: "",
+                    conditions: "",
+                    requiresFutureSponsorship: "",
+                  },
+                ],
+                { shouldDirty: true },
+              )
+            }
+          >
+            Add limited permission
+          </Button>
         </div>
       </article>
 
@@ -474,13 +561,22 @@ export function ProfilePreferencesEligibilitySection(props: {
               return (
                 <ProfileRecordCard
                   id={`answer-record-${entry.id}`}
+                  statusLabel={
+                    watch(`answerBank.customAnswers.${index}.needsConfirmation`)
+                      ? "Needs your confirmation"
+                      : undefined
+                  }
                   key={entry.fieldKey}
                   defaultOpen={index === 0}
                   forceOpenSignal={getAppendedRecordOpenSignal(entry.id)}
                   summary={
-                    watch(`answerBank.customAnswers.${index}.label`) ||
-                    watch(`answerBank.customAnswers.${index}.question`) ||
-                    ""
+                    watch(
+                      `answerBank.customAnswers.${index}.applicationScope.location`,
+                    )
+                      ? `Application location: ${watch(`answerBank.customAnswers.${index}.applicationScope.location`)}`
+                      : watch(`answerBank.customAnswers.${index}.label`) ||
+                        watch(`answerBank.customAnswers.${index}.question`) ||
+                        ""
                   }
                   title={
                     watch(`answerBank.customAnswers.${index}.label`)?.trim() ||
@@ -501,6 +597,29 @@ export function ProfilePreferencesEligibilitySection(props: {
                       Remove
                     </Button>
                   </div>
+                  {watch(
+                    `answerBank.customAnswers.${index}.needsConfirmation`,
+                  ) ? (
+                    <div className="grid gap-2" role="alert">
+                      <p className="text-sm text-(--warning-text)">
+                        Job Finder chose this earlier. Review and confirm it
+                        before it can be reused as your answer.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() =>
+                          props.profileForm.setValue(
+                            `answerBank.customAnswers.${index}.needsConfirmation`,
+                            false,
+                            { shouldDirty: true },
+                          )
+                        }
+                      >
+                        Confirm this is my answer
+                      </Button>
+                    </div>
+                  ) : null}
                   <div className="grid gap-(--gap-content) md:grid-cols-2 md:items-start">
                     <div className="grid min-w-0 content-start gap-(--gap-field) h-full">
                       <FieldLabel htmlFor={buildAnswerFieldId("label")}>
@@ -574,18 +693,15 @@ export function ProfilePreferencesEligibilitySection(props: {
                       />
                     </div>
                     <div className="grid min-w-0 content-start gap-(--gap-field) h-full">
-                      <FieldLabel
-                        htmlFor={buildAnswerFieldId("proof-entry-ids")}
-                      >
-                        Supporting proof IDs
-                      </FieldLabel>
-                      <ProfileTextarea
-                        id={buildAnswerFieldId("proof-entry-ids")}
-                        className="min-h-(--textarea-compact) max-h-(--textarea-compact)"
-                        placeholder="Copy proof bank entry IDs from the Background tab, one per line"
-                        rows={4}
-                        {...register(
-                          `answerBank.customAnswers.${index}.proofEntryIds`,
+                      <Controller
+                        control={profileControl}
+                        name={`answerBank.customAnswers.${index}.proofEntryIds`}
+                        render={({ field }) => (
+                          <SupportingFactsField
+                            facts={watch("proofBank")}
+                            onChange={field.onChange}
+                            value={field.value}
+                          />
                         )}
                       />
                     </div>

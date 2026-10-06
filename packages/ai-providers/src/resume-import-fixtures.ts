@@ -123,71 +123,71 @@ export function createResumeImportFixtureBundle(options: {
   };
 }
 
-export const EBRAR_IMPORTED_TEXT = [
-  "Ebrar Dushullovci",
+export const ELIAN_IMPORTED_TEXT = [
+  "Elian Morava",
   "Address: Prishtina, Kosovo (Home)",
   "ABOUT ME",
   "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
   "WORK EXPERIENCE",
-  "AUTOMATEDPROS – PRISHTINA, KOSOVO",
+  "NORTHLANE – PRISHTINA, KOSOVO",
   "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current",
   "Project Lead (React, Next.js) – QA Management System",
-  "INFOTECH L.L.C – PRISHTINA, KOSOVO",
+  "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO",
   ".NET CONSULTANT – 01/2022 – Current",
   ".NET DEVELOPER – 08/2019 – 01/2022",
-  "BEAUTYQUE – PRISHTINA, KOSOVO",
+  "LUMIQUE – PRISHTINA, KOSOVO",
   "CHIEF EXPERIENCE OFFICER – 11/2021 – 07/2023",
 ].join("\n");
 
-export const EBRAR_IMPORT_FIXTURE_BUNDLE = createResumeImportFixtureBundle({
-  id: "ebrar_fixture_bundle",
+export const ELIAN_IMPORT_FIXTURE_BUNDLE = createResumeImportFixtureBundle({
+  id: "elian_fixture_bundle",
   qualityScore: 0.95,
   pageTexts: [
     [
-      "Ebrar Dushullovci",
+      "Elian Morava",
       "Address: Prishtina, Kosovo (Home)",
       "ABOUT ME",
       "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
       "WORK EXPERIENCE",
-      "AUTOMATEDPROS – PRISHTINA, KOSOVO",
+      "NORTHLANE – PRISHTINA, KOSOVO",
       "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current",
       "Project Lead (React, Next.js) – QA Management System",
     ].join("\n"),
     [
-      "INFOTECH L.L.C – PRISHTINA, KOSOVO",
+      "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO",
       ".NET CONSULTANT – 01/2022 – Current",
       ".NET DEVELOPER – 08/2019 – 01/2022",
-      "BEAUTYQUE – PRISHTINA, KOSOVO",
+      "LUMIQUE – PRISHTINA, KOSOVO",
       "CHIEF EXPERIENCE OFFICER – 11/2021 – 07/2023",
     ].join("\n"),
   ],
   blocks: [
-    createBlock({ id: "b1", pageNumber: 1, readingOrder: 0, text: "Ebrar Dushullovci", kind: "heading", sectionHint: "identity", bbox: { left: 14, top: 811, width: 144, height: 16 }, lineIds: ["l1"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.99 }),
+    createBlock({ id: "b1", pageNumber: 1, readingOrder: 0, text: "Elian Morava", kind: "heading", sectionHint: "identity", bbox: { left: 14, top: 811, width: 144, height: 16 }, lineIds: ["l1"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.99 }),
     createBlock({ id: "b2", pageNumber: 1, readingOrder: 1, text: "Address: Prishtina, Kosovo (Home)", kind: "contact", sectionHint: "contact", bbox: { left: 14, top: 733, width: 162, height: 10 }, lineIds: ["l2"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.98 }),
     createBlock({ id: "b3", pageNumber: 1, readingOrder: 2, text: "ABOUT ME", kind: "heading", sectionHint: "summary", bbox: { left: 28, top: 690, width: 58, height: 11 }, lineIds: ["l3"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.98 }),
     createBlock({ id: "b4", pageNumber: 1, readingOrder: 3, text: "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.", kind: "paragraph", sectionHint: "summary", bbox: { left: 28, top: 665, width: 552, height: 40 }, lineIds: ["l4", "l5"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.97 }),
     createBlock({ id: "b5", pageNumber: 1, readingOrder: 4, text: "WORK EXPERIENCE", kind: "heading", sectionHint: "experience", bbox: { left: 28, top: 323, width: 104, height: 11 }, lineIds: ["l6"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.98 }),
-    createBlock({ id: "b6", pageNumber: 1, readingOrder: 5, text: "AUTOMATEDPROS – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "experience", bbox: { left: 28, top: 296, width: 186, height: 10 }, lineIds: ["l7"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.98 }),
+    createBlock({ id: "b6", pageNumber: 1, readingOrder: 5, text: "NORTHLANE – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "experience", bbox: { left: 28, top: 296, width: 186, height: 10 }, lineIds: ["l7"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.98 }),
     createBlock({ id: "b7", pageNumber: 1, readingOrder: 6, text: "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current", kind: "experience_header", sectionHint: "experience", bbox: { left: 45, top: 258, width: 313, height: 11 }, lineIds: ["l8"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.97 }),
     createBlock({ id: "b8", pageNumber: 1, readingOrder: 7, text: "Project Lead (React, Next.js) – QA Management System", kind: "experience_header", sectionHint: "experience", bbox: { left: 45, top: 87, width: 253, height: 10 }, lineIds: ["l9"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.9 }),
-    createBlock({ id: "b9", pageNumber: 2, readingOrder: 0, text: "INFOTECH L.L.C – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "experience", bbox: { left: 28, top: 740, width: 186, height: 10 }, lineIds: ["l10"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.98 }),
+    createBlock({ id: "b9", pageNumber: 2, readingOrder: 0, text: "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "experience", bbox: { left: 28, top: 740, width: 186, height: 10 }, lineIds: ["l10"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.98 }),
     createBlock({ id: "b10", pageNumber: 2, readingOrder: 1, text: ".NET CONSULTANT – 01/2022 – Current", kind: "experience_header", sectionHint: "experience", bbox: { left: 45, top: 705, width: 250, height: 10 }, lineIds: ["l11"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.97 }),
     createBlock({ id: "b11", pageNumber: 2, readingOrder: 2, text: ".NET DEVELOPER – 08/2019 – 01/2022", kind: "experience_header", sectionHint: "experience", bbox: { left: 45, top: 664, width: 250, height: 10 }, lineIds: ["l12"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.97 }),
-    createBlock({ id: "b12", pageNumber: 2, readingOrder: 3, text: "BEAUTYQUE – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "experience", bbox: { left: 28, top: 624, width: 186, height: 10 }, lineIds: ["l13"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.97 }),
+    createBlock({ id: "b12", pageNumber: 2, readingOrder: 3, text: "LUMIQUE – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "experience", bbox: { left: 28, top: 624, width: 186, height: 10 }, lineIds: ["l13"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.97 }),
     createBlock({ id: "b13", pageNumber: 2, readingOrder: 4, text: "CHIEF EXPERIENCE OFFICER – 11/2021 – 07/2023", kind: "experience_header", sectionHint: "experience", bbox: { left: 45, top: 588, width: 250, height: 10 }, lineIds: ["l14"], parserLineage: ["local_pdf_layout"], readingOrderConfidence: 0.96 }),
   ],
 });
 
-export const AARON_IMPORT_FIXTURE_BUNDLE = createResumeImportFixtureBundle({
-  id: "aaron_fixture_bundle",
+export const OWEN_IMPORT_FIXTURE_BUNDLE = createResumeImportFixtureBundle({
+  id: "owen_fixture_bundle",
   qualityScore: 0.93,
   pageTexts: [
     [
-      "Aaron Murphy",
+      "Owen Mercer",
       "Senior Software Engineer",
       "Tampa, FL",
-      "+1 615-378-5538",
-      "murphyaron12@gmail.com",
+      "+1 555-010-5538",
+      "owen.mercer@example.test",
       "PROFESSIONAL SUMMARY",
       "Experienced Staff Engineer with a focus on leading complex, high-impact initiatives across full-stack systems.",
       "EXPERIENCE",
@@ -196,11 +196,11 @@ export const AARON_IMPORT_FIXTURE_BUNDLE = createResumeImportFixtureBundle({
     ].join("\n"),
   ],
   blocks: [
-    createBlock({ id: "a1", pageNumber: 1, readingOrder: 0, text: "Aaron Murphy", kind: "heading", sectionHint: "identity", bbox: { left: 36, top: 742, width: 143, height: 22 } }),
+    createBlock({ id: "a1", pageNumber: 1, readingOrder: 0, text: "Owen Mercer", kind: "heading", sectionHint: "identity", bbox: { left: 36, top: 742, width: 143, height: 22 } }),
     createBlock({ id: "a2", pageNumber: 1, readingOrder: 1, text: "Senior Software Engineer", kind: "paragraph", sectionHint: "identity", bbox: { left: 36, top: 719, width: 165, height: 15 } }),
     createBlock({ id: "a3", pageNumber: 1, readingOrder: 2, text: "Tampa, FL", kind: "contact", sectionHint: "contact", bbox: { left: 537, top: 755, width: 39, height: 9 } }),
-    createBlock({ id: "a4", pageNumber: 1, readingOrder: 3, text: "+1 615-378-5538", kind: "contact", sectionHint: "contact", bbox: { left: 513, top: 742, width: 63, height: 9 } }),
-    createBlock({ id: "a5", pageNumber: 1, readingOrder: 4, text: "murphyaron12@gmail.com", kind: "contact", sectionHint: "contact", bbox: { left: 476, top: 729, width: 100, height: 9 } }),
+    createBlock({ id: "a4", pageNumber: 1, readingOrder: 3, text: "+1 555-010-5538", kind: "contact", sectionHint: "contact", bbox: { left: 513, top: 742, width: 63, height: 9 } }),
+    createBlock({ id: "a5", pageNumber: 1, readingOrder: 4, text: "owen.mercer@example.test", kind: "contact", sectionHint: "contact", bbox: { left: 476, top: 729, width: 100, height: 9 } }),
     createBlock({ id: "a6", pageNumber: 1, readingOrder: 5, text: "PROFESSIONAL SUMMARY", kind: "heading", sectionHint: "summary", bbox: { left: 35, top: 674, width: 160, height: 12 } }),
     createBlock({ id: "a7", pageNumber: 1, readingOrder: 6, text: "Experienced Staff Engineer with a focus on leading complex, high-impact initiatives across full-stack systems.", kind: "paragraph", sectionHint: "summary", bbox: { left: 35, top: 652, width: 540, height: 24 } }),
     createBlock({ id: "a8", pageNumber: 1, readingOrder: 7, text: "EXPERIENCE", kind: "heading", sectionHint: "experience", bbox: { left: 35, top: 569, width: 79, height: 12 } }),
@@ -210,8 +210,8 @@ export const AARON_IMPORT_FIXTURE_BUNDLE = createResumeImportFixtureBundle({
 });
 
 export const RESUME_IMPORT_BENCHMARK_CASE_FIXTURES: Record<string, ResumeDocumentBundle> = {
-  ebrar_pdf: EBRAR_IMPORT_FIXTURE_BUNDLE,
-  aaron_murphy_pdf: AARON_IMPORT_FIXTURE_BUNDLE,
+  elian_pdf: ELIAN_IMPORT_FIXTURE_BUNDLE,
+  owen_mercer_pdf: OWEN_IMPORT_FIXTURE_BUNDLE,
 };
 
 export function createBenchmarkCaseFromFixture(input: ResumeImportBenchmarkCase): {

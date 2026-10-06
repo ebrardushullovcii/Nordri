@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { app } from "electron";
+import { app, BrowserWindow } from "electron";
 import {
   CandidateAssetSchema,
   type CandidateAsset,
@@ -14,6 +14,8 @@ import {
   type AssistantHostPorts,
 } from "@nordri/job-finder";
 
+import { readUiResumeBatch, stopUiResumeBatch } from "./ui-resume-batch";
+
 import { extractResumeDocument } from "../../adapters/resume-document";
 import {
   approveApplicationResumes,
@@ -24,7 +26,10 @@ import {
 import { getEmbeddedBrowser } from "../browser/embedded-browser";
 import { getCandidateAssetLibrary } from "../job-finder/candidate-asset-library-instance";
 import { getJobFinderRepositoryForWorkspaceService } from "../job-finder/create-workspace-service";
-import { importResumeFromSourcePath } from "../job-finder/import-resume";
+import {
+  importResumeFromSourcePath,
+  isDesktopResumeImportActive,
+} from "../job-finder/import-resume";
 import { getJobFinderUserDataDirectory } from "../job-finder/paths";
 import {
   listJobsNotInProgress,
@@ -210,6 +215,27 @@ export function createAssistantHostPorts(input: {
 }): AssistantHostPorts {
   const library = getCandidateAssetLibrary();
   const ports: AssistantHostPorts = {
+    isResumeImportActive: isDesktopResumeImportActive,
+    async prepareAppNavigation() {
+      if (input.browserHost === "embedded") {
+        await getEmbeddedBrowser().command({ type: "minimize" });
+      }
+    },
+    readResumeBatch: readUiResumeBatch,
+    stopResumeBatch: () => {
+      const batch = stopUiResumeBatch();
+      if (batch) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+            window.webContents.send(
+              "job-finder:assistant:resume-batch-stop",
+              batch.id,
+            );
+          }
+        }
+      }
+      return batch;
+    },
     async startSearch({ searchRequest, targetId }) {
       const service = await getJobFinderWorkspaceService();
       const before = await service.getWorkspaceSnapshot();
@@ -330,7 +356,12 @@ export function createAssistantHostPorts(input: {
             .sort((left, right) =>
               right.updatedAt.localeCompare(left.updatedAt),
             )[0];
-          if (latest?.state === "submitted") sentJobIds.push(jobId);
+          if (
+            latest?.state === "submitted" &&
+            latest.privacyReceipt?.finalSubmitOccurred === true &&
+            latest.privacyReceipt.submissionOutcome?.outcome === "submitted"
+          )
+            sentJobIds.push(jobId);
           else {
             failed.push({
               jobId,
@@ -338,7 +369,8 @@ export function createAssistantHostPorts(input: {
                 latest?.privacyReceipt?.submissionOutcome?.outcome ===
                 "outcome_uncertain"
                   ? "The site did not confirm the application; check it on the employer's page before trying again."
-                  : (latest?.blockerSummary ??
+                  : (latest?.detail ??
+                    latest?.blockerSummary ??
                     "The site did not confirm the application."),
             });
           }
@@ -461,7 +493,13 @@ export function createAssistantHostPorts(input: {
     publishWorkspaceUpdate: () => publishJobFinderWorkspaceUpdate(),
   };
   if (input.browserHost === "embedded") {
-    ports.browser = createAssistantBrowserPort(getEmbeddedBrowser());
+    ports.browser = createAssistantBrowserPort(
+      getEmbeddedBrowser(),
+      async () => {
+        const service = await getJobFinderWorkspaceService();
+        return service.getWorkspaceSnapshot();
+      },
+    );
   }
   return ports;
 }

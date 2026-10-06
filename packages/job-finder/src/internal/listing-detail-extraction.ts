@@ -6,7 +6,8 @@
  * `JobPosting` record as JSON-LD in the initial HTML because search engines
  * require it; that record is the same data a card-only scan never saw
  * (description, pay, location, posting date). When a page has no record, the
- * reader falls back to the visible text of the page and says so.
+ * model reads the page's text instead (ADR 0041); this module only turns that
+ * page into text and never decides what the posting says.
  */
 
 /**
@@ -80,16 +81,17 @@ function looksLikeApplyEntryText(text: string): boolean {
 
 const MAX_HTML_LENGTH = 1_500_000;
 const MAX_DESCRIPTION_LENGTH = 24_000;
-const MAX_PAGE_TEXT_LENGTH = 12_000;
-// Some real small-company listings are concise. The compact allowance below
-// is used only when the page names the exact card title and carries listing
-// cue words; otherwise the original 120-word floor still applies.
-const MIN_PAGE_TEXT_WORDS = 50;
-const MIN_WEAKLY_IDENTIFIED_PAGE_TEXT_WORDS = 120;
+const MAX_PAGE_TEXT_LENGTH = 64_000;
+export const LISTING_PAGE_OMISSION_MARKER =
+  "[Page text excerpt: middle omitted]";
 const MAX_JSON_LD_NODES = 200;
 
 export type ListingDetailExtractionMethod = "json_ld" | "page_text";
 
+/**
+ * What one listing page said. `json_ld` is the page's own structured record;
+ * `page_text` is the model's reading of the page's text (ADR 0041).
+ */
 export interface ExtractedListingDetail {
   method: ListingDetailExtractionMethod;
   title: string | null;
@@ -108,6 +110,12 @@ export interface ExtractedListingDetail {
   validThrough: string | null;
   workModeHints: string[];
   directApplyUrl: string | null;
+  /** The model's reading of the listing's skills and requirements. */
+  keySkills?: string[];
+  responsibilities?: string[];
+  minimumQualifications?: string[];
+  preferredQualifications?: string[];
+  seniority?: string | null;
 }
 
 const LIKELY_MID_WORD_ENDING_PATTERN =
@@ -131,8 +139,8 @@ export interface ExtractListingDetailInput {
 }
 
 /**
- * Extracts the listing body from page HTML. Returns null when the page has
- * neither a JobPosting record nor enough readable text to stand in for one.
+ * Reads the page's own JobPosting record. Returns null when the page publishes
+ * none; the caller then hands the page's text to the model.
  */
 export function extractListingDetailFromHtml(
   input: ExtractListingDetailInput,
@@ -142,12 +150,7 @@ export function extractListingDetailFromHtml(
       ? input.html.slice(0, MAX_HTML_LENGTH)
       : input.html;
 
-  const structured = extractJobPostingFromJsonLd(html, input);
-  if (structured) {
-    return structured;
-  }
-
-  return extractListingDetailFromPageText(html, input);
+  return extractJobPostingFromJsonLd(html, input);
 }
 
 // ---------------------------------------------------------------------------
@@ -533,10 +536,6 @@ function extractJobPostingFromJsonLd(
   }
 
   const { location, workModeHints } = readLocation(node);
-  const combinedHints = [
-    ...workModeHints,
-    ...detectWorkModeHints(`${readString(node.title) ?? ""} ${description}`),
-  ];
 
   return {
     method: "json_ld",
@@ -553,15 +552,51 @@ function extractJobPostingFromJsonLd(
     employmentType: readEmploymentType(node.employmentType),
     postedAt: readIsoDate(node.datePosted),
     validThrough: readIsoDate(node.validThrough),
-    workModeHints: [...new Set(combinedHints)],
-    directApplyUrl:
-      readDirectApplyUrl(node) ?? findApplyLinkInHtml(html, input.url),
+    workModeHints: [...new Set(workModeHints)],
+    directApplyUrl: readDirectApplyUrl(node),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Page text fallback
+// Page text for the model
 // ---------------------------------------------------------------------------
+
+/**
+ * The readable text of a listing page with no JobPosting record, for the
+ * model to read (ADR 0041). This only converts markup to text: scripts and
+ * styles go, all body sections stay available, and the page title and site name lead so the model knows whose page it
+ * is. Deciding what the posting says is the model's job, not this function's.
+ */
+export function listingPageText(html: string): string {
+  const capped =
+    html.length > MAX_HTML_LENGTH ? html.slice(0, MAX_HTML_LENGTH) : html;
+  const stripped = capped
+    .replace(/<script\b[\s\S]*?<\/script\s*>/giu, " ")
+    .replace(/<style\b[\s\S]*?<\/style\s*>/giu, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript\s*>/giu, " ");
+  const content =
+    stripped.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/iu)?.[1] ?? stripped;
+  const title = collapseWhitespace(
+    decodeHtmlEntities(
+      capped.match(/<title\b[^>]*>([\s\S]*?)<\/title>/iu)?.[1] ?? "",
+    ),
+  );
+  const siteName = readMetaContent(capped, "og:site_name");
+  const text = [
+    title ? `Page title: ${title}` : null,
+    siteName ? `Site name: ${siteName}` : null,
+    htmlToPlainText(content),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  if (text.length <= MAX_PAGE_TEXT_LENGTH) return text;
+  const marker = `\n\n${LISTING_PAGE_OMISSION_MARKER}\n\n`;
+  const available = MAX_PAGE_TEXT_LENGTH - marker.length;
+  const head = Math.floor((available * 2) / 3);
+  return (
+    text.slice(0, head) + marker + text.slice(text.length - (available - head))
+  );
+}
 
 function readMetaContent(html: string, property: string): string | null {
   const escaped = property.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -585,182 +620,6 @@ function readMetaContent(html: string, property: string): string | null {
     }
   }
   return null;
-}
-
-const LISTING_BODY_SIGNAL =
-  /\b(responsibilit|requirement|qualification|what you.ll do|what you will do|about (?:the|this) role|about you|who you are|experience|skills|benefits|compensation|salary)\b/iu;
-
-/**
- * Pages without `<main>`/`<article>` landmarks put the site's menus ahead of
- * the posting. When the card's title appears as its own line, the body starts
- * there; everything before it is chrome (menu items, account links, language
- * switches) that would otherwise lead the description.
- */
-function trimLeadingChromeBeforeTitle(
-  text: string,
-  expectedTitle: string | null | undefined,
-): string {
-  if (!expectedTitle) {
-    return text;
-  }
-  const lines = text.split("\n");
-  const titleLineIndex = lines.findIndex((line) =>
-    lineNamesTitle(line, expectedTitle),
-  );
-  // Only trim when the title sits past a stretch of short lines: a body that
-  // already starts with the posting stays as it is.
-  if (titleLineIndex < 3) {
-    return text;
-  }
-  const preceding = lines
-    .slice(0, titleLineIndex)
-    .filter((line) => line.trim());
-  const shortShare =
-    preceding.filter((line) => line.trim().split(/\s+/u).length <= 4).length /
-    Math.max(1, preceding.length);
-  return shortShare >= 0.7 ? lines.slice(titleLineIndex).join("\n") : text;
-}
-
-/**
- * Whether one line of page text is the card's title: the same words, or the
- * title with a suffix such as "(Remote)". A short menu item that happens to
- * be a substring of the title ("EN", "IT") is not.
- */
-function lineNamesTitle(
-  line: string,
-  expectedTitle: string | null | undefined,
-): boolean {
-  if (!expectedTitle) {
-    return false;
-  }
-  const normalize = (value: string) =>
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9\u00c0-\u024f]+/gu, " ")
-      .trim();
-  const candidate = normalize(line);
-  const title = normalize(expectedTitle);
-  if (!candidate || !title || candidate.length > 160) {
-    return false;
-  }
-  if (candidate === title || candidate.includes(title)) {
-    return true;
-  }
-  // The card may carry a suffix the page drops ("Zhvillues Softueri / IT"
-  // on the card, "Zhvillues Softueri" as the heading).
-  return title.includes(candidate) && candidate.length >= title.length * 0.6;
-}
-
-/** Enough body to stand in for a posting when it carries no English cue words. */
-const MIN_UNCUED_PAGE_TEXT_WORDS = 200;
-
-function extractListingDetailFromPageText(
-  html: string,
-  input: ExtractListingDetailInput,
-): ExtractedListingDetail | null {
-  const bodyHtml = startAtTitleHeading(
-    selectMainContentHtml(html),
-    input.expectedTitle,
-  );
-  const fullText = trimLeadingChromeBeforeTitle(
-    htmlToPlainText(bodyHtml),
-    input.expectedTitle,
-  );
-  const text = truncateText(fullText, MAX_PAGE_TEXT_LENGTH);
-  const wordCount = text.split(/\s+/u).filter(Boolean).length;
-  if (wordCount < MIN_PAGE_TEXT_WORDS) {
-    return null;
-  }
-  // The cue words are English. A posting in another language still reads as
-  // the listing when it is long enough and names the job the card promised.
-  const titleNamed =
-    Boolean(input.expectedTitle) &&
-    text.split("\n").some((line) => lineNamesTitle(line, input.expectedTitle));
-  if (!titleNamed && wordCount < MIN_WEAKLY_IDENTIFIED_PAGE_TEXT_WORDS) {
-    return null;
-  }
-  if (
-    !LISTING_BODY_SIGNAL.test(text) &&
-    !(titleNamed && wordCount >= MIN_UNCUED_PAGE_TEXT_WORDS)
-  ) {
-    return null;
-  }
-
-  const title =
-    readMetaContent(html, "og:title") ??
-    (html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/iu)?.[1]
-      ? collapseWhitespace(
-          decodeHtmlEntities(
-            html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/iu)?.[1] ?? "",
-          ),
-        )
-      : null);
-
-  return {
-    method: "page_text",
-    title:
-      title && scoreTitleMatch(title, input.expectedTitle) > 0 ? title : null,
-    company: null,
-    location: null,
-    description: text,
-    descriptionSourceLength: fullText.length,
-    descriptionLikelyTruncated: isLikelyTruncatedDescription(
-      text,
-      fullText.length,
-    ),
-    salaryText: null,
-    employmentType: null,
-    postedAt: null,
-    validThrough: null,
-    workModeHints: detectWorkModeHints(text),
-    directApplyUrl: findApplyLinkInHtml(html, input.url),
-  };
-}
-
-/**
- * A page whose main content heads the posting with an `<h1>` naming the job
- * starts the listing there. What sits above that heading inside the content
- * (a banner, breadcrumbs, a "Company · Place · Posted" line) is page chrome;
- * those facts are read into their own fields, not the listing text.
- */
-function startAtTitleHeading(
-  contentHtml: string,
-  expectedTitle: string | null | undefined,
-): string {
-  if (!expectedTitle) {
-    return contentHtml;
-  }
-  const heading = contentHtml.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/iu);
-  if (!heading || heading.index === undefined || heading.index === 0) {
-    return contentHtml;
-  }
-  const headingText = collapseWhitespace(
-    decodeHtmlEntities(heading[1]?.replace(/<[^>]+>/gu, " ") ?? ""),
-  );
-  return lineNamesTitle(headingText, expectedTitle)
-    ? contentHtml.slice(heading.index)
-    : contentHtml;
-}
-
-function selectMainContentHtml(html: string): string {
-  const stripped = html
-    .replace(/<script\b[\s\S]*?<\/script\s*>/giu, " ")
-    .replace(/<style\b[\s\S]*?<\/style\s*>/giu, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript\s*>/giu, " ")
-    .replace(
-      /<(?:nav|header|footer|aside)\b[\s\S]*?<\/(?:nav|header|footer|aside)\s*>/giu,
-      " ",
-    );
-  for (const tag of ["main", "article"]) {
-    const match = stripped.match(
-      new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}\\s*>`, "iu"),
-    );
-    if (match?.[1] && match[1].length > 400) {
-      return match[1];
-    }
-  }
-  const body = stripped.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/iu);
-  return body?.[1] ?? stripped;
 }
 
 // ---------------------------------------------------------------------------
@@ -1011,17 +870,39 @@ function truncateText(value: string, maxLength: number): string {
   return `${cut.slice(0, lastBreak > maxLength * 0.6 ? lastBreak : maxLength).trimEnd()}…`;
 }
 
-function detectWorkModeHints(text: string): string[] {
-  const normalized = text.toLowerCase();
-  const hints: string[] = [];
-  if (/\bremote\b|work\s+from\s+home/u.test(normalized)) {
-    hints.push("remote");
+/** Link labels and destinations are page data; the model selects the route. */
+export function listingPageLinks(
+  html: string,
+  baseUrl: string,
+): Array<{ label: string; url: string }> {
+  const links: Array<{ label: string; url: string }> = [];
+  const seen = new Set<string>();
+  ANCHOR_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while (links.length < 150 && (match = ANCHOR_PATTERN.exec(html)) !== null) {
+    const attributes = match[1] ?? "";
+    const href = HREF_PATTERN.exec(attributes)?.[1];
+    if (!href || decodeHtmlEntities(href).trim().startsWith("#")) continue;
+    try {
+      const url = new URL(decodeHtmlEntities(href), baseUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      if (
+        /\.(?:avif|gif|ico|jpe?g|png|svg|webp|css|js|mjs|woff2?|ttf|eot|mp[34]|webm)(?:$)/iu.test(
+          url.pathname,
+        )
+      )
+        continue;
+      if (seen.has(url.toString())) continue;
+      seen.add(url.toString());
+      const label =
+        collapseWhitespace(htmlToPlainText(match[2] ?? "")) ||
+        collapseWhitespace(
+          decodeHtmlEntities(ARIA_LABEL_PATTERN.exec(attributes)?.[1] ?? ""),
+        );
+      links.push({ label, url: url.toString() });
+    } catch {
+      /* An invalid destination cannot be handed to the model. */
+    }
   }
-  if (/\bhybrid\b/u.test(normalized)) {
-    hints.push("hybrid");
-  }
-  if (/\bon[- ]?site\b|\bin[- ]office\b|\bin\s+office\b/u.test(normalized)) {
-    hints.push("onsite");
-  }
-  return hints;
+  return links;
 }

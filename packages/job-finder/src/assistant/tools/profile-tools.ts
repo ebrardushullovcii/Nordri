@@ -1,3 +1,7 @@
+import { assertPersonAnswerAuthority } from "../person-answer-authority";
+import { readAssistantWorkState } from "../work-state";
+import { profileProposalPreview } from "../proposal-preview";
+import { isResumeImportRunInProgress } from "@nordri/contracts";
 import {
   NonEmptyStringSchema,
   ProfileCopilotPatchOperationSchema,
@@ -44,6 +48,8 @@ export const PROFILE_EDITING_RULES = [
   "To merge two roles, update the card you keep with the combined dates and every bullet from both, then remove the other card by id, in one edit_profile call.",
   "To split one role in two, update the existing card to the earlier title and dates and add one new card for the later one; each bullet ends up on exactly one card.",
   "To reorder skills, target roles or locations send the whole list in the new order with replace_profile_list_fields; to take entries out use remove_profile_list_entries with the exact entries.",
+  "When setting a name, include fullName, firstName and lastName (and middleName when supplied) in replace_identity_fields. Basics displays firstName and lastName; fullName alone is not a visible saved name. Use the person's stated name parts; ask only if ambiguous.",
+  "Spoken languages live in Profile > Background (a tab, not a section to scroll to). Use upsert_language_record with record.language and proficiency, then read_profile background to verify the saved list. Import success does not prove every collection was saved: read_document and compare work history, education, skills, links and spoken languages with read_profile; add missing facts from the supplied resume before declaring the import complete.",
   "The professional summary shown in Basics is replace_professional_summary_fields with fullSummary. Headline, contact details and location are replace_identity_fields.",
   "Work eligibility (countries, sponsorship, remote eligibility, relocation, notice period) is replace_work_eligibility_fields; record only what the person said or the resume states.",
   "When the person asks you to remember application answers, save the explicit facts with edit_profile before starting applications, then verify the saved answers with read_profile background. Facts with no dedicated field, such as street address and postcode, use upsert_reusable_answer with record fields kind (other), label, question and answer; reuse an existing answer's id when updating it. currentLocation is the city/region/country, never a street address or postcode. record_instruction records application authorization, not saved answer facts, so it cannot justify saying an address or answer was remembered. Save answers for later only when asked, and never guess missing facts.",
@@ -52,7 +58,7 @@ export const PROFILE_EDITING_RULES = [
   "Setup readiness comes from the setup data returned by read_profile and edit_profile. Before saying setup is finished, check its blockers and required review items. Fill a missing headline from the person's stated target focus when setting up their profile; do not invent past experience. Tell them any remaining required step plainly; a phone number is not required when an email is saved. When the person asks to finish a ready setup, call finish_profile_setup; it saves completion without starting a search.",
   "For setup eligibility, ask only for setup.missingWorkEligibilityAnswers: where the person is legally authorized to work and whether employer visa sponsorship is needed. Existing explicit saved answers count; never ask for an answered item again. Relocation, notice period, availability, remote eligibility and work-mode preferences are optional and must never be described as required setup answers.",
   "For a scanned resume, read_profile section review returns the visual extraction's values and evidence for both saved and pending details, even when read_document has no text. Inspect those results before saying the scan is unreadable. Zero pending suggestions means none needs review; inspect the current import outcome counts and saved profile before reporting what was extracted. Use resolve_import_suggestion for explicit authorized, unambiguous confirmations; leave conflicts or uncertain values for the person rather than accepting every scan suggestion automatically.",
-  "Resume import supports PDF, DOCX and TXT, including scanned PDFs through visual extraction. Standalone PNG/JPG images are not supported resume imports. For an unsupported or empty import, ask for a supported file or pasted text, not another photo.",
+  "Resume import supports PDF, DOCX, TXT and Markdown. Scanned image PDFs have no readable text; visual extraction may read them when available but is not guaranteed. Standalone PNG/JPG images are not supported resume imports. For an unsupported or empty import, ask for a supported file or pasted text, not another photo.",
   'Exact shapes (field replacements take a value object of only the fields that change; set_resume_approach takes a scalar string): {"operation":"replace_identity_fields","value":{"headline":"Staff designer"}}; {"operation":"replace_profile_list_fields","value":{"skills":["Figma","Accessibility"]}} (send the whole new list); {"operation":"replace_profile_list_fields","value":{"targetRoles":["Frontend Engineer","Platform Engineer"]}}; {"operation":"remove_profile_list_entries","field":"skills","values":["Sketch"]}; {"operation":"replace_work_eligibility_fields","value":{"requiresVisaSponsorship":false}}; {"operation":"replace_professional_summary_fields","value":{"fullSummary":"…"}}; {"operation":"set_resume_approach","value":"aggressive"}; {"operation":"upsert_reusable_answer","record":{"kind":"other","label":"Street address","question":"What is your street address?","answer":"14 Fiction Lane"}}; {"operation":"upsert_experience_record","record":{"id":"<card id>","endDate":"2024-06","isCurrent":false}}; {"operation":"remove_experience_record","recordId":"<card id>"}.',
 ].join(" ");
 
@@ -519,18 +525,22 @@ export const readProfileTool = defineTool({
       ? `Reading your profile (${argText(input.section)})`
       : "Reading your profile",
   effect: "read",
-  async execute(input, { service, session }) {
+  async execute(input, { service, session, ports }) {
     const snapshot = await service.getWorkspaceSnapshot();
+    const work = readAssistantWorkState(ports, snapshot);
     const { profile, searchPreferences } = snapshot;
     const pendingReview = snapshot.profileSetupState.reviewItems.filter(
       (item) => item.status === "pending",
     );
-    const data: Record<string, unknown> = { setup: setupReadiness(snapshot) };
+    const data: Record<string, unknown> = {
+      setup: setupReadiness(snapshot),
+      resumeImport: work.resumeImport,
+    };
     if (input.section === "review" || input.section === "all") {
       const importState = await service.getResumeImportState();
-      const currentRun = importState.resumeImportRuns
-        .filter((run) => run.sourceResumeId === profile.baseResume.id)
-        .sort((left, right) =>
+      const currentRun =
+        snapshot.latestResumeImportRun ??
+        [...importState.resumeImportRuns].sort((left, right) =>
           right.startedAt.localeCompare(left.startedAt),
         )[0];
       const runCandidates = importState.resumeImportFieldCandidates.filter(
@@ -545,9 +555,10 @@ export const readProfileTool = defineTool({
             sourceResumeId: currentRun.sourceResumeId,
             sourceFileName: currentRun.sourceResumeFileName,
             status: currentRun.status,
-            isStillImporting: importState.activeVisionRunIds.includes(
-              currentRun.id,
-            ),
+            isStillImporting:
+              work.resumeImport.active ||
+              importState.activeVisionRunIds.includes(currentRun.id) ||
+              isResumeImportRunInProgress(currentRun),
             totalDetailCount: runCandidates.length,
             savedDetailCount: runCandidates.filter(
               (candidate) => candidate.resolution === "auto_applied",
@@ -766,19 +777,76 @@ export function fieldsTouchedByOperation(
 function parseOperations(
   raw: readonly unknown[],
   profile: CandidateProfile,
+  searchPreferences: JobSearchPreferences,
 ): ProfileCopilotPatchOperation[] {
   const operations: ProfileCopilotPatchOperation[] = [];
   const problems: string[] = [];
+  let discovery = searchPreferences.discovery;
   raw.forEach((entry, index) => {
     const unknownFields = unknownProfileFields(
       ProfileCopilotPatchOperationSchema,
       entry,
       `operations[${index}]`,
     );
-    const parsed = ProfileCopilotPatchOperationSchema.safeParse(entry);
+    // Merge before schema defaults can turn an omitted source list into [].
+    let candidate = entry;
+    if (
+      entry &&
+      typeof entry === "object" &&
+      "operation" in entry &&
+      entry.operation === "replace_search_preferences_fields" &&
+      "value" in entry &&
+      entry.value &&
+      typeof entry.value === "object" &&
+      "discovery" in entry.value &&
+      entry.value.discovery &&
+      typeof entry.value.discovery === "object" &&
+      !Array.isArray(entry.value.discovery)
+    ) {
+      if (
+        unknownFields.length === 0 &&
+        Object.hasOwn(entry.value.discovery, "targets")
+      ) {
+        problems.push(
+          "Source lists cannot be replaced through edit_profile. Use update_sources to add or enable/disable only the requested sources; omit discovery.targets here.",
+        );
+        return;
+      }
+      candidate = {
+        ...entry,
+        value: {
+          ...entry.value,
+          discovery: {
+            ...discovery,
+            ...entry.value.discovery,
+          },
+        },
+      };
+    }
+    const parsed = ProfileCopilotPatchOperationSchema.safeParse(candidate);
+    if (
+      parsed.success &&
+      parsed.data.operation === "replace_identity_fields" &&
+      parsed.data.value.fullName &&
+      (parsed.data.value.fullName !== profile.fullName || !profile.firstName) &&
+      (parsed.data.value.firstName === undefined ||
+        parsed.data.value.lastName === undefined)
+    ) {
+      problems.push(
+        "A name change must include firstName and, when present, lastName alongside fullName so Basics shows the saved name. Use the person's stated name; do not guess ambiguous name parts.",
+      );
+      return;
+    }
     if (unknownFields.length > 0) problems.push(...unknownFields);
-    else if (parsed.success) operations.push(parsed.data);
-    else
+    else if (parsed.success) {
+      operations.push(parsed.data);
+      if (
+        parsed.data.operation === "replace_search_preferences_fields" &&
+        parsed.data.value.discovery
+      ) {
+        discovery = parsed.data.value.discovery;
+      }
+    } else
       problems.push(`operations[${index}]: ${describeZodIssues(parsed.error)}`);
   });
   if (problems.length > 0) {
@@ -800,11 +868,6 @@ function parseOperations(
     );
   }
   return operations;
-}
-
-function describeOperation(operation: ProfileCopilotPatchOperation): string {
-  const fields = fieldsTouchedByOperation(operation);
-  return `${operation.operation.replaceAll("_", " ")}${fields.length ? ` (${fields.join(", ")})` : ""}`;
 }
 
 async function recordEditChanges(
@@ -872,7 +935,11 @@ export const editProfileTool = defineTool({
   async execute(input, context) {
     const { service, session } = context;
     const snapshot = await service.getWorkspaceSnapshot();
-    const operations = parseOperations(input.operations, snapshot.profile);
+    const operations = parseOperations(
+      input.operations,
+      snapshot.profile,
+      snapshot.searchPreferences,
+    );
 
     const editor = session.context?.editor;
     if (editor?.editor === "profile" && editor.dirtyFields.length > 0) {
@@ -898,7 +965,7 @@ export const editProfileTool = defineTool({
         summary: input.summary,
         items: operations.map((operation, index) => ({
           id: `item_${index + 1}`,
-          label: describeOperation(operation),
+          ...profileProposalPreview(operation, snapshot),
           payload: operation,
         })),
         baseRevision: snapshot.generatedAt,
@@ -910,13 +977,45 @@ export const editProfileTool = defineTool({
       };
     }
 
+    const savedAnswers = operations.flatMap((operation) => {
+      if (operation.operation === "upsert_reusable_answer") {
+        const existing = snapshot.profile.answerBank.customAnswers.find(
+          (answer) => answer.id === operation.record.id,
+        );
+        if (
+          operation.record.answer === undefined ||
+          existing?.answer === operation.record.answer
+        )
+          return [];
+        const question =
+          operation.record.question ??
+          operation.record.label ??
+          existing?.question ??
+          existing?.label;
+        const answer = operation.record.answer ?? existing?.answer;
+        return question && answer ? [{ question, answer }] : [];
+      }
+      if (operation.operation === "replace_answer_bank_fields")
+        return Object.entries(operation.value).flatMap(([question, answer]) =>
+          typeof answer === "string" && answer.trim()
+            ? [{ question, answer }]
+            : [],
+        );
+      return [];
+    });
+    if (savedAnswers.length)
+      await assertPersonAnswerAuthority(session, {
+        answers: savedAnswers,
+        saveForFuture: true,
+      });
     session.assertCurrent();
     const result = await service.applyAssistantProfileOperations({
       operations,
       summary: input.summary,
       messageId: session.sourceMessage?.id ?? null,
     });
-    const setup = setupReadiness(await service.getWorkspaceSnapshot());
+    const savedSnapshot = await service.getWorkspaceSnapshot();
+    const setup = setupReadiness(savedSnapshot);
     const recorded = await recordEditChanges(
       context,
       result.changes,
@@ -939,6 +1038,11 @@ export const editProfileTool = defineTool({
       data: {
         receiptId: recorded.receiptIds[0],
         changedFields: recorded.fields,
+        savedIdentity: basics(savedSnapshot.profile),
+        savedLanguages: savedSnapshot.profile.spokenLanguages,
+        savedSearchPreferences: preferences(savedSnapshot.searchPreferences),
+        savedSourceCount:
+          savedSnapshot.searchPreferences.discovery.targets.length,
         invalidatedApprovedResumeJobIds: result.invalidatedApprovedResumeJobIds,
         setup,
       },
@@ -997,7 +1101,12 @@ export async function undoReceipt(
       .map((entry) => ({ ...entry, path: entry.path.slice(1) }));
   let undone: string[] = [];
   let conflicts: string[] = [];
-  if (receipt.target === "resume_draft") {
+  if (receipt.target === "search_plan") {
+    const { undoSearchPlanChange } = await import("./search-plan-tools");
+    const result = await undoSearchPlanChange(context, receipt);
+    undone = result.undoneLabels;
+    conflicts = result.conflictLabels;
+  } else if (receipt.target === "resume_draft") {
     const result = await service.undoAssistantResumeChange({
       jobId: receipt.targetId ?? "",
       entries: receipt.entries,
@@ -1115,7 +1224,7 @@ export const readDocumentTool = defineTool({
   name: "read_document",
   group: "files",
   description:
-    "Reads the text of one of the person's files by id (bounded). Resume import supports PDF, DOCX and TXT. A scanned PDF may have no text but have visual extraction evidence available in read_profile section review. Standalone PNG/JPG images are not supported resume imports; recommend a supported file or pasted text when unsupported or empty.",
+    "Reads the text of one of the person's files by id (bounded). Resume import supports PDF, DOCX, TXT and Markdown. Scanned image PDFs have no readable text; visual extraction may be available in read_profile section review, but is not guaranteed. Standalone PNG/JPG images are not supported resume imports; recommend a text-based file, pasted text or manual entry when unreadable.",
   parameters: json.object({ documentId: json.string() }, ["documentId"]),
   input: z.object({ documentId: Id }),
   label: () => "Reading a file",
@@ -1125,7 +1234,7 @@ export const readDocumentTool = defineTool({
     if (text === null) {
       throw new AssistantToolError(
         "not_found",
-        "That file has no readable text. For an imported scanned PDF, inspect read_profile section review for extracted values and visual evidence. Resume import supports PDF, DOCX and TXT; standalone PNG/JPG images are unsupported. If no usable extraction exists, use a supported file or pasted text.",
+        "That file has no readable text. For an imported scanned PDF, inspect read_profile section review for extracted values and visual evidence. Resume import supports PDF, DOCX, TXT and Markdown; standalone PNG/JPG images are unsupported. If no usable extraction exists, use a supported file or pasted text.",
       );
     }
     return {
@@ -1139,7 +1248,7 @@ export const importResumeTool = defineTool({
   name: "import_resume",
   group: "files",
   description:
-    "Imports a PDF, DOCX or TXT file by id as the person's resume: its details fill the profile, with suggestions left for review. Scanned PDFs use visual extraction; standalone PNG/JPG images are unsupported resume imports. Empty or unsupported imports need a supported file or pasted text. Only when the person asks to use the file for their profile.",
+    "Imports a PDF, DOCX, TXT or Markdown file by id as the person's resume: usable details fill the profile, with suggestions left for review. Scanned image PDFs have no readable text; visual extraction may read them when available, but success is not guaranteed. Check the result before claiming anything was extracted. Standalone PNG/JPG images are unsupported resume imports. Empty or unsupported imports need a text-based file, pasted text or manual entry. Only when the person asks to use the file for their profile.",
   parameters: json.object({ documentId: json.string() }, ["documentId"]),
   input: z.object({ documentId: Id }),
   label: () => "Importing the resume into your profile",
@@ -1194,6 +1303,16 @@ export const importResumeTool = defineTool({
         outcome: "completed",
         savedDetailCount: saved,
         reviewSuggestionCount: review,
+        savedIdentity: basics(snapshot.profile),
+        savedCollections: {
+          experiences: snapshot.profile.experiences.length,
+          education: snapshot.profile.education.length,
+          skills: snapshot.profile.skills.length,
+          links: snapshot.profile.links.length,
+          spokenLanguages: snapshot.profile.spokenLanguages,
+        },
+        completenessNote:
+          "These are stored facts. Compare the supplied document with read_profile, add any missing languages or other supported records with edit_profile, and read back before claiming all details were imported.",
       },
     };
   },

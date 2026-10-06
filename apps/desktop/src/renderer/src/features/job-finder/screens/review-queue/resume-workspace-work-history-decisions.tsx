@@ -189,7 +189,13 @@ export function ResumeWorkHistoryDecisions(
   return (
     <section
       aria-labelledby="resume-work-history-decisions-heading"
-      className="grid min-w-0 grid-cols-1 gap-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-2.5 text-(length:--text-small) leading-5 text-(--warning-text)"
+      // Amber only while a decision is still open; once every hidden role is
+      // decided it is a plain record (ADR 0042).
+      className={
+        unresolvedCount > 0
+          ? "grid min-w-0 grid-cols-1 gap-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-2.5 text-(length:--text-small) leading-5 text-(--warning-text)"
+          : "grid min-w-0 grid-cols-1 gap-2 rounded-(--radius-field) border border-(--surface-panel-border) p-2.5 text-(length:--text-small) leading-5 text-foreground"
+      }
       data-resume-work-history-decisions
       tabIndex={-1}
     >

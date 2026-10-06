@@ -63,8 +63,21 @@ import {
 } from "./model-request-transport";
 import {
   compactOpenAiCompatibleUserPayload,
+  FullFitEvidenceBudgetError,
   type OpenAiCompatibleJsonOperation,
 } from "./openai-compatible-request-compaction";
+import {
+  buildFitEvidenceInstructions,
+  buildJobFitAssessmentPayload,
+  buildJobFitJudgingPayload,
+  buildJobFitJudgingPrompt,
+  normalizeJobFitJudgments,
+} from "./openai-compatible-fit";
+import {
+  buildResumeClaimCheckPayload,
+  buildResumeClaimCheckPrompt,
+  normalizeResumeClaimChecks,
+} from "./openai-compatible-resume-claims";
 import {
   buildJobsExtractionPrompt,
   normalizeExtractedJobs,
@@ -74,7 +87,6 @@ import {
   extractOpenAiCompatibleResumeImportStage,
 } from "./openai-compatible-resume-import";
 import type { ResumeImportExtractionStage } from "./resume-import";
-import { supplementExperienceStageCandidates } from "./resume-import-stage-supplement";
 import { createBrowserVisualAnalysisProviderFromEnvironment } from "./browser-visual-analysis";
 import {
   runProfileCopilotAgentTask,
@@ -158,7 +170,7 @@ function buildResumeRewriteProposalPrompt(
         `Strategy provenance: ${strategy.effectiveSource}; reason: ${strategy.effectiveReason}`,
         `Use the ${strategy.headlinePolicy} headline policy, ${strategy.skillsPolicy} skills policy, and ${strategy.coveragePolicy} coverage policy.`,
         `The selected base resume document is ${strategy.baseResumeDocumentId}; do not invent facts outside the supplied grounding evidence.`,
-        `Evidence boundaries: exact claims ${strategy.evidenceBoundaries.allowExactClaims ? "allowed" : "not allowed"}; paraphrased claims ${strategy.evidenceBoundaries.allowParaphrasedClaims ? "allowed" : "not allowed"}; at most ${strategy.evidenceBoundaries.maxEvidenceRefsPerBullet} evidence references per bullet. The deterministic verifier remains authoritative before approval.`,
+        `Evidence boundaries: exact claims ${strategy.evidenceBoundaries.allowExactClaims ? "allowed" : "not allowed"}; paraphrased claims ${strategy.evidenceBoundaries.allowParaphrasedClaims ? "allowed" : "not allowed"}; at most ${strategy.evidenceBoundaries.maxEvidenceRefsPerBullet} evidence references per bullet. Each line is fact-checked against the candidate's evidence before approval.`,
       ]
     : [];
 
@@ -174,15 +186,19 @@ function buildResumeRewriteProposalPrompt(
   return [
     "You propose only evidence-linked prose improvements for a tailored resume; the application deterministically owns the complete resume, identity metadata, chronology, coverage, skills, and rendering.",
     returnGuidance,
-    'Use this sparse shape: {"summary":{"text":"...","evidenceRefs":["..."]},"experienceEntries":[{"profileRecordId":"...","summary":{"text":"...","evidenceRefs":["..."]},"bullets":[{"text":"...","evidenceRefs":["..."],"inferred":true}]}],"projectEntries":[{"profileRecordId":"...","summary":{"text":"...","evidenceRefs":["..."]},"outcome":{"text":"...","evidenceRefs":["..."]},"bullets":[{"text":"...","evidenceRefs":["..."]}]}]}. Omit every unchanged or unused field and entry.',
+    'When targetLanguage is supplied, write the resume in that language in this writing pass. When it is "the language the listing is written in", determine it from the actual listing, following the source resume only if the listing language cannot be determined. Include languagePresentation: {"language":"the language actually written","listingLanguage":"the language of the actual posting, or null if unknown","translations":[{"id":"exact languageFields id","text":"final text"}]}. Translations are sparse display edits for fields that need translation: headings, headline, roles, skills, dates, credentials, and retained source prose. Omit translations for unchanged fields and for prose already written in the target language by your summary, experienceEntries or projectEntries proposal. Keep proper names, every source fact and qualifier. When all displayed fields already use the target language, return an empty translations array; do not reword the resume to translate it into the same language. The preview supplies the assembled languageFields; use those exact IDs to finish any source fields still in another language.',
+    'Use this sparse shape: {"summary":{"text":"...","evidenceRefs":["..."]},"experienceEntries":[{"profileRecordId":"...","summary":{"text":"...","evidenceRefs":["..."]},"bullets":[{"text":"...","evidenceRefs":["..."],"inferred":true,"sourceAchievementIds":["experience:record:achievement:0"]}]}],"projectEntries":[{"profileRecordId":"...","summary":{"text":"...","evidenceRefs":["..."]},"outcome":{"text":"...","evidenceRefs":["..."]},"bullets":[{"text":"...","evidenceRefs":["..."]}]}]}. Omit every unchanged or unused field and entry.',
     "Every proposed text must cite exact IDs from groundingEvidence.items. Experience and project proposals may cite items with the same profileRecordId; in aggressive mode they may additionally cite profile-scope items (for example profile:skills, profile:skillGroup:coreSkills, profile:summary) to anchor stack- and domain-aware wording.",
     "Outside aggressive mode, use only claims, numbers, technologies, scope, and outcomes stated in the cited evidence. In every mode, never add dates, titles, employers, credentials, seniority, causality, or absolutes, and never add leadership the cited evidence does not support.",
     "Write for the exact target job. Make the candidate's supported match obvious in the opening lines, and prioritize the job's most important supported skills and accomplishments over generic career description.",
+    "Keep every distinct source fact, including qualifications and their years, skill proficiency and learning limits, seasonal or partial dates and quantified results. Never replace a source achievement with generic wording that loses its number or outcome. A missing employer does not erase a freelance role or internship; retain the available facts without guessing the missing ones.",
+    "Light edits preserve the original summary when rewriting would repeat terms or blur the meaning. Keep every stated skill level and limit, including basic or still learning, seasonal or partial dates, credential years and renewal dates, and quantified results with their exact numbers.",
+    "For each experience bullet, return sourceAchievementIds with the exact experience:<profileRecordId>:achievement:<index> IDs of every source achievement it fully restates, including translations. Keep evidenceRefs separately for supporting evidence. sourceAchievementIds declare coverage of the whole source fact, not just inspiration: retain its numbers and qualifiers. Use broader summary or profile references for supporting context only. Restate each source achievement once, combining IDs when one bullet covers several. Any source achievement not listed in sourceAchievementIds is retained by the assembler and must be translated through its languageFields ID. Translate generic credential descriptions such as First aid; preserve official credential names. Keep every language name and proficiency. Each achievement and qualification appears once. Merge duplicate or translated duplicate statements while retaining every distinct fact. Do not repeat a degree heading in its description. Summaries lead with supported results and relevant experience in a short paragraph; omit generic filler.",
     "Use concise accomplishment statements: action, specific work, and outcome. Keep distinctive evidence terms and exact metrics unchanged. Do not repeat the same claim or metric in multiple bullets.",
     jobWordingGuidance,
     modeGuidance,
     ...strategyGuidance,
-    "Do not compose a full resume, identity metadata, compatibility scores, labels, notes, explanations, or uncited text. In aggressive mode include coreSkills covering the candidate's key skills plus targetJob.listingRequestedSkills.",
+    "Do not compose a full resume, identity metadata, compatibility scores, labels, notes, explanations, or uncited text except the requested languagePresentation display edits. In aggressive mode include coreSkills covering the candidate's key skills plus targetJob.listingRequestedSkills.",
   ].join(" ");
 }
 
@@ -595,18 +611,61 @@ export function createOpenAiCompatibleJobFinderAiClient(
       });
     },
     async assessJobFit(input) {
+      const { signal, ...assessmentInput } = input;
       const payload = await fetchModelJson(
         "assessJobFit",
         [
           "You assess how well a job matches a candidate profile.",
+          buildFitEvidenceInstructions(),
           "Return JSON only.",
           "Use a 0-100 score, 1-3 reasons, and up to 3 gaps.",
           "Keep explanations specific to the provided profile and job.",
+          "Include requirements for every explicit language and level, enrollment or availability window, education, portfolio, experience, and named tool in the full listing. Compare each with the profile; absence is missing or unknown, never support. A conflict needs explicit contradictory evidence. Use assessmentDate for availability windows.",
+          "Each requirement has id, category (skill, experience, seniority, location, work_mode, work_authorization, domain), label, importance (required, preferred, inferred), status (supported, partial, missing, unknown, conflict), jobEvidence (quote from the listing), resumeEvidence (array of {sourceKind: profile_skill, experience, project, or profile; sourceId: string or null; label; detail}), and explanation. Use skill for languages and tools, experience for education, enrollment, availability and portfolio. Keep required country restrictions separate from remote work mode.",
+          'Also return your verdict: recommendation (strong_fit, apply_with_original, review_before_applying, or skip); role ("exact" when it is the kind of work the person is looking for, "adjacent" for related work they could credibly do, "conflict" for a different occupation or a level far from theirs, "unknown"); roleExplanation (one plain sentence to the person); preferences ("aligned", "mixed", "conflict", "unknown", or "not_configured" against the saved goals for place, work mode, level, employment type and pay); preferencesExplanation (one sentence); and locationReach ("in_area", "remote_preferred", "outside_area", or "unknown"); listingClosed (true only when the listing itself says it is closed, filled or no longer accepting applications) with listingClosedEvidence quoting those words. Your score and recommendation stand as the assessment; nothing recomputes them.',
         ].join(" "),
-        input,
-        { conversationKey: modelConversationKeys.jobFit(input.job) },
+        buildJobFitAssessmentPayload(assessmentInput),
+        {
+          conversationKey: modelConversationKeys.jobFit(input.job),
+          ...(signal ? { signal } : {}),
+        },
       );
       return JobFitAssessmentSchema.parse(payload);
+    },
+    async judgeJobFits(input) {
+      const { signal, ...rest } = input;
+      if (rest.jobs.length === 0) {
+        return [];
+      }
+      const payload = await fetchModelJson(
+        "judgeJobFits",
+        buildJobFitJudgingPrompt(),
+        buildJobFitJudgingPayload(rest),
+        {
+          ...(signal ? { signal } : {}),
+          reasoningEffort: agentReasoningEffort,
+        },
+      );
+      return normalizeJobFitJudgments(
+        payload,
+        new Set(rest.jobs.map((job) => job.jobId)),
+      );
+    },
+    async checkResumeClaims(input) {
+      const { signal, ...rest } = input;
+      if (rest.claims.length === 0) {
+        return [];
+      }
+      const payload = await fetchModelJson(
+        "checkResumeClaims",
+        buildResumeClaimCheckPrompt(),
+        buildResumeClaimCheckPayload(rest),
+        {
+          ...(signal ? { signal } : {}),
+          reasoningEffort: agentReasoningEffort,
+        },
+      );
+      return normalizeResumeClaimChecks(payload, rest);
     },
     async extractJobsFromPage(input) {
       const maxJobs = Math.max(0, Math.floor(input.maxJobs));
@@ -645,7 +704,13 @@ export function createOpenAiCompatibleJobFinderAiClient(
         systemPrompt,
         {
           pageUrl: input.pageUrl,
-          pageText: input.pageText.slice(0, pageTextLimit),
+          pageText:
+            input.pageType === "job_detail"
+              ? input.pageText
+              : input.pageText.slice(0, pageTextLimit),
+          ...(input.selectionContext
+            ? { selectionContext: input.selectionContext }
+            : {}),
         },
         {
           timeoutMs,
@@ -729,6 +794,7 @@ export function createOpenAiCompatibleJobFinderAiClient(
               },
             })),
             maxOutputTokens: options?.maxOutputTokens,
+            parallelToolCalls: options?.parallelToolCalls,
           }),
           apiMode,
           totalTimeoutMs: timeoutMs,
@@ -884,18 +950,25 @@ export function countDistinguishingListingTerms(job: {
 export const MINIMUM_DISTINGUISHING_LISTING_TERMS = 12;
 
 /** The agent's opening placeholder before it has worked; never an answer. */
+/** What the Resume Assistant says when the AI could not answer at all. */
+const RESUME_ASSISTANT_UNAVAILABLE_REPLY =
+  "The AI could not answer this time, so nothing was changed. Send the request again.";
+
 const RESUME_EDIT_PLACEHOLDER_CONTENT =
   /^I am reviewing the requested résumé change against the saved evidence\.?$/u;
 
-function buildProviderFailureProvenance(error: unknown) {
-  const detail = summarizeError(error);
-  return {
-    method: "deterministic" as const,
-    reason: /timed out after \d+s/i.test(detail)
-      ? ("provider_timeout" as const)
-      : ("provider_failed" as const),
-    detail,
-  };
+/**
+ * A resume the AI could not write is a failure, not a built-in draft in its
+ * place (ADR 0041): the job keeps the resume it had and the person is told.
+ */
+function resumeWritingFailed(error: unknown): Error {
+  const timedOut = /timed out/i.test(summarizeError(error));
+  return new Error(
+    timedOut
+      ? "The AI could not write this resume in time, so nothing was changed. Try again."
+      : "The AI could not write this resume, so nothing was changed. Try again.",
+    { cause: error },
+  );
 }
 
 /** Why a stage used the built-in reader when no model is available at all. */
@@ -904,7 +977,7 @@ export const NO_AI_PROVIDER_REASON = "No AI model is available right now.";
 export const PROFILE_ASSISTANT_UNFINISHED_MESSAGE =
   "The Assistant stopped before it could finish this request, so nothing was changed. Your question is kept; ask it again or say it another way.";
 
-/** The Assistant ran twice without finishing and the built-in editor had nothing either. */
+/** The Assistant ran twice without finishing and prepared nothing. */
 export class ProfileCopilotUnfinishedError extends Error {
   constructor() {
     super(PROFILE_ASSISTANT_UNFINISHED_MESSAGE);
@@ -927,12 +1000,32 @@ function shouldRetryUnfinishedProfileRun(reply: ProfileCopilotReply): boolean {
   );
 }
 
-/** The built-in editor's reply when it could not make a change either. */
-function isProfileCopilotNonAnswer(reply: ProfileCopilotReply): boolean {
-  return (
-    reply.patchGroups.length === 0 &&
-    /could not turn it into a safe structured profile edit/i.test(reply.content)
-  );
+const RESUME_IMPORT_STAGE_ATTEMPTS = 3;
+const RESUME_IMPORT_RETRY_DELAYS_MS = [0, 3_000, 8_000] as const;
+
+const RESUME_IMPORT_STAGE_SUBJECTS: Record<string, string> = {
+  identity_summary: "your name, contact details and summary",
+  experience: "your work history",
+  background: "your education, skills, languages and certifications",
+  shared_memory: "your reusable evidence and application answers",
+};
+
+/**
+ * A resume section the model could not read even after asking again. The
+ * message is what the person reads beside the import.
+ */
+export class ResumeImportStageUnreadError extends Error {
+  constructor(stage: string, cause: string) {
+    super(
+      `Job Finder could not read ${RESUME_IMPORT_STAGE_SUBJECTS[stage] ?? "part of your resume"} because the AI model was not available (${cause}). Nothing was guessed for that part; import the file again to fill it in.`,
+    );
+    this.name = "ResumeImportStageUnreadError";
+  }
+}
+
+function waitBeforeResumeImportRetry(attempt: number): Promise<void> {
+  const delayMs = RESUME_IMPORT_RETRY_DELAYS_MS[attempt] ?? 8_000;
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 export function createJobFinderAiClientFromEnvironment(
@@ -1090,153 +1183,85 @@ export function createJobFinderAiClientFromEnvironment(
     getStatus() {
       return primaryClient.getStatus();
     },
-    async extractProfileFromResume(input) {
-      try {
-        return await primaryClient.extractProfileFromResume(input);
-      } catch (error) {
-        logFallbackError("extractProfileFromResume", error);
-        const fallback = await fallbackClient.extractProfileFromResume(input);
-        return {
-          ...fallback,
-          notes: uniqueStrings([
-            ...fallback.notes,
-            "Fell back to the deterministic resume parser after the model call failed.",
-            `Primary AI extraction failed: ${summarizeError(error)}`,
-          ]),
-        };
-      }
+    // No rule-made stand-in when a model call fails (ADR 0041): the failure
+    // is reported and what the person had stays as it was.
+    extractProfileFromResume(input) {
+      return primaryClient.extractProfileFromResume(input);
     },
     async extractResumeImportStage(input) {
       const startedAtMs = performance.now();
-      if (input.stage === "shared_memory") {
-        const fallback = await fallbackClient.extractResumeImportStage(input);
-        const durationMs = Math.max(
-          0,
-          Math.round(performance.now() - startedAtMs),
-        );
-
-        return {
-          ...fallback,
-          timing: {
-            durationMs,
-            primaryProviderMs: null,
-            deterministicFallbackMs:
-              fallback.timing?.deterministicFallbackMs ??
-              fallback.timing?.durationMs ??
-              durationMs,
-          },
-        };
+      // The model reads the resume (ADR 0041). Its candidates are the
+      // import; no rule-read candidates are mixed in beside them. A call that
+      // fails for a passing reason (an overloaded provider, a dropped
+      // connection) is asked again. A section it still cannot read fails
+      // with a sentence for the person, instead of being filled from rule
+      // guesses that would land in the profile unseen.
+      let lastError: unknown = null;
+      for (
+        let attempt = 0;
+        attempt < RESUME_IMPORT_STAGE_ATTEMPTS;
+        attempt += 1
+      ) {
+        if (attempt > 0) {
+          await waitBeforeResumeImportRetry(attempt);
+        }
+        const primaryStartedAtMs = performance.now();
+        try {
+          const primary = await runResumeImportStageAgentTask({
+            client: primaryClient,
+            request: input,
+          });
+          return {
+            ...primary,
+            timing: {
+              durationMs: Math.max(
+                0,
+                Math.round(performance.now() - startedAtMs),
+              ),
+              primaryProviderMs:
+                primary.timing?.primaryProviderMs ??
+                Math.max(0, Math.round(performance.now() - primaryStartedAtMs)),
+              deterministicFallbackMs: null,
+            },
+          };
+        } catch (error) {
+          lastError = error;
+          logFallbackError("extractResumeImportStage", error);
+          if (/timed out after \d+s/i.test(summarizeError(error))) {
+            // A timeout already spent the whole budget once; asking again
+            // would double the wait for the same answer.
+            break;
+          }
+        }
       }
-
-      const primaryStartedAtMs = performance.now();
-      const fallbackPromise = fallbackClient.extractResumeImportStage(input);
-
-      try {
-        const primary = await runResumeImportStageAgentTask({
-          client: primaryClient,
-          request: input,
-        });
-        const primaryProviderMs =
-          primary.timing?.primaryProviderMs ??
-          Math.max(0, Math.round(performance.now() - primaryStartedAtMs));
-        const fallback = await fallbackPromise;
-        const durationMs = Math.max(
-          0,
-          Math.round(performance.now() - startedAtMs),
-        );
-
-        return {
-          ...primary,
-          candidates: [
-            ...supplementExperienceStageCandidates(
-              primary.candidates,
-              fallback.candidates,
-            ),
-            ...fallback.candidates.map((candidate) => ({
-              ...candidate,
-              notes: [...candidate.notes, "deterministic_stage_fallback"],
-            })),
-          ],
-          notes: uniqueStrings([...primary.notes, ...fallback.notes]),
-          timing: {
-            durationMs,
-            primaryProviderMs,
-            deterministicFallbackMs:
-              fallback.timing?.deterministicFallbackMs ??
-              fallback.timing?.durationMs ??
-              null,
-          },
-        };
-      } catch (error) {
-        const primaryProviderMs = Math.max(
-          0,
-          Math.round(performance.now() - primaryStartedAtMs),
-        );
-        const primaryErrorSummary = summarizeError(error);
-        const primaryTimedOut = /timed out after \d+s/i.test(
-          primaryErrorSummary,
-        );
-        logFallbackError("extractResumeImportStage", error);
-        const fallback = await fallbackPromise;
-        // A timed-out model call used to return here with no note at all, so a
-        // stage that never reached the model was indistinguishable from one
-        // that did. A timeout is the most common way this degrades, so it is
-        // the case that most needs to be recorded, not the one to suppress.
-        return {
-          ...fallback,
-          fallback: {
-            kind: primaryTimedOut
-              ? ("timeout" as const)
-              : ("provider_error" as const),
-            reason: primaryErrorSummary,
-          },
-          notes: uniqueStrings([
-            ...fallback.notes,
-            "Fell back to the deterministic staged resume importer after the model call failed.",
-            `Primary AI import stage failed: ${primaryErrorSummary}`,
-          ]),
-          timing: {
-            durationMs: Math.max(
-              0,
-              Math.round(performance.now() - startedAtMs),
-            ),
-            primaryProviderMs,
-            deterministicFallbackMs:
-              fallback.timing?.deterministicFallbackMs ??
-              fallback.timing?.durationMs ??
-              null,
-          },
-        };
-      }
+      throw new ResumeImportStageUnreadError(
+        input.stage,
+        summarizeError(lastError),
+      );
     },
     async adjudicateResumeImportCandidates(input) {
+      // Without the model's ruling every conflict stays in setup review for
+      // the person; nothing is decided for them.
       if (!primaryClient.adjudicateResumeImportCandidates) {
-        const fallback =
-          await fallbackClient.adjudicateResumeImportCandidates?.(input);
         return {
-          candidates: fallback?.candidates ?? [],
-          notes: uniqueStrings([
-            ...(fallback?.notes ?? []),
-            "Primary AI import adjudication is unavailable; material conflicts stayed in setup review.",
-          ]),
-          warnings: fallback?.warnings ?? [],
+          candidates: [],
+          notes: [
+            "The AI could not review the conflicting resume details, so they stayed in setup review.",
+          ],
+          warnings: [],
         };
       }
-
       try {
         return await primaryClient.adjudicateResumeImportCandidates(input);
       } catch (error) {
         logFallbackError("adjudicateResumeImportCandidates", error);
-        const fallback =
-          await fallbackClient.adjudicateResumeImportCandidates?.(input);
         return {
-          candidates: fallback?.candidates ?? [],
-          notes: uniqueStrings([
-            ...(fallback?.notes ?? []),
-            "Fell back to deterministic review-first resume import adjudication after the model call failed.",
-            `Primary AI import adjudication failed: ${summarizeError(error)}`,
-          ]),
-          warnings: fallback?.warnings ?? [],
+          candidates: [],
+          notes: [
+            "The AI could not review the conflicting resume details, so they stayed in setup review.",
+            `AI import review failed: ${summarizeError(error)}`,
+          ],
+          warnings: [],
         };
       }
     },
@@ -1307,20 +1332,7 @@ export function createJobFinderAiClientFromEnvironment(
         };
       } catch (error) {
         logFallbackError("createResumeDraft", error);
-        // Empty model output still goes through completeTailoredResumeDraft,
-        // which is what adds listing-asked skills in aggressive mode. A thrown
-        // request must take the same path or a timeout would drop the skills
-        // the screening pass is supposed to see.
-        const completed = completeTailoredResumeDraft({}, input);
-        return {
-          ...completed,
-          generationProvenance: buildProviderFailureProvenance(error),
-          notes: uniqueStrings([
-            ...completed.notes,
-            "Fell back to the deterministic resume draft creator after the model call failed.",
-            `${providerLabel} draft creation failed: ${summarizeError(error)}`,
-          ]),
-        };
+        throw resumeWritingFailed(error);
       }
     },
     async reviseResumeDraft(input) {
@@ -1361,20 +1373,12 @@ export function createJobFinderAiClientFromEnvironment(
         ) {
           return reply;
         }
-        const fallback = await fallbackClient.reviseResumeDraft(input);
         const timedOut = reply.executionReceipt?.stopReason === "time_budget";
         return {
-          ...fallback,
-          // The built-in reply "could not safely turn that request into a
-          // grounded patch" blamed the request when the AI had only been too
-          // slow to answer ("the second one", two model calls of 61 s and
-          // 110 s).
-          ...(timedOut && fallback.patches.length === 0
-            ? {
-                content:
-                  "The AI took too long to answer this time, so nothing was changed. Send the request again.",
-              }
-            : {}),
+          content: timedOut
+            ? "The AI took too long to answer this time, so nothing was changed. Send the request again."
+            : RESUME_ASSISTANT_UNAVAILABLE_REPLY,
+          patches: [],
           executionReceipt: createFallbackExecutionReceipt(
             "resume_guided_edit",
             timedOut ? "time_budget" : "no_progress",
@@ -1382,9 +1386,9 @@ export function createJobFinderAiClientFromEnvironment(
         };
       } catch (error) {
         logFallbackError("reviseResumeDraft", error);
-        const fallback = await fallbackClient.reviseResumeDraft(input);
         return {
-          ...fallback,
+          content: RESUME_ASSISTANT_UNAVAILABLE_REPLY,
+          patches: [],
           executionReceipt: createFallbackExecutionReceipt(
             "resume_guided_edit",
             "permanent_failure",
@@ -1393,27 +1397,6 @@ export function createJobFinderAiClientFromEnvironment(
       }
     },
     async reviseCandidateProfile(input) {
-      function shouldUseDeterministicProfileReply(
-        primaryReply: ProfileCopilotReply,
-        fallbackReply: ProfileCopilotReply,
-      ): boolean {
-        if (
-          fallbackReply.patchGroups.length > primaryReply.patchGroups.length
-        ) {
-          return true;
-        }
-
-        if (primaryReply.patchGroups.length > 0) {
-          return false;
-        }
-
-        return (
-          /could not turn|guidance only|no profile edits were proposed/i.test(
-            primaryReply.content,
-          ) && fallbackReply.content.trim() !== primaryReply.content.trim()
-        );
-      }
-
       try {
         let primaryReply = await runProfileCopilotAgentTask({
           client: primaryClient,
@@ -1421,11 +1404,10 @@ export function createJobFinderAiClientFromEnvironment(
         });
 
         // A run that stops short of finish_task used to be thrown away whole,
-        // proposals included, and the built-in editor answered "I could not
-        // turn it into a safe structured profile edit" with no card (a live
-        // "add a target role" run). A run that stopped with nothing prepared
-        // gets one fresh attempt; one that prepared cards keeps them, and its
-        // receipt tells the service it stopped early.
+        // proposals included (a live "add a target role" run). A run that
+        // stopped with nothing prepared gets one fresh attempt; one that
+        // prepared cards keeps them, and its receipt tells the service it
+        // stopped early.
         if (
           shouldRetryUnfinishedProfileRun(primaryReply) &&
           primaryReply.patchGroups.length === 0
@@ -1436,51 +1418,24 @@ export function createJobFinderAiClientFromEnvironment(
           });
         }
 
-        if (primaryReply.executionReceipt?.stopReason !== "completed") {
-          if (primaryReply.patchGroups.length > 0) {
-            return primaryReply;
-          }
-          const fallback = await fallbackClient.reviseCandidateProfile(input);
-          if (isProfileCopilotNonAnswer(fallback)) {
-            // Neither the model nor the built-in editor has anything to show.
-            // Recording the editor's "could not turn it into a safe edit" as
-            // the answer left a dead end; failing keeps the question on
-            // screen with Ask again under it.
-            throw new ProfileCopilotUnfinishedError();
-          }
-          return {
-            ...fallback,
-            executionReceipt: createFallbackExecutionReceipt(
-              "profile_copilot",
-              "no_progress",
-            ),
-          };
+        // Nothing prepared and not finished: the question stays on screen
+        // with Ask again under it. No rule-made edit stands in (ADR 0041).
+        if (
+          primaryReply.executionReceipt?.stopReason !== "completed" &&
+          primaryReply.patchGroups.length === 0
+        ) {
+          throw new ProfileCopilotUnfinishedError();
         }
-
-        if (primaryReply.patchGroups.length === 0) {
-          const fallbackReply =
-            await fallbackClient.reviseCandidateProfile(input);
-
-          if (shouldUseDeterministicProfileReply(primaryReply, fallbackReply)) {
-            return {
-              ...fallbackReply,
-              executionReceipt: createFallbackExecutionReceipt(
-                "profile_copilot",
-                "no_progress",
-              ),
-            };
-          }
-        }
-
         return primaryReply;
       } catch (error) {
         if (error instanceof ProfileCopilotUnfinishedError) {
           throw error;
         }
         logFallbackError("reviseCandidateProfile", error);
-        const fallback = await fallbackClient.reviseCandidateProfile(input);
+        // The service turns this into the outage message on screen.
         return {
-          ...fallback,
+          content: PROFILE_ASSISTANT_UNFINISHED_MESSAGE,
+          patchGroups: [],
           executionReceipt: createFallbackExecutionReceipt(
             "profile_copilot",
             "permanent_failure",
@@ -1490,30 +1445,46 @@ export function createJobFinderAiClientFromEnvironment(
     },
     async tailorResume(input) {
       const modelClient = selectResumeGenerationClient(input);
-      const providerLabel =
-        modelClient === aggressiveClient ? "Aggressive AI" : "Primary AI";
       try {
         return await modelClient.tailorResume(input);
       } catch (error) {
         logFallbackError("tailorResume", error);
-        const completed = completeTailoredResumeDraft({}, input);
-        return {
-          ...completed,
-          generationProvenance: buildProviderFailureProvenance(error),
-          notes: uniqueStrings([
-            ...completed.notes,
-            "Fell back to the deterministic resume tailorer after the model call failed.",
-            `${providerLabel} tailoring failed: ${summarizeError(error)}`,
-          ]),
-        };
+        throw resumeWritingFailed(error);
       }
     },
     async assessJobFit(input) {
       try {
         return await primaryClient.assessJobFit(input);
       } catch (error) {
+        if (input.signal?.aborted || error instanceof FullFitEvidenceBudgetError) {
+          throw error;
+        }
+        // No verdict stands in: the job stays as it was and says so.
         logFallbackError("assessJobFit", error);
-        return fallbackClient.assessJobFit(input);
+        return null;
+      }
+    },
+    // A failed check leaves the lines unchecked for the person to look at;
+    // no rule stands in for the model's verdict (ADR 0041).
+    checkResumeClaims(input) {
+      return primaryClient.checkResumeClaims
+        ? primaryClient.checkResumeClaims(input)
+        : Promise.resolve([]);
+    },
+    async judgeJobFits(input) {
+      if (!primaryClient.judgeJobFits) {
+        return [];
+      }
+      try {
+        return await primaryClient.judgeJobFits(input);
+      } catch (error) {
+        if (input.signal?.aborted) {
+          throw error;
+        }
+        // No rule-made verdict stands in: the jobs stay unjudged and the
+        // next pass asks again.
+        logFallbackError("judgeJobFits", error);
+        return [];
       }
     },
     async extractJobsFromPage(input) {
@@ -1523,8 +1494,10 @@ export function createJobFinderAiClientFromEnvironment(
         if (input.signal?.aborted) {
           throw error;
         }
+        // A failed read is reported to whoever asked, never passed off as a
+        // page with no jobs on it.
         logFallbackError("extractJobsFromPage", error);
-        return fallbackClient.extractJobsFromPage(input);
+        throw error;
       }
     },
     async analyzeBrowserVisualSnapshot(input) {
@@ -1532,7 +1505,7 @@ export function createJobFinderAiClientFromEnvironment(
         return await browserVisualProvider.analyzeBrowserVisualSnapshot(input);
       } catch (error) {
         logFallbackError("analyzeBrowserVisualSnapshot", error);
-        return fallbackClient.analyzeBrowserVisualSnapshot!(input);
+        throw error;
       }
     },
     async chatWithTools(messages, tools, options?: ChatWithToolsOptions) {

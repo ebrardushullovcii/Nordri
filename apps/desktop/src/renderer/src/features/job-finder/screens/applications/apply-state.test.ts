@@ -1,5 +1,7 @@
 import {
+  ApplicationPrivacyReceiptSchema,
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  PREPARED_PAGE_CLOSED_SUMMARY,
   ApplicationCrmDataSchema,
 } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
@@ -43,6 +45,24 @@ function buildResult(overrides: Partial<ApplyResult>): ApplyResult {
 }
 
 describe("the five apply states (ADR 0022)", () => {
+  it("never recommends retry for an observed closed listing", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: buildResult({
+          state: "failed",
+          blockerReason: "application_closed",
+          summary: "This job is no longer accepting applications.",
+        }),
+      }),
+    ).toMatchObject({
+      kind: "could_not_apply",
+      title: "Listing closed",
+      action: "none",
+      actionLabel: null,
+    });
+  });
+
   it.each(["site_protection", "required_human_input"] as const)(
     "keeps a CAPTCHA without a question in Needs you (%s)",
     (blockerReason) => {
@@ -71,7 +91,7 @@ describe("the five apply states (ADR 0022)", () => {
       {
         expected: {
           kind: "filling_in",
-          title: "Filling in (3 min)",
+          title: "Preparing (3 min)",
           actionLabel: null,
         },
         result: buildResult({
@@ -174,9 +194,9 @@ describe("the five apply states (ADR 0022)", () => {
     });
     expect(presentation).toMatchObject({
       kind: "filling_in",
-      title: "Waiting for a browser tab",
       sentence: "Close a tab you no longer need and this one starts.",
     });
+    expect(presentation.title).toBe("Waiting for a browser tab");
   });
 
   it("never calls an unverified outcome Applied", () => {
@@ -434,6 +454,19 @@ describe("a planned job is never Filling in", () => {
     },
   );
 
+  it("does not call an untouched safety-paused batch active", () => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: planned,
+        run: {
+          state: "paused_for_user_review",
+          activityPaused: false,
+          started: false,
+        },
+      }).title,
+    ).toBe("Not started");
+  });
   it("names the safety limit when one stopped the batch", () => {
     expect(
       resolveApplyStatePresentation({
@@ -459,7 +492,7 @@ describe("a planned job is never Filling in", () => {
         }),
         run: { state: "running", activityPaused: true, started: true },
       }),
-    ).toMatchObject({ kind: "filling_in", title: "Filling in (3 min)" });
+    ).toMatchObject({ kind: "filling_in", title: "Preparing (3 min)" });
   });
 });
 
@@ -528,3 +561,118 @@ describe("an application the person recorded as sent in the tracker", () => {
     ).toBe("Applied");
   });
 });
+
+it("labels an automatic send as waiting, with no manual action", () => {
+  expect(
+    resolveApplyStatePresentation({
+      mode: "apply_for_me",
+      result: buildResult({
+        state: "awaiting_review",
+        summary: "The copy can change without changing the state.",
+        automaticSendPending: true,
+        detail: "Job Finder will send this application next.",
+      }),
+    }),
+  ).toMatchObject({
+    title: "Waiting to send",
+    action: "none",
+    actionLabel: null,
+  });
+});
+
+it("does not call a contradictory submitted state a send", () => {
+  const result = buildResult({
+    state: "submitted",
+    privacyReceipt: ApplicationPrivacyReceiptSchema.parse({
+      generatedAt: "2026-09-14T10:00:00.000Z",
+      lineage: {
+        runId: "run_1",
+        jobId: "job_1",
+        resultId: "result_1",
+        applicationRecordId: "application_1",
+      },
+      destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+      resume: {
+        source: "original_upload",
+        sourceDocumentId: "synthetic",
+        exportArtifactId: null,
+        fileName: "synthetic.pdf",
+        sha256: "a".repeat(64),
+      },
+      finalSubmitOccurred: false,
+    }),
+  });
+  expect(
+    resolveApplyStatePresentation({ mode: "fill_only", result }),
+  ).toMatchObject({ title: "Send not confirmed", action: "none" });
+});
+
+it("offers Prepare again for a lost prepared form", () => {
+  const result = buildResult({
+    state: "failed",
+    summary: PREPARED_PAGE_CLOSED_SUMMARY,
+    blockerReason: "unexpected_navigation",
+    latestQuestionCount: 2,
+  });
+  expect(
+    resolveApplyStatePresentation({ mode: "fill_only", result }),
+  ).toMatchObject({ title: "Could not apply", actionLabel: "Prepare again" });
+});
+
+it("a queued job remains queued after a preparation timestamp was written", () => {
+  const result = buildResult({
+    state: "planned",
+    applicationPreparationStartedAt: "2026-09-14T10:00:00.000Z",
+  });
+  expect(
+    resolveApplyStatePresentation({
+      mode: "fill_only",
+      result,
+      run: { state: "running", activityPaused: false, started: true },
+    }),
+  ).toMatchObject({ title: "Waiting its turn" });
+});
+
+it("a validation rejection uses the site message instead of ready-to-send copy", () => {
+  const result = buildResult({
+    state: "awaiting_review",
+    privacyReceipt: {
+      submissionOutcome: {
+        outcome: "not_submitted",
+        browserAction: {
+          reason: "form_validation_failed",
+          detail: "Select at least one skill.",
+        },
+      },
+    } as unknown as ApplyResult["privacyReceipt"],
+  });
+  expect(
+    resolveApplyStatePresentation({ mode: "fill_only", result }),
+  ).toMatchObject({
+    title: "Not sent",
+    sentence: "Select at least one skill.",
+    actionLabel: "Correct the fields in the browser",
+  });
+});
+
+it.each([false, true])(
+  "keeps awaiting review with a blocker in Needs you (record=%s)",
+  (onRecord) => {
+    expect(
+      resolveApplyStatePresentation({
+        mode: "fill_only",
+        result: buildResult({
+          state: "awaiting_review",
+          blockerReason: onRecord ? null : "required_human_input",
+        }),
+        recordLatestBlocker: onRecord
+          ? {
+              code: "requires_manual_review",
+              summary: "Finish this step",
+            }
+          : null,
+        pendingQuestionCount: 0,
+      }),
+    ).toMatchObject({ kind: "needs_you", title: "Needs you" });
+  },
+);

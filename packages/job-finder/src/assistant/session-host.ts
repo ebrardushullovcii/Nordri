@@ -1,3 +1,6 @@
+import { estimateResumeBatchMinutesLeft } from "@nordri/contracts";
+import { verifyPersonAnswerAuthority } from "./person-answer-authority";
+import { readAssistantWorkState } from "./work-state";
 import { buildChangePreview } from "./change-diff";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -11,6 +14,9 @@ import {
   type TokenCalibrator,
 } from "@nordri/agent-runtime";
 import {
+  AssistantNavigationAcknowledgmentSchema,
+  type AssistantNavigationAcknowledgment,
+  type AssistantNavigationDisplay,
   AssistantContextReferenceSchema,
   AssistantSendMessageInputSchema,
   type AssistantActivity,
@@ -134,6 +140,7 @@ interface LiveTurn {
   stallShown: boolean;
   modelCallInFlight: boolean;
   lease: AssistantBrowserLease | null;
+  focusedApplicationResultId?: string | undefined;
   sourceMessage: AssistantMessage | null;
   outputs: AssistantToolOutputs;
   lastPersistedDraftAt: number;
@@ -220,6 +227,20 @@ function titleFrom(text: string): string {
 }
 
 export class AssistantSessionHost {
+  private readonly navigationRequests = new Map<
+    string,
+    {
+      conversationId: string;
+      resolve: (display: AssistantNavigationDisplay) => void;
+    }
+  >();
+
+  acknowledgeNavigation(input: AssistantNavigationAcknowledgment): void {
+    const ack = AssistantNavigationAcknowledgmentSchema.parse(input);
+    const pending = this.navigationRequests.get(ack.navigationRequestId);
+    if (pending?.conversationId === ack.conversationId) pending.resolve(ack);
+  }
+
   private readonly repository: AssistantRepository;
   private readonly service: JobFinderWorkspaceService;
   private readonly ports: AssistantHostPorts;
@@ -240,6 +261,14 @@ export class AssistantSessionHost {
     { conversationId: string; questionId: string; requestId: string }
   >();
   private questionSyncPending = false;
+  /**
+   * Restart notices about an unfinished resume batch can only resolve while
+   * one may still be open; checking needs a full snapshot, so it is skipped
+   * once none is left and runs at most every 10 s otherwise.
+   */
+  private resumeNoticeCheckDue = true;
+  private resumeNoticeCheckPending = false;
+  private resumeNoticeCheckedAt = 0;
   /** Notes for the model's next turn about questions settled elsewhere. */
   private readonly answeredElsewhere = new Map<string, string[]>();
   private closed = false;
@@ -582,6 +611,26 @@ export class AssistantSessionHost {
     await this.publishResumeBatchActivity(conversationId, true);
   }
 
+  /** Stop dispatching from either batch entry point; active drafts can finish. */
+  async stopResumeBatches(): Promise<void> {
+    this.ports.stopResumeBatch?.();
+    const snapshot = await this.service.getWorkspaceSnapshot();
+    const checkpoints =
+      snapshot.intelligence.resumeBatchCheckpoints ??
+      (snapshot.intelligence.resumeBatchCheckpoint
+        ? [snapshot.intelligence.resumeBatchCheckpoint]
+        : []);
+    for (const batch of checkpoints) {
+      if (!batch.running || batch.done) continue;
+      cancelBackgroundBatch(batch.id);
+      await this.service.saveResumeBatchCheckpoint({
+        ...batch,
+        stopRequested: true,
+      });
+    }
+    this.ports.publishWorkspaceUpdate();
+  }
+
   private async cancelRun(run: AssistantRunRef): Promise<void> {
     try {
       if (run.kind === "discovery") await this.ports.cancelSearch(run.id);
@@ -716,10 +765,24 @@ export class AssistantSessionHost {
         },
         takeSteering: () => this.takeSteering(live),
         assembleMessages: async (turnMessages) => {
+          const current = await this.service.getWorkspaceSnapshot();
+          const currentContext = buildContextBlock({
+            context: live.sourceMessage?.context ?? null,
+            resultSets: live.sourceMessage
+              ? await this.resultSetsFor(live.sourceMessage)
+              : [],
+            snapshot: current,
+            work: readAssistantWorkState(this.ports, current),
+            plan: await session.plans.active(),
+            grants: await session.grants.list(),
+            pendingQuestions: [],
+            now: this.now(),
+          });
           const messages = await assembleModelInput({
             repository: this.repository,
             conversationId,
             systemPrompt,
+            currentContext,
             turnMessages,
             contextWindowTokens: handle.capabilities.contextWindowTokens,
             maxOutputTokens: handle.capabilities.maxOutputTokens,
@@ -874,6 +937,7 @@ export class AssistantSessionHost {
         context: live.sourceMessage?.context ?? null,
         resultSets,
         snapshot,
+        work: readAssistantWorkState(this.ports, snapshot),
         plan,
         grants: await this.repository.listGrants(conversationId),
         pendingQuestions: [],
@@ -915,6 +979,7 @@ export class AssistantSessionHost {
           context: message.context,
           resultSets,
           snapshot,
+          work: readAssistantWorkState(this.ports, snapshot),
           plan: null,
           grants: [],
           pendingQuestions: [],
@@ -1434,7 +1499,7 @@ export class AssistantSessionHost {
           items: proposal.items.map((item) => ({
             id: item.id,
             label: item.label,
-            detail: null,
+            detail: item.detail ?? null,
           })),
           source: {
             store: "assistant",
@@ -1513,22 +1578,131 @@ export class AssistantSessionHost {
       },
       searchConversation: (query, limit) =>
         this.searchConversation(conversationId, query, limit),
+      assertPersonAnswerAuthority: async (input) => {
+        const page = await this.repository.listMessages(conversationId, {
+          limit: 20,
+        });
+        await verifyPersonAnswerAuthority({
+          ...input,
+          messages: page.messages,
+          sourceMessage: live.sourceMessage,
+          judge: handle.scripted
+            ? null
+            : async (prompt) => {
+                const result = await handle
+                  .createModel(conversationId)
+                  .chatWithTools(
+                    [
+                      {
+                        role: "system",
+                        content:
+                          "Check who supplied or approved the proposed answers. Return only the requested JSON, using the person's messages as authority.",
+                      },
+                      { role: "user", content: prompt },
+                    ],
+                    [],
+                    { signal: live.controller.signal, maxOutputTokens: 3_000 },
+                  );
+                return result.content ?? "";
+              },
+        });
+        session.assertCurrent();
+      },
       firstProfileRead: () => {
         if (this.profileReadDone.has(conversationId))
           return Promise.resolve(false);
         this.profileReadDone.add(conversationId);
         return Promise.resolve(true);
       },
-      openInApp: (route) => {
-        void this.emit(conversationId, live.turn.id, {
-          type: "open_route",
-          route,
+      openInApp: async (route) => {
+        session.assertCurrent();
+        await this.ports.prepareAppNavigation?.();
+        session.assertCurrent();
+        const navigationRequestId = randomUUID();
+        let resolve!: (display: AssistantNavigationDisplay) => void;
+        const displayed = new Promise<AssistantNavigationDisplay>((done) => {
+          resolve = done;
         });
+        const unverified: AssistantNavigationDisplay = {
+          displayedRoute: null,
+          section: null,
+          overlay: "none",
+          status: "blocked",
+          reason: "The displayed destination was not acknowledged.",
+        };
+        const timeout = setTimeout(() => resolve(unverified), 4_000);
+        const stopped = () =>
+          resolve({
+            ...unverified,
+            reason: "Navigation stopped before it was acknowledged.",
+          });
+        session.signal?.addEventListener("abort", stopped, { once: true });
+        this.navigationRequests.set(navigationRequestId, {
+          conversationId,
+          resolve,
+        });
+        try {
+          await this.emit(conversationId, live.turn.id, {
+            type: "open_route",
+            route,
+            navigationRequestId,
+          });
+          const result = await displayed;
+          const expected = new URL(route, "https://nordri.local");
+          const actual = result.displayedRoute
+            ? new URL(result.displayedRoute, "https://nordri.local")
+            : null;
+          const matches =
+            actual?.pathname === expected.pathname &&
+            [...expected.searchParams].every(
+              ([key, value]) => actual.searchParams.get(key) === value,
+            );
+          const section =
+            expected.searchParams.get("section") ??
+            (expected.searchParams.get("view") === "tracker"
+              ? "tracker"
+              : null);
+          if (
+            result.status === "displayed" &&
+            (!matches ||
+              result.overlay !== "none" ||
+              (section && result.section !== section))
+          )
+            return {
+              ...result,
+              status: "blocked",
+              reason: "The requested destination is not visible.",
+            };
+          return result;
+        } finally {
+          clearTimeout(timeout);
+          session.signal?.removeEventListener("abort", stopped);
+          this.navigationRequests.delete(navigationRequestId);
+        }
       },
       visionAvailable: handle.capabilities.images,
+      releaseBrowserLease: async () => {
+        delete live.focusedApplicationResultId;
+        await this.releaseLease(live, "Reviewing your send instruction");
+      },
       browserLease: async (options) => {
-        if (live.lease && !live.lease.revoked.aborted) return live.lease;
-        const tabId = live.sourceMessage?.context?.browser?.tabId ?? null;
+        const applicationResultId = options?.newTab
+          ? undefined
+          : (options?.applicationResultId ?? live.focusedApplicationResultId);
+        const tabId = options?.newTab
+          ? null
+          : (options?.tabId ??
+            live.sourceMessage?.context?.browser?.tabId ??
+            null);
+        if (
+          live.lease &&
+          !live.lease.revoked.aborted &&
+          !options?.newTab &&
+          (!options?.tabId || live.lease.tabId === options.tabId) &&
+          (!applicationResultId ||
+            live.lease.applicationResultId === applicationResultId)
+        )
+          return live.lease;
         // A tab the person took back stays theirs until they send a new
         // message; neither this turn nor its continuations lease it again
         // (ADR 0038).
@@ -1550,13 +1724,48 @@ export class AssistantSessionHost {
             "The browser is not available here.",
           );
         }
+        await this.releaseLease(live, "Switching browser tabs");
+        session.assertCurrent();
         const lease = await this.ports.browser.lease({
           tabId,
+          ...(applicationResultId ? { applicationResultId } : {}),
+          onApplicationChange: async (recordId, field) => {
+            const snapshot = await this.service.getWorkspaceSnapshot();
+            const record = snapshot.applicationRecords.find(
+              (record) => record.id === recordId,
+            );
+            if (!record)
+              throw new Error("The application record is no longer available.");
+            const at = this.now();
+            await this.service.mutateApplicationCrm({
+              applicationRecordId: recordId,
+              expectedRevision: record.crm?.revision ?? 0,
+              actor: "assistant",
+              mutation: {
+                type: "add_note",
+                note: {
+                  id: session.createId("assistant_browser_edit"),
+                  body: `Assistant changed ${field.slice(0, 160)} in the prepared form. Nothing was sent.`,
+                  createdAt: at,
+                  updatedAt: at,
+                },
+              },
+            });
+            this.ports.publishWorkspaceUpdate();
+          },
           conversationId,
           turnId: live.turn.id,
+          signal: session.signal,
           openUrl: options?.openUrl ?? null,
         });
+        try {
+          session.assertCurrent();
+        } catch (error) {
+          await lease.release("The turn stopped");
+          throw error;
+        }
         live.lease = lease;
+        live.focusedApplicationResultId = lease.applicationResultId;
         await this.repository.upsertLease({
           id: lease.leaseId,
           conversationId,
@@ -1728,10 +1937,14 @@ export class AssistantSessionHost {
       (count, batch) => count + batch.failures.length,
       0,
     );
+    const minutesLeft = estimateResumeBatchMinutesLeft(
+      batches.flatMap((batch) => batch.durationsMs),
+      total - settled,
+    );
     return {
       label: batches.every((batch) => batch.cancelled)
         ? `Finishing ${active} active resume${active === 1 ? "" : "s"}; queued jobs stopped`
-        : `Writing resumes: ${settled} of ${total} finished${failed ? `; ${failed} failed` : ""}`,
+        : `Writing resumes: ${settled} of ${total} finished${failed ? `; ${failed} failed` : ""}${minutesLeft === null ? "" : ` · about ${minutesLeft} min left`}`,
       toolName: "generate_resumes",
       startedAt: batches.map((batch) => batch.startedAt).sort()[0]!,
     };
@@ -1759,12 +1972,91 @@ export class AssistantSessionHost {
         void this.closeQuestionsAnsweredElsewhere();
       }, 300);
     }
+    if (
+      this.resumeNoticeCheckDue &&
+      !this.resumeNoticeCheckPending &&
+      Date.now() - this.resumeNoticeCheckedAt >= 10_000
+    ) {
+      this.resumeNoticeCheckPending = true;
+      setTimeout(() => {
+        this.resumeNoticeCheckedAt = Date.now();
+        void this.refreshFinishedResumeBatchNotices()
+          .catch((error: unknown) =>
+            this.log("Could not update a resume batch notice", error),
+          )
+          .finally(() => {
+            this.resumeNoticeCheckPending = false;
+          });
+      }, 300);
+    }
     if (this.watches.size === 0 || this.watchCheckPending) return;
     this.watchCheckPending = true;
     setTimeout(() => {
       this.watchCheckPending = false;
       void this.checkWatches();
     }, 750);
+  }
+
+  /** A queue continued in Shortlisted closes the assistant's restart notice too. */
+  async refreshFinishedResumeBatchNotices(): Promise<void> {
+    const snapshot = await this.service.getWorkspaceSnapshot();
+    const checkpoints =
+      snapshot.intelligence.resumeBatchCheckpoints ??
+      (snapshot.intelligence.resumeBatchCheckpoint
+        ? [snapshot.intelligence.resumeBatchCheckpoint]
+        : []);
+    const completedIds = new Set(
+      checkpoints
+        .filter((batch) => batch.done)
+        .flatMap((batch) => [batch.id, ...(batch.resumedBatchIds ?? [])]),
+    );
+    let unresolved = false;
+    for (const conversation of await this.repository.listConversations()) {
+      const interrupted = (
+        await this.repository.listOperations(conversation.id, { runOnly: true })
+      ).filter(
+        (operation) =>
+          operation.run?.kind === "resume_generation" &&
+          operation.resultSummary ===
+            "The app closed while writing resumes. Saved drafts are kept; queued jobs were not restarted.",
+      );
+      if (interrupted.length === 0) continue;
+      if (
+        interrupted.some((operation) => !completedIds.has(operation.run!.id))
+      ) {
+        unresolved = true;
+        continue;
+      }
+      const page = await this.repository.listMessages(conversation.id, {
+        limit: 100,
+      });
+      for (const message of page.messages) {
+        let changed = false;
+        const parts = message.parts.map((part) => {
+          if (
+            part.type !== "notice" ||
+            part.kind !== "interrupted" ||
+            part.text !==
+              "The app closed while writing resumes. Saved drafts are kept; ask again to write the remaining resumes."
+          )
+            return part;
+          changed = true;
+          return {
+            ...part,
+            kind: "continued" as const,
+            text: "Resume batch finished. Review the results in Shortlisted.",
+          };
+        });
+        if (!changed) continue;
+        const updated = { ...message, parts, updatedAt: this.now() };
+        await this.repository.upsertMessage(updated);
+        await this.emit(conversation.id, null, {
+          type: "message_updated",
+          message: updated,
+        });
+      }
+    }
+    this.resumeNoticeCheckDue = unresolved;
   }
 
   /**
@@ -2460,6 +2752,7 @@ export class AssistantSessionHost {
             "interrupted",
             "The app closed while writing resumes. Saved drafts are kept; ask again to write the remaining resumes.",
           );
+          this.resumeNoticeCheckDue = true;
           continue;
         }
         const run = { ...operation.run, jobIds: [] };

@@ -1,6 +1,7 @@
 import http from "node:http";
 import { appendFileSync, readFileSync } from "node:fs";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { handleMoreSites, moreSites } from "./sites/router.mjs";
 
 // All data, accounts and endpoints are synthetic and local to this server.
 const confirmation = "Thank you! Your application has been received.";
@@ -409,6 +410,8 @@ const server = http.createServer(async (req, res) => {
     req.headers.cookie || "",
   );
   try {
+    if (await handleMoreSites(req, res, url, { send, readPost, logPost }))
+      return;
     if (req.method === "POST") {
       const fields = await readPost(req);
       // Local sign-in credentials are never part of fixture submission logs.
@@ -607,7 +610,9 @@ const server = http.createServer(async (req, res) => {
               ([site, name]) =>
                 `<li><a href="/${site}/">${name} /${site}/</a></li>`,
             )
-            .join("")}</ul>`,
+            .join(
+              "",
+            )}${moreSites.map((site) => `<li><a href="/${site.slug}/">${escape(site.name)} /${site.slug}/</a> — ${site.count} jobs. ${escape(site.description)}</li>`).join("")}</ul>`,
         ),
       );
     if (path.startsWith("/assets/")) {

@@ -93,6 +93,7 @@ function createOriginalResume(): ResumeSourceDocument {
 }
 
 function renderScreen(props: {
+  resumeBatchCheckpoint?: Parameters<typeof ReviewQueueScreen>[0]["resumeBatchCheckpoint"];
   applicationAutomationMode?: ApplicationAutomationMode;
   applicationRecords?: readonly ApplicationRecord[];
   dailyCapacity?: GlobalDailyApplicationPreparationCapacity;
@@ -128,6 +129,7 @@ function renderScreen(props: {
         actionState={{ message: null }}
         browserSession={props.browserSession ?? createBrowserSession()}
         campaignId={props.campaignId ?? "campaign_1"}
+        resumeBatchCheckpoint={props.resumeBatchCheckpoint}
         draftPreparation={
           props.draftPreparation ?? createIdleDraftPreparation()
         }
@@ -222,7 +224,7 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
       expect(
         document.querySelector("[data-resume-draft-expected-wait]")
           ?.textContent,
-      ).toBe("Usually 40-70 seconds for a tailored draft.");
+      ).toBe("Writing and checking the facts can take a few minutes, especially for Aggressive resumes.");
 
       act(() => {
         vi.advanceTimersByTime(3_000);
@@ -339,7 +341,7 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
     expect(screen.getByText(/Wrote 3 resumes/)).toBeTruthy();
   });
 
-  it("caps one create-all run at ten and says how many are left", () => {
+  it("offers the full missing-resume queue in one start", () => {
     const onPrepareTailoredDrafts = vi.fn();
     const queue = Array.from({ length: 12 }, (_, index) =>
       createEligibleItem(`job_${index}`),
@@ -348,9 +350,9 @@ describe("ReviewQueueScreen tailored draft preparation (controlled)", () => {
     renderScreen({ onPrepareTailoredDrafts, queue });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Create 10 missing resumes" }),
+      screen.getByRole("button", { name: "Create 12 missing resumes" }),
     );
-    expect(screen.getByText(/2 more after that/)).toBeTruthy();
+    expect(screen.queryByText(/more after that/)).toBeNull();
     expect(onPrepareTailoredDrafts).toHaveBeenCalledTimes(1);
   });
 
@@ -678,15 +680,15 @@ describe("ReviewQueueScreen job details honesty", () => {
     // The withheld rule now names what was actually checked instead of
     // printing a percentage the app has not earned.
     expect(screen.getByTestId("review-queue-fit-score").textContent).toBe(
-      "Title-only estimate",
+      "Not judged yet",
     );
-    // Once beside the score, once inside the breakdown that would otherwise
-    // read as five contradictions of it.
+    // The preview points to the available full-details control; the stored
+    // assessment explanation remains inside its breakdown.
     expect(
       screen.getAllByText(
-        "Fit is based on the title alone. Review the listing details before applying.",
+        "The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       screen.getByText(
         "The listing text was not captured. Open the full job details to read it.",
@@ -756,11 +758,10 @@ describe("ReviewQueueScreen job details honesty", () => {
     });
 
     expect(screen.getByTestId("review-queue-fit-score").textContent).toBe(
-      "Title-only estimate",
+      "Not judged yet",
     );
-    expect(screen.queryByText(/54% fit/)).toBeNull();
-    // The number is not destroyed: it stays inside the breakdown, qualified.
-    expect(screen.getByText("Title-only estimate: 54%")).toBeTruthy();
+    // No number anywhere until the model has judged the job (ADR 0041).
+    expect(screen.queryByText(/54%/)).toBeNull();
   });
 
   it("keeps real listing text and a plain score when evidence was checked", () => {
@@ -777,6 +778,12 @@ describe("ReviewQueueScreen job details honesty", () => {
         ...job,
         matchAssessment: {
           ...job.matchAssessment,
+          judgment: {
+            source: "batch",
+            judgedAt: "2026-10-02T10:00:00.000Z",
+            score: 64,
+            recommendation: "review_before_applying",
+          },
           requirements: [
             {
               id: "req_1",
@@ -801,6 +808,81 @@ describe("ReviewQueueScreen job details honesty", () => {
       ),
     ).toBeTruthy();
   });
+  it("keeps country suitability beside original-resume readiness (R3-177)", () => {
+    const item = {
+      ...createEligibleItem("job_overseas"),
+      resumeApplicationMode: "original_resume" as const,
+    };
+    const job = buildJob({
+      jobId: item.jobId,
+      title: item.title,
+      summary: "Customer success",
+    });
+    renderScreen({
+      queue: [item],
+      selectedItem: item,
+      selectedJob: {
+        ...job,
+        resumeApplicationMode: "original_resume",
+        matchAssessment: {
+          ...job.matchAssessment,
+          recommendation: "review_before_applying",
+          locationReach: "outside_area",
+          gaps: ["UK work permission is not confirmed."],
+          dimensions: {
+            ...job.matchAssessment.dimensions,
+            preferenceAlignment: {
+              state: "conflict",
+              explanation: "Remote UK only; you can work in the United States.",
+              evidence: [],
+            },
+          },
+        },
+      } as SavedJob,
+    });
+    expect(screen.getByTestId("queue-suitability-warning").textContent).toContain(
+      "Remote UK only",
+    );
+    expect(screen.getByTestId("queue-suitability-warning").textContent).toContain(
+      "UK work permission",
+    );
+    expect(screen.getByTestId("application-action-row").textContent).toContain(
+      "Apply",
+    );
+  });
+
+  it("shows why a completed read changed the score (R3-106)", () => {
+    const item = createEligibleItem("job_rescored");
+    const job = buildJob({
+      jobId: item.jobId,
+      title: item.title,
+      summary: "Customer success",
+    });
+    const reason =
+      "After reading the listing, your fit changed from 48% to 32%. Required enterprise-sales experience is not evidenced.";
+    renderScreen({
+      queue: [item],
+      selectedItem: item,
+      selectedJob: {
+        ...job,
+        matchAssessment: {
+          ...job.matchAssessment,
+          recommendation: "review_before_applying",
+          recommendationRationale: reason,
+          judgment: {
+            source: "full",
+            judgedAt: "2026-10-04T00:00:00Z",
+            score: 32,
+            recommendation: "review_before_applying",
+          },
+        },
+      } as SavedJob,
+    });
+    expect(screen.getByTestId("queue-full-assessment-reason").textContent).toBe(
+      reason,
+    );
+  });
+
 });
 
 describe("ReviewQueueScreen readiness agreement", () => {
@@ -842,4 +924,133 @@ describe("ReviewQueueScreen readiness agreement", () => {
     expect(badges.length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("Ready to apply")).toBeNull();
   });
+});
+it("lists unfinished jobs after restart and continues only their batch", () => {
+  const onPrepareTailoredDrafts = vi.fn();
+  renderScreen({
+    queue: [
+      createEligibleItem("unfinished"),
+      createEligibleItem("untouched"),
+    ],
+    resumeBatchCheckpoint: {
+      id: "batch",
+      jobIds: ["finished", "unfinished"],
+      activeJobIds: ["unfinished"],
+      completedJobIds: ["finished"],
+      done: false,
+      stopRequested: false,
+    },
+    onPrepareTailoredDrafts,
+  });
+  expect(
+    screen.getByText(
+      "The previous resume batch stopped when the app closed. Finished resumes were kept.",
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText("Still need resumes: Role unfinished at Acme."),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Continue batch" }));
+  expect(onPrepareTailoredDrafts).toHaveBeenCalledWith(["unfinished"]);
+});
+
+it("does not call a live assistant queue interrupted, and recovers unfinished existing drafts", () => {
+  const item = createEligibleItem("rewrite");
+  const checkpoint = {
+    id: "assistant",
+    jobIds: [item.jobId],
+    activeJobIds: [],
+    completedJobIds: [],
+    done: false,
+    stopRequested: false,
+    running: true,
+    requests: [{ jobId: item.jobId, regenerate: true, language: "German" }],
+  };
+  renderScreen({ queue: [item], resumeBatchCheckpoint: checkpoint });
+  expect(screen.queryByRole("button", { name: "Continue batch" })).toBeNull();
+  cleanup();
+  renderScreen({
+    queue: [
+      { ...item, assetStatus: "ready", resumeReview: { status: "draft" } },
+    ],
+    resumeBatchCheckpoint: { ...checkpoint, running: false },
+  });
+  expect(screen.getByRole("button", { name: "Continue batch" })).toBeTruthy();
+});
+
+it("R3-184 shows measured time left only after two resumes finish", () => {
+  const preparation = {
+    ...createIdleDraftPreparation(),
+    status: "running" as const,
+    totalCount: 8,
+    completedCount: 2,
+    attemptedCount: 4,
+    durationsMs: [120000, 180000],
+  };
+  renderScreen({
+    queue: [createEligibleItem("one")],
+    draftPreparation: preparation,
+  });
+  expect(screen.getByText(/about 8 min left/)).toBeTruthy();
+});
+
+it("offers the saved batch when its jobs are outside the current campaign", () => {
+  const onPrepareTailoredDrafts = vi.fn();
+  renderScreen({
+    queue: [createEligibleItem("another_campaign")],
+    resumeBatchCheckpoint: {
+      id: "saved_batch",
+      jobIds: ["elsewhere"],
+      activeJobIds: [],
+      completedJobIds: [],
+      done: false,
+      stopRequested: false,
+      running: false,
+    },
+    onPrepareTailoredDrafts,
+  });
+  expect(
+    screen.getByText("1 unfinished resume is saved in this batch."),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Continue batch" }));
+  expect(onPrepareTailoredDrafts).toHaveBeenCalledWith(["elsewhere"]);
+});
+
+it("shows an assistant-owned batch in the usual control with progress, time left and Stop", async () => {
+  const previous = window.nordri;
+  const stopResumeBatch = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: { assistant: { stopResumeBatch } },
+  });
+  try {
+    renderScreen({
+      queue: [
+        createEligibleItem("one"),
+        createEligibleItem("two"),
+        createEligibleItem("three"),
+      ],
+      resumeBatchCheckpoint: {
+        id: "assistant",
+        jobIds: ["one", "two", "three"],
+        activeJobIds: ["three"],
+        completedJobIds: ["one", "two"],
+        done: false,
+        stopRequested: false,
+        running: true,
+        durationsMs: [60000, 60000],
+      },
+    });
+    expect(
+      screen.getByText(/Writing resumes · 2 of 3 finished · about 1 min left/),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("create-missing-resumes")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop new resumes" }));
+    await vi.waitFor(() => expect(stopResumeBatch).toHaveBeenCalledOnce());
+  } finally {
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: previous,
+    });
+  }
 });

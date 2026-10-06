@@ -1329,3 +1329,30 @@ describe("Service worker activation containment real-Chromium fixtures", () => {
     },
   );
 });
+
+test.each(["click", "enter"] as const)(
+  "automation %s stays blocked without site-DOM notices, then person handoff sends once",
+  async (action) => {
+    const app = await startTrackedServer();
+    app.registerHtml(
+      "/review-required",
+      `<form action="/manual-send" method="post" target="receipt">
+    <input id="name" name="name"><button id="send" type="submit">Send application</button></form><iframe name="receipt"></iframe>`,
+    );
+    const { page } = await newGuardedPage();
+    await page.goto(`${app.baseUrl}/review-required`);
+    await page.fill("#name", "Synthetic Person");
+    await page.evaluate(
+      registerPrepareOnlyPreparedValueInPage,
+      "Synthetic Person",
+    );
+    if (action === "click") await page.click("#send");
+    else await page.press("#send", "Enter");
+    expect(requestHitsFor(app.hits, "/manual-send")).toHaveLength(0);
+    expect(await page.locator("#nordri-send-review-required").count()).toBe(0);
+    await openPrepareOnlyFinalActionWindow(page);
+    await page.click("#send");
+    await page.waitForTimeout(200);
+    expect(requestHitsFor(app.hits, "/manual-send")).toHaveLength(1);
+  },
+);

@@ -6,112 +6,13 @@ import {
   createAgentBrowserRuntime,
   createSeed,
   createSourceInstructionArtifact,
+  learnedRoutesIntelligence,
   createStrongSourceDebugFindingsByPhase,
   createWorkspaceServiceHarness,
   toEditableSourceInstructionArtifactInput,
 } from "./workspace-service.test-support";
 
 describe("createJobFinderWorkspaceService", () => {
-  test("route hints that mention both source and destination prioritize the proven destination route", async () => {
-    const seed = createSeed();
-    seed.searchPreferences.discovery.targets[0] = {
-      ...seed.searchPreferences.discovery.targets[0]!,
-      startingUrl: "https://www.linkedin.com/jobs/",
-      instructionStatus: "draft",
-      draftInstructionId: "instruction_linkedin_from_to_route",
-      validatedInstructionId: null,
-    };
-    seed.sourceInstructionArtifacts = [
-      createSourceInstructionArtifact({
-        id: "instruction_linkedin_from_to_route",
-        targetId: "target_linkedin_default",
-        status: "draft",
-        createdAt: "2026-03-20T10:04:00.000Z",
-        updatedAt: "2026-03-20T10:05:00.000Z",
-        acceptedAt: null,
-        basedOnRunId: "debug_run_from_to_route",
-        basedOnAttemptIds: ["debug_attempt_from_to_route"],
-        notes: "From-to route hint.",
-        navigationGuidance: [
-          "Navigate from https://www.linkedin.com/jobs/ to https://www.linkedin.com/jobs/search/?keywords=frontend&location=kosovo.",
-        ],
-        searchGuidance: [
-          "https://www.linkedin.com/jobs/search/?keywords=frontend&location=kosovo reliably returns job cards with filter controls.",
-        ],
-        detailGuidance: [],
-        applyGuidance: [],
-        warnings: [],
-        versionInfo: {
-          promptProfileVersion: "v1",
-          toolsetVersion: "v1",
-          adapterVersion: "v1",
-          appSchemaVersion: "v1",
-        },
-        verification: null,
-      }),
-    ];
-
-    const capturedPhaseInputs = new Map<
-      string,
-      { startingUrls: readonly string[]; maxSteps: number }
-    >();
-    const baseRuntime = createAgentBrowserRuntime(
-      [
-        {
-          source: "target_site",
-          sourceJobId: "linkedin_from_to_route",
-          discoveryMethod: "catalog_seed",
-          canonicalUrl: "https://www.linkedin.com/jobs/view/linkedin_from_to_route",
-          title: "Senior Frontend Engineer",
-          company: "Signal Systems",
-          location: "Remote",
-          workMode: ["remote"],
-          applyPath: "easy_apply",
-          easyApplyEligible: true,
-          postedAt: "2026-03-20T09:00:00.000Z",
-          discoveredAt: "2026-03-20T10:04:00.000Z",
-          salaryText: null,
-          summary: "Validate destination route priority.",
-          description: "Validate destination route priority.",
-          keySkills: ["React"],
-        },
-      ],
-      {
-        debugFindingsByPhase: createStrongSourceDebugFindingsByPhase(),
-      },
-    );
-    const browserRuntime: BrowserSessionRuntime = {
-      ...baseRuntime,
-      runAgentDiscovery(source, options) {
-        capturedPhaseInputs.set(options.taskPacket?.strategyLabel ?? options.siteLabel, {
-          startingUrls: [...options.startingUrls],
-          maxSteps: options.maxSteps,
-        });
-        return baseRuntime.runAgentDiscovery!(source, options);
-      },
-    };
-    const { workspaceService } = createWorkspaceServiceHarness({
-      seed: {
-        ...seed,
-        savedJobs: [],
-        tailoredAssets: [],
-      },
-      browserRuntime,
-      aiClient: createAgentAiClient(),
-    });
-
-    await workspaceService.runSourceDebug("target_linkedin_default");
-
-    expect(capturedPhaseInputs.get("Site Structure Mapping")).toEqual({
-      startingUrls: [
-        "https://www.linkedin.com/jobs/",
-        "https://www.linkedin.com/jobs/?keywords=software&location=Remote",
-        "https://www.linkedin.com/jobs/search/?keywords=frontend&location=kosovo",
-      ],
-      maxSteps: 60,
-    });
-  });
-
   test("ignores wildcard and templated route hints when deriving starting urls", async () => {
     const seed = createSeed();
     seed.searchPreferences.discovery.targets[0] = {
@@ -151,6 +52,14 @@ describe("createJobFinderWorkspaceService", () => {
           appSchemaVersion: "v1",
         },
         verification: null,
+        intelligence: learnedRoutesIntelligence([
+          ["https://www.linkedin.com/jobs/collections/recommended/", "collection"],
+          ["https://www.linkedin.com/jobs/:jobId", "listing"],
+          [
+            "https://www.linkedin.com/jobs/search/?keywords=:keyword&location=:location",
+            "search",
+          ],
+        ]),
       }),
     ];
 
@@ -209,7 +118,6 @@ describe("createJobFinderWorkspaceService", () => {
       startingUrls: [
         "https://www.linkedin.com/jobs/collections/recommended/",
         "https://www.linkedin.com/jobs/",
-        "https://www.linkedin.com/jobs/?keywords=software&location=Remote",
       ],
       maxSteps: 60,
     });
@@ -251,6 +159,16 @@ describe("createJobFinderWorkspaceService", () => {
           appSchemaVersion: "v1",
         },
         verification: null,
+        intelligence: learnedRoutesIntelligence([
+          [
+            "https://www.linkedin.com/jobs/collections/recommended/?currentJobId=3973153031",
+            "collection",
+          ],
+          [
+            "https://www.linkedin.com/jobs/search/?keywords=React+Next.js+Developer&location=Pristina%2C+Kosovo&currentJobId=438896875",
+            "search",
+          ],
+        ]),
       }),
     ];
 
@@ -309,7 +227,6 @@ describe("createJobFinderWorkspaceService", () => {
       startingUrls: [
         "https://www.linkedin.com/jobs/collections/recommended/",
         "https://www.linkedin.com/jobs/",
-        "https://www.linkedin.com/jobs/?keywords=software&location=Remote",
         "https://www.linkedin.com/jobs/search/?keywords=React+Next.js+Developer&location=Pristina%2C+Kosovo",
       ],
       maxSteps: 60,
@@ -364,6 +281,14 @@ describe("createJobFinderWorkspaceService", () => {
           appSchemaVersion: "v1",
         },
         verification: null,
+        intelligence: learnedRoutesIntelligence([
+          ["https://example.com/careers/open-roles/", "listing"],
+          ["https://example.com/careers/search?team=product", "search"],
+          [
+            "https://example.com/careers/role/frontend-engineer?gh_jid=12345",
+            "detail",
+          ],
+        ]),
       }),
     ];
 

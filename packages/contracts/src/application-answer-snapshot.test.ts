@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { CandidateProfileSchema } from "./profile";
 
 import {
+  deriveApprovedApplicationAnswerSnapshotContent,
   ApprovedApplicationAnswerSnapshotSchema,
   serializeApprovedApplicationAnswerSnapshotForDigest,
 } from "./application-answer-snapshot";
@@ -87,4 +89,37 @@ describe("approved application answer snapshots", () => {
       }).success,
     ).toBe(false);
   });
+});
+
+it("unconfirmed old agent answers never enter the approved answer snapshot", () => {
+  const profile = CandidateProfileSchema.parse({
+    id: "synthetic",
+    yearsExperience: 0,
+    baseResume: {
+      id: "resume",
+      fileName: "synthetic.txt",
+      uploadedAt: "2026-10-01T10:00:00.000Z",
+      storagePath: "/synthetic",
+      textContent: "Synthetic",
+    },
+    answerBank: {
+      customAnswers: [
+        {
+          id: "old",
+          label: "Experience",
+          question: "Years?",
+          answer: "0",
+          kind: "other",
+          needsConfirmation: true,
+        },
+      ],
+    },
+  });
+  expect(
+    deriveApprovedApplicationAnswerSnapshotContent(profile).entries,
+  ).toEqual([]);
+  profile.answerBank.customAnswers[0]!.needsConfirmation = false;
+  expect(
+    deriveApprovedApplicationAnswerSnapshotContent(profile).entries[0]?.answer,
+  ).toBe("0");
 });

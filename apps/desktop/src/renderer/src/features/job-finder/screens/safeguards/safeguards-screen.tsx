@@ -1,16 +1,22 @@
-import { PageHeaderStack } from "../../components/page-header";
+import { useToast } from "@renderer/components/ui/toast";
+import {
+  PageHeaderStack,
+  type PageStatusItem,
+} from "../../components/page-header";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type {
   JobFinderWorkspaceSnapshot,
+  SetJobFinderActivityControlInput,
   SafeguardMutationInput,
 } from "@nordri/contracts";
-import { Search, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Search, ShieldCheck } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { EmptyState } from "@renderer/features/job-finder/components/empty-state";
 import { Input } from "@renderer/components/ui/input";
 import { StatusBadge } from "@renderer/features/job-finder/components/status-badge";
 import {
+  describeDailyPreparationUsage,
   formatDailyPreparationCapacityReachedText,
   isDailyPreparationCapacityExhausted,
 } from "@renderer/features/job-finder/lib/job-finder-daily-capacity";
@@ -55,18 +61,25 @@ function SafeguardRowCard(props: {
   return (
     <article
       aria-label={row.title}
-      className="grid gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-4 py-3"
+      className="grid min-w-0 gap-3 rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-4 py-3"
       data-safeguard-kind={row.kind}
       data-safeguard-blocked={row.blocked ? "true" : "false"}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="grid min-w-0 gap-0.5">
-          <h3 className="font-semibold text-foreground">{row.title}</h3>
+        <div className="grid min-w-0 flex-1 basis-48 gap-0.5">
+          <h3 className="break-words [overflow-wrap:anywhere] font-semibold text-foreground">
+            {row.title}
+          </h3>
           <p className="break-words text-(length:--text-small) text-foreground-soft">
             {row.subtitle}
           </p>
         </div>
-        <StatusBadge tone={row.statusTone}>{row.statusLabel}</StatusBadge>
+        <StatusBadge
+          className="max-w-full whitespace-normal"
+          tone={row.statusTone}
+        >
+          {row.statusLabel}
+        </StatusBadge>
       </div>
 
       <div className="grid gap-1 text-(length:--text-small) leading-5">
@@ -81,9 +94,13 @@ function SafeguardRowCard(props: {
           {row.lineage.jobs.length > 0 ? (
             <>
               <dt className="text-foreground-muted">Jobs</dt>
-              <dd className="text-foreground">
+              <dd className="min-w-0 text-foreground">
                 {row.lineage.jobs.map((label) => (
-                  <span className="block truncate" key={label} title={label}>
+                  <span
+                    className="block break-words [overflow-wrap:anywhere]"
+                    key={label}
+                    title={label}
+                  >
                     {label}
                   </span>
                 ))}
@@ -93,9 +110,13 @@ function SafeguardRowCard(props: {
           {row.lineage.companies.length > 0 ? (
             <>
               <dt className="text-foreground-muted">Companies</dt>
-              <dd className="text-foreground">
+              <dd className="min-w-0 text-foreground">
                 {row.lineage.companies.map((label) => (
-                  <span className="block truncate" key={label} title={label}>
+                  <span
+                    className="block break-words [overflow-wrap:anywhere]"
+                    key={label}
+                    title={label}
+                  >
                     {label}
                   </span>
                 ))}
@@ -105,9 +126,13 @@ function SafeguardRowCard(props: {
           {row.lineage.campaigns.length > 0 ? (
             <>
               <dt className="text-foreground-muted">Search plans</dt>
-              <dd className="text-foreground">
+              <dd className="min-w-0 text-foreground">
                 {row.lineage.campaigns.map((label) => (
-                  <span className="block truncate" key={label} title={label}>
+                  <span
+                    className="block break-words [overflow-wrap:anywhere]"
+                    key={label}
+                    title={label}
+                  >
                     {label}
                   </span>
                 ))}
@@ -117,7 +142,7 @@ function SafeguardRowCard(props: {
         </dl>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         {row.sampleLinks?.map((link) => (
           <Button
             asChild
@@ -137,9 +162,13 @@ function SafeguardRowCard(props: {
             <Link to={row.recoveryLink.href}>{row.recoveryLink.label}</Link>
           </Button>
         ) : null}
-        <span className="ml-auto flex flex-wrap justify-end gap-2">
+        <span className="ml-auto flex min-w-0 max-w-full flex-wrap justify-end gap-2">
           {row.controls.map((control) => (
             <Button
+              // Pair choices name both jobs; they wrap instead of pushing the
+              // card past a narrow column (the assistant panel open).
+              className="h-auto min-h-8 max-w-full whitespace-normal py-1.5 text-left"
+              data-safeguard-control
               disabled={isPending(safeguardMutationKey(control.mutation))}
               key={control.id}
               onClick={() => void runControl(control)}
@@ -170,6 +199,10 @@ export function SafeguardsScreen(props: {
   actionMessage: string | null;
   isPending: (controlId: string) => boolean;
   onMutateSafeguards: (input: SafeguardMutationInput) => Promise<boolean>;
+  onSetActivityControl?: (
+    input: SetJobFinderActivityControlInput,
+  ) => Promise<boolean>;
+  onResetBrowser?: () => Promise<boolean>;
   workspace: JobFinderWorkspaceSnapshot | null;
 }) {
   const { actionMessage, isPending, onMutateSafeguards, workspace } = props;
@@ -178,6 +211,14 @@ export function SafeguardsScreen(props: {
     searchParams.get("tab") === "reviews" ? "reviews" : "all",
   );
   const [query, setQuery] = useState("");
+  const { showToast } = useToast();
+  const [browserResetPending, setBrowserResetPending] = useState(false);
+  const [browserResetError, setBrowserResetError] = useState<string | null>(
+    null,
+  );
+  const [confirmBrowserReset, setConfirmBrowserReset] = useState(false);
+  const [resumePending, setResumePending] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
   const [eventsOpenOverride, setEventsOpenOverride] = useState<boolean | null>(
     null,
   );
@@ -224,181 +265,299 @@ export function SafeguardsScreen(props: {
   const dailyCapacityExhausted =
     isDailyPreparationCapacityExhausted(dailyCapacity);
 
+  const isPaused = Boolean(workspace.activityControl?.paused);
+  const resumeActivity = () => {
+    setResumePending(true);
+    setResumeError(null);
+    void props
+      .onSetActivityControl?.({ paused: false })
+      .then((ok) => {
+        if (!ok) throw new Error("Resume failed");
+      })
+      .catch(() => setResumeError("Work could not be resumed. Try again."))
+      .finally(() => setResumePending(false));
+  };
+  // Conditions that affect this page but are owned elsewhere are items on
+  // the header's status line, not boxes (ADR 0044). How many things are held
+  // back is said once, on the events section below.
+  const statusItems: PageStatusItem[] = [];
+  if (resumeError) {
+    statusItems.push({
+      id: "resume-error",
+      tone: "critical",
+      text: resumeError,
+    });
+  }
+  if (isPaused) {
+    statusItems.push({
+      id: "activity-paused",
+      tone: "warning",
+      text: "Everything is paused. Searches, application preparation and scheduled plans wait until you resume.",
+      ...(props.onSetActivityControl
+        ? {
+            action: {
+              kind: "button",
+              label: "Resume everything",
+              onClick: resumeActivity,
+              pending: resumePending,
+            },
+          }
+        : {}),
+    });
+  }
+  if (dailyCapacityExhausted && dailyCapacity) {
+    statusItems.push({
+      id: "daily-capacity",
+      tone: "info",
+      text: formatDailyPreparationCapacityReachedText(dailyCapacity),
+    });
+  }
+
   return (
-    <section aria-label="High-volume safeguards" className="grid gap-4">
+    <section aria-label="High-volume safeguards" className="min-w-0">
       {/* This screen used to paint its own <h1> at a bespoke size, so its
           page title could drift away from every other route's. It goes
           through the shared PageHeader like the rest of the app. The card
           below states the boundary in full, so the description no longer
           paraphrases it in smaller type first. */}
       <PageHeaderStack
-        description="What Job Finder is allowed to do on an application site, and the automatic limits that keep a high-volume search safe."
-        meta="Quality and reputation"
+        description="What Job Finder may do on application sites, and the limits that keep a large search safe."
+        statusItems={statusItems}
         title="Safeguards"
       />
 
-      <SafeguardsApplicationBoundary />
+      {/* The header stack owns the seam to the content; the 16px gap is for
+          the blocks below it only. */}
+      <div className="grid gap-4">
+        {/* An all-clear is a plain line, never a box (ADR 0042). The pause and
+          the daily limit are on the status line above. */}
+        {!isPaused && blockedCount === 0 && !dailyCapacityExhausted ? (
+          <div
+            className="flex flex-wrap items-center gap-2 text-(length:--text-small) text-foreground-soft"
+            role="status"
+          >
+            <ShieldCheck aria-hidden="true" className="size-4 text-positive" />
+            <span>
+              Nothing is being held back right now. Searching and preparing
+              applications can both run.
+            </span>
+          </div>
+        ) : null}
 
-      {/* Limits are read when a run starts, so a change never reaches the
+        {actionMessage ? (
+          <p
+            className="rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-3 py-2 text-(length:--text-small) leading-5 text-foreground-soft"
+            role="status"
+          >
+            {actionMessage}
+          </p>
+        ) : null}
+
+        <details
+          className="surface-panel-shell grid min-w-0 gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-4"
+          data-safeguard-events
+          onToggle={(event) =>
+            setEventsOpenOverride(event.currentTarget.open ? true : false)
+          }
+          open={eventsOpen}
+        >
+          <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-(length:--text-body) font-semibold text-(--text-headline)">
+            Safety events and automatic pauses
+            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-(--input) px-1 text-(length:--text-tiny) tabular-nums font-normal text-foreground">
+              {model.counts.total}
+            </span>
+            {blockedCount > 0 ? (
+              <span
+                className="inline-flex items-center gap-1.5 text-(length:--text-small) font-normal text-foreground"
+                data-safeguard-held-count
+              >
+                <span
+                  aria-hidden="true"
+                  className="size-2 rounded-full bg-destructive"
+                />
+                {blockedCount} holding work back
+              </span>
+            ) : null}
+          </summary>
+
+          <div className="grid min-w-0 gap-3 pt-3">
+            {!isEmpty ? (
+              <div
+                className="grid min-w-0 gap-3 lg:grid-cols-[minmax(14rem,1fr)_minmax(0,3fr)] lg:items-start"
+                data-safeguard-toolbar
+              >
+                <div className="relative min-w-0">
+                  <Search
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                  />
+                  <Input
+                    aria-label="Search safeguards"
+                    className="pl-9"
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search safeguards"
+                    type="search"
+                    value={query}
+                  />
+                </div>
+                <div
+                  aria-label="Safeguard categories"
+                  className="flex min-w-0 w-full flex-wrap items-center gap-1 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) p-1"
+                  data-safeguard-categories
+                  role="group"
+                >
+                  {visibleTabs.map((entry) => {
+                    const count = countForTab(model.counts, entry.id);
+                    return (
+                      <button
+                        aria-pressed={activeTab === entry.id}
+                        className={cn(
+                          "inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-full px-3 text-(length:--text-small) font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40",
+                          activeTab === entry.id
+                            ? "bg-secondary text-foreground"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                        key={entry.id}
+                        onClick={() => setTab(entry.id)}
+                        type="button"
+                      >
+                        {entry.label}
+                        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-(--input) px-1 text-(length:--text-tiny) tabular-nums text-foreground">
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {isEmpty ? (
+              <div data-safeguard-empty>
+                <EmptyState
+                  className="min-h-40 px-5 py-6"
+                  description="Job Finder records an event here only when one of its limits is actually reached — a per-company application limit, a listing that looks closed or suspicious, an unusual run of failures, or a batch waiting for your spot check. Nothing has been recorded yet."
+                  title="No safety events yet"
+                />
+              </div>
+            ) : isNoMatch ? (
+              <EmptyState
+                className="min-h-40 px-5 py-6"
+                description="Nothing in this category matches your search. Try a different term or clear the search box."
+                title="No matching safeguards"
+              />
+            ) : (
+              <div className="grid min-w-0 gap-3">
+                {visibleRows.map((row) => (
+                  <SafeguardRowCard
+                    isPending={isPending}
+                    key={row.key}
+                    onMutate={(mutation) => {
+                      setEventsOpenOverride(true);
+                      return onMutateSafeguards(mutation);
+                    }}
+                    row={row}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </details>
+        <SafeguardsApplicationBoundary>
+          <div className="grid justify-items-start gap-2">
+            <p className="text-sm text-foreground-soft">
+              Reset closes all tabs, clears forms, attachments and sign-ins, and
+              pauses work. Saved applications stay.
+            </p>
+            {confirmBrowserReset ? (
+              <div
+                role="alertdialog"
+                aria-label="Reset browser confirmation"
+                className="flex flex-wrap gap-3"
+              >
+                <span>
+                  Close every browser tab and clear form entries, attachments
+                  and sign-ins? Saved applications stay.
+                </span>
+                <Button
+                  pending={browserResetPending}
+                  onClick={() => {
+                    setBrowserResetPending(true);
+                    setBrowserResetError(null);
+                    void props
+                      .onResetBrowser?.()
+                      .then((ok) => {
+                        if (!ok) throw new Error("Browser reset failed");
+                        setConfirmBrowserReset(false);
+                        showToast({
+                          title: "Browser cleared",
+                          description:
+                            "Work is paused. Resume everything when you are ready.",
+                        });
+                      })
+                      .catch(() =>
+                        setBrowserResetError(
+                          "The browser could not be fully cleared. Try again before continuing.",
+                        ),
+                      )
+                      .finally(() => setBrowserResetPending(false));
+                  }}
+                  variant="destructive"
+                  size="sm"
+                >
+                  Clear browser
+                </Button>
+                <Button
+                  disabled={browserResetPending}
+                  onClick={() => setConfirmBrowserReset(false)}
+                  variant="ghost"
+                  size="sm"
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                onClick={() => setConfirmBrowserReset(true)}
+                variant="outline"
+                size="sm"
+              >
+                Reset browser
+              </Button>
+            )}
+            {browserResetError ? (
+              <p role="alert" className="text-destructive">
+                {browserResetError}
+              </p>
+            ) : null}
+          </div>
+
+          {dailyCapacity ? (
+            <p className="text-sm text-foreground-soft">
+              {describeDailyPreparationUsage({
+                capacity: dailyCapacity,
+                results: workspace.applyJobResults ?? [],
+              })}
+            </p>
+          ) : null}
+          {/* Limits are read when a run starts, so a change never reaches the
           run already in progress; and the per-plan limits and stop rules
           are edited on the plan, not here, which this page used to leave
           unsaid. */}
-      <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-        Each limit is checked when its relevant work starts and applies from the
-        next run you start. Per-plan limits and stop rules are edited on each
-        plan in{" "}
-        <Link
-          className="font-medium text-foreground underline underline-offset-2"
-          to="/job-finder/campaigns"
-        >
-          Search plans
-        </Link>
-        .
-      </p>
-
-      {blockedCount > 0 ? (
-        <div
-          className="flex flex-wrap items-center gap-2 rounded-(--radius-field) border border-destructive/30 bg-destructive/10 px-3 py-2 text-(length:--text-small) text-foreground"
-          role="status"
-        >
-          <ShieldAlert aria-hidden="true" className="size-4 text-destructive" />
-          <span>
-            {blockedCount === 1
-              ? "1 thing is being held back."
-              : `${blockedCount} things are being held back.`}{" "}
-            Settle, dismiss, or retry them below so the affected work can carry
-            on.
-          </span>
-        </div>
-      ) : dailyCapacityExhausted && dailyCapacity ? (
-        <div
-          className="flex flex-wrap items-center gap-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-small) text-foreground"
-          data-testid="safeguards-daily-capacity-status"
-          role="status"
-        >
-          <ShieldAlert aria-hidden="true" className="size-4" />
-          <span>
-            Nothing is being held back right now.{" "}
-            {formatDailyPreparationCapacityReachedText(dailyCapacity)}
-          </span>
-        </div>
-      ) : (
-        <div
-          className="flex flex-wrap items-center gap-2 rounded-(--radius-field) border border-positive/30 bg-positive/10 px-3 py-2 text-(length:--text-small) text-foreground"
-          role="status"
-        >
-          <ShieldCheck aria-hidden="true" className="size-4 text-positive" />
-          <span>
-            Nothing is being held back right now. Searching and preparing
-            applications can both run.
-          </span>
-        </div>
-      )}
-
-      {actionMessage ? (
-        <p
-          className="rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-3 py-2 text-(length:--text-small) leading-5 text-foreground-soft"
-          role="status"
-        >
-          {actionMessage}
-        </p>
-      ) : null}
-
-      <details
-        className="surface-panel-shell grid min-w-0 gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-4"
-        data-safeguard-events
-        onToggle={(event) =>
-          setEventsOpenOverride(event.currentTarget.open ? true : false)
-        }
-        open={eventsOpen}
-      >
-        <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-(length:--text-body) font-semibold text-(--text-headline)">
-          Safety events and automatic pauses
-          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-(--input) px-1 text-(length:--text-tiny) tabular-nums font-normal text-foreground">
-            {model.counts.total}
-          </span>
-        </summary>
-
-        <div className="grid min-w-0 gap-3 pt-3">
-          {!isEmpty ? (
-            <div
-              className="grid min-w-0 gap-3 lg:grid-cols-[minmax(14rem,1fr)_minmax(0,3fr)] lg:items-start"
-              data-safeguard-toolbar
+          <p className="text-(length:--text-small) leading-6 text-foreground-soft">
+            Each limit is checked when its relevant work starts and applies from
+            the next run you start. Per-plan limits and stop rules are edited on
+            each plan in{" "}
+            <Link
+              className="font-medium text-foreground underline underline-offset-2"
+              to="/job-finder/campaigns"
             >
-              <div className="relative min-w-0">
-                <Search
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  aria-label="Search safeguards"
-                  className="pl-9"
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search safeguards"
-                  type="search"
-                  value={query}
-                />
-              </div>
-              <div
-                aria-label="Safeguard categories"
-                className="flex min-w-0 w-full flex-wrap items-center gap-1 rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel) p-1"
-                data-safeguard-categories
-                role="group"
-              >
-                {visibleTabs.map((entry) => {
-                  const count = countForTab(model.counts, entry.id);
-                  return (
-                    <button
-                      aria-pressed={activeTab === entry.id}
-                      className={cn(
-                        "inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-full px-3 text-(length:--text-small) font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/40",
-                        activeTab === entry.id
-                          ? "bg-secondary text-foreground"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}
-                      key={entry.id}
-                      onClick={() => setTab(entry.id)}
-                      type="button"
-                    >
-                      {entry.label}
-                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-(--input) px-1 text-(length:--text-tiny) tabular-nums text-foreground">
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {isEmpty ? (
-            <div data-safeguard-empty>
-              <EmptyState
-                className="min-h-40 px-5 py-6"
-                description="Job Finder records an event here only when one of its limits is actually reached — a per-company application limit, a listing that looks closed or suspicious, an unusual run of failures, or a batch waiting for your spot check. Nothing has been recorded yet."
-                title="No safety events yet"
-              />
-            </div>
-          ) : isNoMatch ? (
-            <EmptyState
-              className="min-h-40 px-5 py-6"
-              description="Nothing in this category matches your search. Try a different term or clear the search box."
-              title="No matching safeguards"
-            />
-          ) : (
-            <div className="grid gap-3">
-              {visibleRows.map((row) => (
-                <SafeguardRowCard
-                  isPending={isPending}
-                  key={row.key}
-                  onMutate={onMutateSafeguards}
-                  row={row}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </details>
+              Search plans
+            </Link>
+            .
+          </p>
+        </SafeguardsApplicationBoundary>
+      </div>
     </section>
   );
 }

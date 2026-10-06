@@ -2,6 +2,7 @@ import type {
   BrowserSessionRuntime,
   OpenBrowserSessionOptions,
 } from "@nordri/browser-runtime";
+import { addJobFromBrowserPage } from "./internal/workspace-browser-job";
 import { writeApplicationDocumentText } from "./internal/application-document-writer";
 import { randomUUID } from "node:crypto";
 import { recordApplicationsSentByPerson } from "./internal/application-sent-by-person";
@@ -256,6 +257,8 @@ export function createJobFinderWorkspaceService(
     fetchListingHtml,
     onActivityControlChanged,
     onDetachedApplyRunFinished,
+    onResumeEvidenceFinished,
+    onListingAssessmentFinished,
     onExplicitUserStart,
   } = options;
   const activeDiscoveryAbortControllerRef = {
@@ -279,6 +282,7 @@ export function createJobFinderWorkspaceService(
   let intelligenceTransitionTail: Promise<void> = Promise.resolve();
   let campaignTransitionTail: Promise<void> = Promise.resolve();
   const activeResumeVisionRunIds = new Set<string>();
+  const activeResumeEvidenceRunIds = new Set<string>();
   const shutdownPromiseRef = {
     current: null as Promise<void> | null,
   };
@@ -309,7 +313,10 @@ export function createJobFinderWorkspaceService(
     ) {
       labels.add("application preparation");
     }
-    if (activeResumeVisionRunIds.size > 0) {
+    if (
+      activeResumeVisionRunIds.size > 0 ||
+      activeResumeEvidenceRunIds.size > 0
+    ) {
       labels.add("resume analysis");
     }
 
@@ -386,6 +393,8 @@ export function createJobFinderWorkspaceService(
     documentManager,
     ...(exportFileVerifier ? { exportFileVerifier } : {}),
     repository,
+    listingAssessmentJobIds: new Set<string>(),
+    ...(onListingAssessmentFinished ? { onListingAssessmentFinished } : {}),
     activeDiscoveryAbortControllerRef,
     activeDiscoveryRunIdRef,
     activeDiscoveryPromiseRef,
@@ -423,6 +432,8 @@ export function createJobFinderWorkspaceService(
       return result;
     },
     activeResumeVisionRunIds,
+    activeResumeEvidenceRunIds,
+    ...(onResumeEvidenceFinished ? { onResumeEvidenceFinished } : {}),
     getWorkspaceSnapshot: () =>
       Promise.reject(new Error("Workspace snapshot method not initialized.")),
     readWorkspaceSnapshot: () =>
@@ -577,21 +588,21 @@ export function createJobFinderWorkspaceService(
       staleReason: string,
       jobIds?: readonly string[],
     ): Promise<void> {
-      const [drafts, tailoredAssets] = await Promise.all([
+      const [drafts, tailoredAssets, applicationRecords] = await Promise.all([
         repository.listResumeDrafts(),
         repository.listTailoredAssets(),
+        repository.listApplicationRecords(),
       ]);
 
       const targetJobIds = jobIds ? new Set(jobIds) : null;
 
+      const submittedJobIds = new Set(
+        applicationRecords
+          .filter((record) => record.status === "submitted")
+          .map((record) => record.jobId),
+      );
       for (const draft of drafts) {
-        if (
-          !draft.approvedAt &&
-          !draft.approvedExportId &&
-          draft.status !== "approved"
-        ) {
-          continue;
-        }
+        if (submittedJobIds.has(draft.jobId)) continue;
 
         if (targetJobIds && !targetJobIds.has(draft.jobId)) {
           continue;
@@ -744,7 +755,9 @@ export function createJobFinderWorkspaceService(
     // still land in this snapshot; a long continuation carries on in the
     // background instead of holding every read (the app showed "Loading your
     // workspace" for as long as the agent worked).
-    const recovery = resumeVerifyingUserActions();
+    const recovery = workspaceResetInProgress
+      ? Promise.resolve()
+      : resumeVerifyingUserActions();
     recovery.catch((error: unknown) => {
       console.error(
         "[user-actions] recovery of a verifying step failed",
@@ -1074,7 +1087,7 @@ export function createJobFinderWorkspaceService(
       dailyLimit
     ) {
       throw new Error(
-        `The global daily preparation safeguard allows at most ${dailyLimit} begun employer ${dailyLimit === 1 ? "application" : "applications"} per local day.`,
+        `You can start up to ${dailyLimit} ${dailyLimit === 1 ? "preparation" : "preparations"} per day. Today: ${capacity.used} started${capacity.legacyUncertain ? `, ${capacity.legacyUncertain} older attempts also count` : ""}${reservedJobs ? `, ${reservedJobs} reserved` : ""}. Retries and failed attempts count; continuing an open form does not. Change the limit in Settings → Applying.`,
       );
     }
   }
@@ -1501,7 +1514,33 @@ export function createJobFinderWorkspaceService(
     writeApplicationDocumentText: (input) =>
       writeApplicationDocumentText(context, input),
     ...snapshotProfileMethods,
+    saveProfile: (profile) =>
+      trackWorkspaceOperation("profile save", () =>
+        snapshotProfileMethods.saveProfile(profile),
+      ),
+    saveProfileAndSearchPreferences: (profile, preferences) =>
+      trackWorkspaceOperation("profile save", () =>
+        snapshotProfileMethods.saveProfileAndSearchPreferences(
+          profile,
+          preferences,
+        ),
+      ),
     resetWorkspace,
+    async withWorkspaceRestore(operation) {
+      if (
+        workspaceResetInProgress ||
+        activeWorkspaceOperationLabels().length > 0
+      )
+        throw new Error(
+          "Wait for Job Finder's current work to finish or stop it before restoring. Your workspace was kept.",
+        );
+      workspaceResetInProgress = true;
+      try {
+        await operation();
+      } finally {
+        workspaceResetInProgress = false;
+      }
+    },
     runResumeImport: (input) =>
       trackWorkspaceOperation("resume import", () =>
         snapshotProfileMethods.runResumeImport(input),
@@ -1546,7 +1585,11 @@ export function createJobFinderWorkspaceService(
     ...intelligenceMethods,
     setActivityControl,
     getWorkspaceSnapshot: () =>
-      trackWorkspaceOperation("workspace read", () => getWorkspaceSnapshot()),
+      workspaceResetInProgress
+        ? getWorkspaceSnapshot()
+        : trackWorkspaceOperation("workspace read", () =>
+            getWorkspaceSnapshot(),
+          ),
     getWorkspaceBootstrap,
     mutateSafeguards: safeguardMethods.mutateSafeguards,
     getSafeguardsOverview: safeguardMethods.getSafeguardsOverview,
@@ -1633,6 +1676,10 @@ export function createJobFinderWorkspaceService(
     ...applyRunStoreMethods,
     ...applicationAnswerMethods,
     ...groupedAnswerMethods,
+    saveUserActionAnswerDraft: (input) =>
+      trackWorkspaceOperation("answer draft", () =>
+        repository.saveUserActionAnswerDraft(input),
+      ),
     performUserAction: (command) =>
       trackWorkspaceOperation("application user action", () =>
         userActionMethods.performUserAction(command),
@@ -1640,13 +1687,13 @@ export function createJobFinderWorkspaceService(
     ...applicationMethods,
     recordApplicationsSentByPerson: () =>
       recordApplicationsSentByPerson(context),
-    generateResume: (jobId) =>
+    generateResume: (jobId, options) =>
       trackWorkspaceOperation("resume generation", () =>
-        applicationMethods.generateResume(jobId),
+        applicationMethods.generateResume(jobId, options),
       ),
-    regenerateResumeDraft: (jobId) =>
+    regenerateResumeDraft: (jobId, options) =>
       trackWorkspaceOperation("resume generation", () =>
-        applicationMethods.regenerateResumeDraft(jobId),
+        applicationMethods.regenerateResumeDraft(jobId, options),
       ),
     regenerateResumeSection: (jobId, sectionId) =>
       trackWorkspaceOperation("resume generation", () =>
@@ -1801,6 +1848,10 @@ export function createJobFinderWorkspaceService(
     applyAssistantResumeRevision:
       assistantEditMethods.applyAssistantResumeRevision,
     undoAssistantResumeChange: assistantEditMethods.undoAssistantResumeChange,
+    addJobFromBrowserPage: (input) =>
+      trackWorkspaceOperation("discovery", () =>
+        addJobFromBrowserPage(context, input),
+      ),
     extractJobsFromPageText: (input) => extractJobsFromPageText(context, input),
     saveJobsFromPage: (input) =>
       trackWorkspaceOperation("discovery", () =>

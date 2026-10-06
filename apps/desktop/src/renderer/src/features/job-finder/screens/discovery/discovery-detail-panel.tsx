@@ -1,3 +1,5 @@
+import { describeListingReadFailure } from "../../lib/describe-failure";
+import { joinUniqueSentences } from "../../lib/sentence-copy";
 import {
   discoveryFeedbackOptions,
   formatDiscoveryHideReason,
@@ -184,6 +186,8 @@ interface DiscoveryDetailPanelProps {
   onOpenApplication?: (recordId: string) => void;
   /** Opens the original listing page in the Job Finder browser. */
   onOpenListing?: (url: string) => void;
+  onAssessJobListing?: (jobId: string) => Promise<void>;
+  onBackToResults?: () => void;
   onQueueJob: (jobId: string) => void;
   /**
    * Request-local outcome of this job's own Shortlist decision, correlated by
@@ -463,6 +467,8 @@ export function DiscoveryDetailPanel({
   onOpenCompany,
   onOpenApplication = () => undefined,
   onOpenListing,
+  onAssessJobListing,
+  onBackToResults,
   onQueueJob,
   queueFeedback,
   selectedJob,
@@ -477,6 +483,11 @@ export function DiscoveryDetailPanel({
   const [copiedListingJobId, setCopiedListingJobId] = useState<string | null>(
     null,
   );
+  const [assessmentErrorJobId, setAssessmentErrorJobId] = useState<
+    string | null
+  >(null);
+  const [assessmentError, setAssessmentError] = useState<string | null>(null);
+  const [assessingJobId, setAssessingJobId] = useState<string | null>(null);
   const [listingCopyFailedJobId, setListingCopyFailedJobId] = useState<
     string | null
   >(null);
@@ -523,7 +534,9 @@ export function DiscoveryDetailPanel({
     employerExclusionPreview?.jobId === selectedJob?.id
       ? employerExclusionPreview
       : null;
-  const isAlreadyShortlisted = selectedJob?.status !== "discovered";
+  const isAlreadyShortlisted =
+    selectedJob !== null &&
+    !["discovered", "shortlisted"].includes(selectedJob.status);
   const existingNeedsYouApplication = selectedJob
     ? applicationRecords.find(
         (record) =>
@@ -655,16 +668,18 @@ export function DiscoveryDetailPanel({
   // One honest sentence instead of a wall of cards: the hedge when nothing was
   // verified, otherwise the first saved reason.
   const whyItFitsLine = selectedJob
-    ? (assessmentPresentation?.withheldReason ??
-      (selectedJob.matchAssessment.recommendation === "skip"
-        ? scrubJobAbsencePlaceholders(
+    ? selectedJob.matchAssessment.recommendation === "skip"
+      ? scrubJobAbsencePlaceholders(
+          joinUniqueSentences([
             selectedJob.matchAssessment.recommendationRationale ?? "",
-          ) || "This listing conflicts with your saved profile."
-        : scrubJobAbsencePlaceholders(
-            selectedJob.matchAssessment.reasons.find(
-              (reason) => reason.trim().length > 0,
-            ) ?? "",
-          ) ||
+          ]),
+        ) || "This listing conflicts with your saved profile."
+      : (assessmentPresentation?.withheldReason ??
+        (scrubJobAbsencePlaceholders(
+          selectedJob.matchAssessment.reasons.find(
+            (reason) => reason.trim().length > 0,
+          ) ?? "",
+        ) ||
           "Estimated from the listing requirements and evidence in your approved profile."))
     : "";
 
@@ -824,11 +839,23 @@ export function DiscoveryDetailPanel({
         <p className="text-(length:--text-heading-3) font-semibold text-(--text-headline)">
           Job details
         </p>
+        {onBackToResults ? (
+          <Button
+            className="xl:hidden"
+            onClick={onBackToResults}
+            size="sm"
+            variant="ghost"
+          >
+            Back to results
+          </Button>
+        ) : null}
         {/* "Discovered" is the state of every row on this page; the badge
             only earns its place once the job has moved on to Shortlisted. */}
         {selectedJob &&
         readinessStatus &&
-        selectedJob.status !== "discovered" ? (
+        ["drafting", "ready_for_review", "approved", "submitted"].includes(
+          selectedJob.status,
+        ) ? (
           <StatusBadge tone={readinessStatus.tone}>
             {readinessStatus.label}
           </StatusBadge>
@@ -933,6 +960,17 @@ export function DiscoveryDetailPanel({
                 this listing.
               </p>
             ) : null}
+            {selectedJob.listingDetailFetch?.identityConflict ? (
+              <p
+                className="break-words text-(length:--text-tiny) leading-5 text-foreground-muted"
+                data-testid="discovery-detail-role-conflict"
+                role="note"
+              >
+                The listing page now names a different role:{" "}
+                {selectedJob.listingDetailFetch.identityConflict.observedTitle}.
+                Open the listing and check it before you apply.
+              </p>
+            ) : null}
             {!isAlreadyShortlisted && isReportedClosed ? (
               <p
                 className="break-words text-(length:--text-tiny) leading-5 text-foreground-muted"
@@ -969,7 +1007,7 @@ export function DiscoveryDetailPanel({
               role="region"
               tabIndex={0}
             >
-              <div className="grid min-h-full content-start gap-5">
+              <div className="grid min-h-full min-w-0 content-start gap-5 [overflow-wrap:anywhere]">
                 {/* The job first, the app's reasoning after it. A job seeker
                   asks what the job is, what it pays, and why them — in that
                   order — so the listing text, pay and place lead, the score
@@ -982,7 +1020,7 @@ export function DiscoveryDetailPanel({
                   <span className="text-(length:--text-tiny) uppercase tracking-(--tracking-label) text-foreground-soft">
                     About this job
                   </span>
-                  <p className="text-(length:--text-body) leading-7 text-foreground-soft">
+                  <p className="min-w-0 text-(length:--text-body) leading-7 text-foreground-soft">
                     {wasDiscoveryListingReadBlocked(selectedJob)
                       ? describeDiscoveryMissingListingText(selectedJob)
                       : listingExcerpt ||
@@ -1190,7 +1228,9 @@ export function DiscoveryDetailPanel({
                     screen, so it sits below the listing rather than above it. */}
                 {selectedJobCompanyId && onOpenCompany && employerDisplay ? (
                   <Button
-                    className="justify-self-start"
+                    // A long employer name wraps inside the column instead of
+                    // widening it and clipping the listing text beside it.
+                    className="h-auto min-h-8 max-w-full justify-self-start whitespace-normal py-1.5 text-left"
                     onClick={() => onOpenCompany(selectedJobCompanyId)}
                     size="sm"
                     type="button"
@@ -1448,7 +1488,7 @@ export function DiscoveryDetailPanel({
                 ) : null}
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    disabled={isFeedbackPending || feedbackReasons.length === 0}
+                    disabled={isFeedbackPending}
                     onClick={() => {
                       void dismissSelectedJob(selectedJob.id);
                     }}
@@ -1488,6 +1528,47 @@ export function DiscoveryDetailPanel({
                 The open and copy actions stay available while the feedback
                 form is open. */}
             <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {onAssessJobListing ? (
+                <Button
+                  disabled={isSelectedJobPending}
+                  pending={isSelectedJobPending}
+                  onClick={() => {
+                    const jobId = selectedJob.id;
+                    setAssessmentErrorJobId(null);
+                    setAssessingJobId(jobId);
+                    void onAssessJobListing(jobId)
+                      .catch((error: unknown) => {
+                        setAssessmentErrorJobId(jobId);
+                        setAssessmentError(
+                          describeListingReadFailure(error, {
+                            listingUrl: selectedJob.canonicalUrl,
+                          }),
+                        );
+                      })
+                      .finally(() =>
+                        setAssessingJobId((current) =>
+                          current === jobId ? null : current,
+                        ),
+                      );
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  {assessingJobId === selectedJob.id
+                    ? "Reading the listing… about a minute"
+                    : "Read and assess listing"}
+                </Button>
+              ) : null}
+              {assessmentErrorJobId === selectedJob.id ? (
+                <p
+                  role="alert"
+                  className="text-(length:--text-small) text-foreground-soft"
+                >
+                  {assessmentError ??
+                    "Could not assess this listing. Try again."}
+                </p>
+              ) : null}
               {onOpenListing ? (
                 <Button
                   data-testid="discovery-detail-open-listing"

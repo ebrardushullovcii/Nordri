@@ -1,3 +1,6 @@
+import { useToast } from "@renderer/components/ui/toast";
+import { isActionNews, isActionSuccessToast } from "./action-news-toast";
+import { stopAssistantUiResumeBatch } from "./use-job-finder-page-controller-actions";
 import { useResumeOperationStarts } from "./use-resume-operation-starts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
@@ -53,7 +56,7 @@ import {
   getActiveResumeWorkspaceJobId,
   getJobFinderWorkspaceSelection,
   getLatestApplicationAttempt,
-  useResettableSelection,
+  useApplicationSelection,
   useRetainedSelection,
 } from "./use-job-finder-page-controller-helpers";
 import { applyJobFinderWindowCloseGuard } from "./job-finder-window-close-guard";
@@ -243,6 +246,7 @@ export function useJobFinderPageController() {
     [routerNavigate],
   );
   const workspaceState = useJobFinderWorkspace();
+  const { showToast } = useToast();
   const [actionState, setActionState] = useState<ActionState>({
     message: null,
   });
@@ -259,6 +263,39 @@ export function useJobFinderPageController() {
     (next: SetStateAction<ActionState>, ownerPathOverride?: string | null) => {
       const resolved =
         typeof next === "function" ? next(actionStateRef.current) : next;
+      if (isActionNews(resolved.message)) {
+        showToast({ title: resolved.message! });
+        actionStateRef.current = { message: null };
+        actionMessageOwnerPathRef.current = null;
+        setActionState({ message: null });
+        return;
+      }
+      const carried = resolved as ActionStateStatusWrite;
+      const ownerPath =
+        carried.ownerPath ??
+        ownerPathOverride ??
+        latestLocationPathnameRef.current;
+      // A finished action on a screen that reports outcomes as toasts. Only a
+      // success qualifies; failures stay inline next to what they concern.
+      if (isActionSuccessToast(resolved, ownerPath)) {
+        const link = resolved.actionLink ?? null;
+        showToast({
+          title: resolved.message!,
+          tone: resolved.toastTone ?? "success",
+          ...(link
+            ? {
+                action: {
+                  label: link.label,
+                  onClick: () => navigate(link.route),
+                },
+              }
+            : {}),
+        });
+        actionStateRef.current = { message: null };
+        actionMessageOwnerPathRef.current = null;
+        setActionState({ message: null });
+        return;
+      }
       actionStateRef.current = resolved;
 
       if (resolved.message === null) {
@@ -267,15 +304,11 @@ export function useJobFinderPageController() {
         return;
       }
 
-      const carried = resolved as ActionStateStatusWrite;
-      actionMessageOwnerPathRef.current =
-        carried.ownerPath ??
-        ownerPathOverride ??
-        latestLocationPathnameRef.current;
+      actionMessageOwnerPathRef.current = ownerPath;
       const cleanState = stripActionStateOwner(carried);
       setActionState(cleanState);
     },
-    [setActionState],
+    [navigate, setActionState, showToast],
   );
   const [initialSaveReceipt] = useState(() =>
     loadJobFinderSaveReceipt(window.localStorage),
@@ -401,18 +434,21 @@ export function useJobFinderPageController() {
     workspaceState.status === "ready"
       ? workspaceState.resumeImportProgress
       : null;
-  const cancelImportResumeIfWaiting = useCallback(() => {
-    const scope = jobFinderPendingActions.profileImport();
-    if (
-      !hasPendingAction(pendingActionStateRef.current, scope) ||
-      resumeImportProgressRef.current !== null
-    ) {
-      return;
-    }
+  const cancelImportResumeIfWaiting = useCallback(
+    (includeProcessing = false) => {
+      const scope = jobFinderPendingActions.profileImport();
+      if (
+        !hasPendingAction(pendingActionStateRef.current, scope) ||
+        (!includeProcessing && resumeImportProgressRef.current !== null)
+      ) {
+        return;
+      }
 
-    window.nordri.jobFinder.cancelImportResume();
-    clearResumeLifecyclePending([scope]);
-  }, [clearResumeLifecyclePending]);
+      window.nordri.jobFinder.cancelImportResume(includeProcessing);
+      clearResumeLifecyclePending([scope]);
+    },
+    [clearResumeLifecyclePending],
+  );
   const [liveDiscoveryEvents, setLiveDiscoveryEvents] = useState<
     DiscoveryActivityEvent[]
   >([]);
@@ -441,6 +477,18 @@ export function useJobFinderPageController() {
     useState<TailoredDraftPreparationViewState>(
       createIdleTailoredDraftPreparationState,
     );
+  useEffect(
+    () =>
+      window.nordri.assistant?.onResumeBatchStop?.((batchId) => {
+        if (!stopAssistantUiResumeBatch(batchId)) return;
+        setTailoredDraftPreparation((current) =>
+          current.status === "running"
+            ? { ...current, stopRequested: true }
+            : current,
+        );
+      }),
+    [],
+  );
   const tailoredDraftPreparationRunRef = useRef(false);
   const tailoredDraftPreparationStopRequestedRef = useRef(false);
   const tailoredDraftPreparationDisposedRef = useRef(false);
@@ -537,7 +585,7 @@ export function useJobFinderPageController() {
     },
   });
   const [selectedApplicationRecordId, setSelectedApplicationRecordId] =
-    useResettableSelection(
+    useApplicationSelection(
       workspaceState.status === "ready"
         ? workspaceState.workspace.selectedApplicationRecordId
         : null,
@@ -1260,7 +1308,7 @@ export function useJobFinderPageController() {
       clearResumeWorkspaceState,
       setResumeWorkspaceDirty: applyResumeWorkspaceDirty,
       onProfileSurfaceDraftEdited: noteProfileSurfaceDraftEdited,
-      onCancelImportResume: cancelImportResumeIfWaiting,
+      onCancelImportResume: () => cancelImportResumeIfWaiting(true),
       onResumeWorkspaceDraftEdited: noteResumeWorkspaceDraftEdited,
       onSettingsDraftEdited: noteSettingsDraftEdited,
       setSelectedApplicationRecordId,

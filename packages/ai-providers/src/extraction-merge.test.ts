@@ -44,7 +44,7 @@ describe('resume extraction merge', () => {
       ],
       education: [
         {
-          schoolName: 'Riinvest',
+          schoolName: 'Arbana',
           degree: null,
           fieldOfStudy: null,
           location: 'Prishtina',
@@ -102,7 +102,7 @@ describe('resume extraction merge', () => {
       ],
       education: [
         {
-          schoolName: 'Riinvest College',
+          schoolName: 'Arbana College',
           degree: 'BSc',
           fieldOfStudy: 'Computer Science',
           location: 'Prishtina',
@@ -133,7 +133,7 @@ describe('resume extraction merge', () => {
     )
     expect(result.education).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ schoolName: 'Riinvest College', degree: 'BSc' }),
+        expect.objectContaining({ schoolName: 'Arbana College', degree: 'BSc' }),
         expect.objectContaining({ schoolName: 'Local College', degree: 'BSc' }),
         expect.objectContaining({ schoolName: 'Graduate School', degree: 'MSc' })
       ])

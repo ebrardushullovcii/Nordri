@@ -1,7 +1,18 @@
+import { withResumeBatchLiveness } from "./resume-batch-checkpoint";
+import { groupCompanyConflicts } from "./same-company-sends";
+import { readPlanAssessment } from "./plan-assessment";
+import { readSalaryDisclosurePreference } from "./salary-disclosure-preference";
+import { hasVerifiedApplicationSubmission } from "./workspace-apply-run-support";
+import {
+  isUnsentPreparedApplication,
+  retireLostPreparedApplication,
+} from "./application-page-lifecycle";
 import {
   type ApplicationCrmSettings,
   type JobDiscoveryTarget,
   ApplicationCrmSettingsSchema,
+  AiBehaviorPreferenceSchema,
+  CoverLetterPreferenceSchema,
   AppearanceThemeSchema,
   CandidateProfileSchema,
   JobFinderSettingsSchema,
@@ -27,6 +38,7 @@ import {
   type JobSearchPreferences,
   type JobSource,
   isBlockingResumeClaimAssessment,
+  isBlockingResumeValidationIssue,
   isListableCompanyName,
   type ProfileSetupState,
   type ResumeApplicationMode,
@@ -53,7 +65,10 @@ import {
 } from "./profile-workspace-state";
 import { resolvePendingReviewItemsAfterExplicitSave } from "./profile-setup-review-items";
 import { normalizeProfileBeforeSave } from "./profile-merge";
-import { runResumeImportWorkflow } from "./resume-import-workflow";
+import {
+  isResumeImportActiveInProcess,
+  runResumeImportWorkflow,
+} from "./resume-import-workflow";
 import { persistResumeTimelineRepairAction } from "./resume-timeline-repair";
 import {
   hasResumeAffectingProfileChange,
@@ -75,6 +90,7 @@ import { persistAutomaticApplicationSafeguards } from "./automatic-safeguards";
 import { reconcileAutomaticBatchSampleReviews } from "./automatic-batch-review-recovery";
 import { reconcileStaleMissingResumeBlockers } from "./workspace-application-blocker-sync";
 import { terminalizeApplicationAfterPreparedPageLost } from "./workspace-application-user-action";
+import { recordCampaignDiscoveryResult } from "./workspace-campaign-methods";
 import { recoverInterruptedDiscoveryRun } from "./workspace-discovery-run-helpers";
 import {
   deriveSourceAccessPrompts,
@@ -385,22 +401,7 @@ export function createWorkspaceSnapshotProfileMethods(
       await ctx.repository.saveCampaignState({
         ...campaignState,
         campaigns: campaignState.campaigns.map((campaign) => {
-          const existingTargets = new Map(
-            campaign.searchPreferences.discovery.targets.map((target) => [
-              target.id,
-              target,
-            ]),
-          );
-          const liveTargets = searchPreferences.discovery.targets.map(
-            (target) => ({
-              ...target,
-              // Plans own only the on/off choice. A source newly added in
-              // Profile follows Profile's current setting in every plan until
-              // the person changes that plan.
-              enabled:
-                existingTargets.get(target.id)?.enabled ?? target.enabled,
-            }),
-          );
+          const liveTargets = searchPreferences.discovery.targets;
           const campaignPreferences =
             campaign.id === campaignState.activeCampaignId
               ? {
@@ -420,9 +421,7 @@ export function createWorkspaceSnapshotProfileMethods(
           return {
             ...campaign,
             searchPreferences: campaignPreferences,
-            sourceTargetIds: liveTargets
-              .filter((target) => target.enabled)
-              .map((target) => target.id),
+            sourceTargetIds: campaign.sourceTargetIds,
             updatedAt: now,
           };
         }),
@@ -510,15 +509,17 @@ export function createWorkspaceSnapshotProfileMethods(
         );
 
       const jobsById = new Map(savedJobs.map((job) => [job.id, job]));
+      const verifiedJobIds = new Set(
+        allResults
+          .filter(hasVerifiedApplicationSubmission)
+          .map((result) => result.jobId),
+      );
       const lostPreparedReviewCandidates = ctx.browserRuntime
         .hasApplicationPageBinding
         ? allResults.filter(
             (result) =>
-              result.state === "awaiting_review" &&
-              result.applicationRecordId !== null &&
-              result.blockerReason === null &&
-              (result.reviewCard === null ||
-                result.reviewCard.waitingOnYou.length === 0) &&
+              !verifiedJobIds.has(result.jobId) &&
+              isUnsentPreparedApplication(result) &&
               result.privacyReceipt?.submissionOutcome?.outcome !==
                 "outcome_uncertain" &&
               jobsById.has(result.jobId) &&
@@ -740,6 +741,12 @@ export function createWorkspaceSnapshotProfileMethods(
             eventId: `event_${result.id}_prepared_page_binding_lost`,
             preserveRunningRun: parkedRunIds.has(result.runId),
           });
+          await retireLostPreparedApplication({
+            repository: ctx.repository,
+            applicationRecordId: result.applicationRecordId,
+            resultId: result.id,
+            occurredAt: completedAt,
+          });
         }
       }
     })();
@@ -833,6 +840,19 @@ export function createWorkspaceSnapshotProfileMethods(
             : current.recentRuns,
         };
       });
+      const persisted = await ctx.repository.getDiscoveryState();
+      if (
+        recoveredRun?.campaignId &&
+        persisted.recentRuns.some(
+          (run) => run.id === recoveredRun.id && run.runPhase === "interrupted",
+        )
+      ) {
+        await recordCampaignDiscoveryResult({
+          ctx,
+          campaignId: recoveredRun.campaignId,
+          beforeJobProvenanceFingerprints: new Map(),
+        });
+      }
     })();
 
     interruptedDiscoveryRecoveryPromise = recoveryPromise;
@@ -914,7 +934,7 @@ export function createWorkspaceSnapshotProfileMethods(
 
     const [
       setupContext,
-      savedJobs,
+      rawSavedJobs,
       tailoredAssets,
       resumeDrafts,
       resumeExportArtifacts,
@@ -932,7 +952,7 @@ export function createWorkspaceSnapshotProfileMethods(
       userActionRequests,
       userActionEvents,
       activityControl,
-      intelligence,
+      rawIntelligence,
     ] = await Promise.all([
       getCurrentSetupStateContext(),
       ctx.repository.listSavedJobs(),
@@ -956,9 +976,31 @@ export function createWorkspaceSnapshotProfileMethods(
       ctx.repository.getIntelligenceState(),
     ]);
 
+    let intelligence = groupCompanyConflicts(
+      rawIntelligence,
+      applicationRecords,
+      rawSavedJobs,
+    );
+    if (JSON.stringify(intelligence) !== JSON.stringify(rawIntelligence)) {
+      intelligence = await ctx.withIntelligenceTransition(async () => {
+        const current = await ctx.repository.getIntelligenceState();
+        const grouped = groupCompanyConflicts(
+          current,
+          applicationRecords,
+          rawSavedJobs,
+        );
+        if (JSON.stringify(grouped) !== JSON.stringify(current))
+          await ctx.repository.saveIntelligenceState(grouped);
+        return grouped;
+      });
+    }
+
     const availableResumeTemplates = ctx.documentManager.listResumeTemplates();
     const normalizedSettings = normalizeJobFinderSettings(
-      rawSettings,
+      {
+        ...rawSettings,
+        salaryDisclosure: await readSalaryDisclosurePreference(ctx.repository),
+      },
       availableResumeTemplates,
     );
     const settings: JobFinderSettings = normalizedSettings.applicationCrm
@@ -997,11 +1039,22 @@ export function createWorkspaceSnapshotProfileMethods(
       generatedAt,
     });
 
+    let campaignState = await ctx.withCampaignTransition(() =>
+      ensureCampaignState({
+        repository: ctx.repository,
+        searchPreferences: setupContext.searchPreferences,
+        now: generatedAt,
+      }),
+    );
+    const snapshotPlanId = campaignState.activeCampaignId;
+    const savedJobs = rawSavedJobs.map((job) =>
+      readPlanAssessment(job, snapshotPlanId),
+    );
     const persistedDiscoveryJobs = buildDiscoveryJobs(savedJobs);
     const savedJobIds = new Set(savedJobs.map((job) => job.id));
-    const mergedPendingJobs = discovery.pendingDiscoveryJobs.filter(
-      (job) => !savedJobIds.has(job.id),
-    );
+    const mergedPendingJobs = discovery.pendingDiscoveryJobs
+      .filter((job) => !savedJobIds.has(job.id))
+      .map((job) => readPlanAssessment(job, snapshotPlanId));
     // Listing activity is projected before anything is ranked: a listing whose
     // own text says it is closed must already be marked closed when the
     // ordering decides what comes first.
@@ -1009,6 +1062,7 @@ export function createWorkspaceSnapshotProfileMethods(
       jobs: [...savedJobs, ...mergedPendingJobs],
       discoveryLedger: discovery.discoveryLedger,
       listingSignals: intelligence.safeguards.listingSignals,
+      applicationAttempts,
     });
     const projectedJobById = new Map(
       projectedJobs.map((job) => [job.id, job] as const),
@@ -1056,13 +1110,14 @@ export function createWorkspaceSnapshotProfileMethods(
         continue;
       }
       const latestValidation =
-        (await ctx.repository.listResumeValidationResults(draft.id))[0] ??
-        null;
+        (await ctx.repository.listResumeValidationResults(draft.id))[0] ?? null;
       if (!latestValidation) continue;
-      const count =
+      const count = Math.max(
         latestValidation.claimAssessments.filter((assessment) =>
           isBlockingResumeClaimAssessment({ assessment, draft }),
-        ).length;
+        ).length,
+        latestValidation.issues.filter(isBlockingResumeValidationIssue).length,
+      );
       if (count > 0) linesToDecideByDraftId.set(draft.id, count);
     }
     const reviewQueue = buildReviewQueue(
@@ -1073,7 +1128,11 @@ export function createWorkspaceSnapshotProfileMethods(
       setupContext.profile,
       settings,
       linesToDecideByDraftId,
-    );
+    ).map((item) => ({
+      ...item,
+      listingAssessmentPending:
+        ctx.listingAssessmentJobIds?.has(item.jobId) ?? false,
+    }));
     const reconciledApplicationRecords =
       await reconcileStaleMissingResumeBlockers(ctx.repository, {
         applicationRecords,
@@ -1088,13 +1147,6 @@ export function createWorkspaceSnapshotProfileMethods(
     // Creation and adoption reconcile rewrite the whole collection, so they
     // hold the campaign transition like every other mutating campaign
     // operation; the returned state is truthful for this snapshot.
-    let campaignState = await ctx.withCampaignTransition(() =>
-      ensureCampaignState({
-        repository: ctx.repository,
-        searchPreferences: setupContext.searchPreferences,
-        now: generatedAt,
-      }),
-    );
     const activeCampaign = campaignState.campaigns.find(
       (campaign) => campaign.id === campaignState.activeCampaignId,
     );
@@ -1262,7 +1314,7 @@ export function createWorkspaceSnapshotProfileMethods(
       });
 
     const listableIntelligence = {
-      ...intelligence,
+      ...withResumeBatchLiveness(ctx.repository, intelligence),
       companies: intelligence.companies.filter((company) =>
         isListableCompanyName(company.canonicalName),
       ),
@@ -1305,6 +1357,9 @@ export function createWorkspaceSnapshotProfileMethods(
       applicationAttempts,
       sourceInstructionArtifacts,
       latestResumeImportRun: setupContext.latestResumeImportRun,
+      resumeImportActive:
+        isResumeImportActiveInProcess(ctx) ||
+        ctx.activeResumeVisionRunIds.size > 0,
       latestResumeImportReviewCandidates:
         setupContext.latestResumeImportReviewCandidateSummaries,
       profileCopilotMessages,
@@ -1336,6 +1391,7 @@ export function createWorkspaceSnapshotProfileMethods(
       existingCampaignState,
       userActionRequests,
       activityControl,
+      rawIntelligence,
     ] = await Promise.all([
       getCurrentSetupStateContext(),
       ctx.repository.getSettings(),
@@ -1343,10 +1399,14 @@ export function createWorkspaceSnapshotProfileMethods(
       ctx.repository.getCampaignState(),
       ctx.repository.listUserActionRequests(),
       ctx.repository.getActivityControl(),
+      ctx.repository.getIntelligenceState(),
     ]);
     const availableResumeTemplates = ctx.documentManager.listResumeTemplates();
     const settings = normalizeJobFinderSettings(
-      rawSettings,
+      {
+        ...rawSettings,
+        salaryDisclosure: await readSalaryDisclosurePreference(ctx.repository),
+      },
       availableResumeTemplates,
     );
     const generatedAt = new Date().toISOString();
@@ -1456,6 +1516,9 @@ export function createWorkspaceSnapshotProfileMethods(
       applicationAttempts: [],
       sourceInstructionArtifacts: [],
       latestResumeImportRun: setupContext.latestResumeImportRun,
+      resumeImportActive:
+        isResumeImportActiveInProcess(ctx) ||
+        ctx.activeResumeVisionRunIds.size > 0,
       latestResumeImportReviewCandidates:
         setupContext.latestResumeImportReviewCandidateSummaries,
       profileCopilotMessages: [],
@@ -1488,6 +1551,43 @@ export function createWorkspaceSnapshotProfileMethods(
     commitResumeApplicationMode: (resumeApplicationMode) =>
       commitApplicationDefaultFields({ resumeApplicationMode }),
   });
+
+  async function preserveRemovedSourceLabels(
+    currentSearchPreferences: JobSearchPreferences,
+    nextSearchPreferences: JobSearchPreferences,
+  ): Promise<void> {
+    const removedSourceLabels = new Map(
+      currentSearchPreferences.discovery.targets
+        .filter(
+          (target) =>
+            !nextSearchPreferences.discovery.targets.some(
+              (next) => next.id === target.id,
+            ),
+        )
+        .map((target) => [target.id, target.label]),
+    );
+    if (removedSourceLabels.size > 0) {
+      const preserveLabels = (job: SavedJob): SavedJob => ({
+        ...job,
+        provenance: job.provenance.map((entry) =>
+          entry.sourceLabel || !removedSourceLabels.has(entry.targetId)
+            ? entry
+            : {
+                ...entry,
+                sourceLabel: removedSourceLabels.get(entry.targetId),
+              },
+        ),
+      });
+      await ctx.repository.commitSavedJobDelta({
+        update: preserveLabels,
+        updateDiscoveryState: (current) => ({
+          ...current,
+          pendingDiscoveryJobs:
+            current.pendingDiscoveryJobs.map(preserveLabels),
+        }),
+      });
+    }
+  }
 
   async function persistSearchPreferences(
     searchPreferences: JobSearchPreferences,
@@ -1523,6 +1623,10 @@ export function createWorkspaceSnapshotProfileMethods(
     const nextSearchPreferences = invalidateChangedSourceGuidance(
       currentSearchPreferences,
       ownedFieldsPreservedSearchPreferences,
+    );
+    await preserveRemovedSourceLabels(
+      currentSearchPreferences,
+      nextSearchPreferences,
     );
     await ctx.repository.saveSearchPreferences(nextSearchPreferences);
     await syncActiveCampaignPreferences(nextSearchPreferences);
@@ -1749,6 +1853,10 @@ export function createWorkspaceSnapshotProfileMethods(
         );
       }
 
+      await preserveRemovedSourceLabels(
+        currentSearchPreferences,
+        nextSearchPreferences,
+      );
       await ctx.repository.saveProfileAndSearchPreferences(
         nextProfile,
         nextSearchPreferences,
@@ -1817,6 +1925,7 @@ export function createWorkspaceSnapshotProfileMethods(
       const importStartedAt = new Date().toISOString();
       const workflowResult = await runResumeImportWorkflow(ctx, {
         profile: nextProfile,
+        ...(input.signal ? { signal: input.signal } : {}),
         searchPreferences,
         documentBundle,
         trigger: "import",
@@ -1981,12 +2090,41 @@ export function createWorkspaceSnapshotProfileMethods(
           coverLetter: parsedInput.coverLetter,
           applicationAutomationMode: parsedInput.applicationAutomationMode,
           maxApplicationsPerLocalDay: parsedInput.maxApplicationsPerLocalDay,
+          salaryDisclosure: parsedInput.salaryDisclosure,
         }),
       );
       return getWorkspaceSnapshot();
     },
     async updateAiBehavior(input: UpdateAiBehaviorInput) {
-      const parsedInput = UpdateAiBehaviorInputSchema.parse(input);
+      const patch = UpdateAiBehaviorInputSchema.parse(input);
+      const saved = await ctx.repository.getSettings();
+      const current = AiBehaviorPreferenceSchema.parse(saved.aiBehavior ?? {});
+      // Merge explicit fields before defaults: an omitted declaration list is
+      // never permission to restore approvals the person withdrew.
+      const parsedInput = {
+        ...patch,
+        aiBehavior:
+          patch.aiBehavior === undefined
+            ? undefined
+            : AiBehaviorPreferenceSchema.parse({
+                profileAssistant: {
+                  ...current.profileAssistant,
+                  ...patch.aiBehavior.profileAssistant,
+                },
+                jobSearch: {
+                  ...current.jobSearch,
+                  ...patch.aiBehavior.jobSearch,
+                },
+                applying: { ...current.applying, ...patch.aiBehavior.applying },
+              }),
+        coverLetter:
+          patch.coverLetter === undefined
+            ? undefined
+            : CoverLetterPreferenceSchema.parse({
+                ...saved.coverLetter,
+                ...patch.coverLetter,
+              }),
+      };
       const resumeApproach = parsedInput.resumeApproach;
 
       // Settings first: the behavior preference, the letter preference, and

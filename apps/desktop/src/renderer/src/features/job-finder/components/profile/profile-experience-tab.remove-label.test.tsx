@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useForm, useFieldArray } from "react-hook-form";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createProfileEditorValues,
   type ProfileEditorValues,
@@ -98,4 +98,17 @@ describe("ProfileExperienceTab remove control naming", () => {
     // The other card keeps its own distinct name.
     expect(screen.getByRole("button", { name: "Remove Role 2" })).toBeTruthy();
   });
+});
+
+it("R3-222 offers Freelance and Self-employed employment types", () => {
+  render(<Harness />);
+  fireEvent.click(screen.getByRole("button", { name: "Add experience" }));
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const trigger = screen.getByRole("combobox", { name: "Employment type" });
+  fireEvent.click(trigger);
+  expect(screen.getByRole("option", { name: "Freelance" })).toBeTruthy();
+  expect(screen.getByRole("option", { name: "Self-employed" })).toBeTruthy();
 });

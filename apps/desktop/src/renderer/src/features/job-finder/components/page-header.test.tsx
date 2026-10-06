@@ -1,108 +1,78 @@
 // @vitest-environment jsdom
 
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import { PageHeader, PageHeaderStack, PageSubnav } from "./page-header";
 
 describe("PageHeader", () => {
-  it("renders the ordinary anatomy: title, description, and optional actions", () => {
+  it("puts the title, a one-line description and the actions on one row", () => {
     const view = render(
       <PageHeader
         actions={<button type="button">New search plan</button>}
-        description="Organize roles, sources, volume, safeguards, and progress into reusable plans."
+        description="Reusable searches with their own roles, sources and schedule."
         title="Search plans"
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Search plans" })).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Organize roles, sources, volume, safeguards, and progress into reusable plans.",
-      ),
-    ).toBeTruthy();
-
     const header = view.container.querySelector("[data-page-header]");
+    expect(header?.tagName).toBe("HEADER");
+    for (const token of [
+      "flex",
+      "min-h-8",
+      "items-center",
+      "justify-between",
+    ]) {
+      expect(header?.className).toContain(token);
+    }
+    // No grid switch and no stacked layout any more.
+    expect(header?.className).not.toMatch(/grid|xl:/u);
+
+    const heading = screen.getByRole("heading", { name: "Search plans" });
+    expect(heading.className).toContain("shrink-0");
+    expect(heading.className).not.toContain("max-w-[24ch]");
+
     const actions = view.container.querySelector("[data-page-header-actions]");
-    expect(actions).toBeTruthy();
+    expect(actions?.className).toContain("shrink-0");
     expect(header?.contains(actions as Node)).toBe(true);
     expect(
       screen.getByRole("button", { name: "New search plan" }),
     ).toBeTruthy();
   });
 
-  it("omits the actions region when no actions are given", () => {
-    render(<PageHeader description="Plain page." title="Outcomes" />);
-
-    expect(screen.getByRole("heading", { name: "Outcomes" })).toBeTruthy();
-  });
-
-  it("keeps legacy eyebrow props inert so no visible eyebrow renders", () => {
-    const view = render(
-      <PageHeader
-        description="Review the current workspace."
-        eyebrow="Job Finder"
-        title="Find jobs"
-      />,
-    );
-
-    expect(view.container.querySelector("[data-page-eyebrow]")).toBeNull();
-    expect(screen.queryByText("Job Finder")).toBeNull();
-    expect(screen.getByRole("heading", { name: "Find jobs" })).toBeTruthy();
-  });
-
-  it("wraps long titles and descriptions instead of clipping them", () => {
-    const view = render(
-      <PageHeader
-        description="A very long supporting sentence that must stay readable at 200% text scale without horizontal scrolling anywhere on the page."
-        title="Needs you"
-      />,
-    );
+  it("truncates the description to one line and keeps the full text available", () => {
+    const description =
+      "A long supporting sentence that would wrap onto a second line in a narrow window.";
+    render(<PageHeader description={description} title="Needs you" />);
 
     const heading = screen.getByRole("heading", { name: "Needs you" });
-    expect(heading.className).not.toMatch(/truncate|nowrap|overflow-hidden/u);
-    const description = screen.getByText(/A very long supporting sentence/u);
-    // The measure stays under ~70ch on every route so a wide window never
-    // renders one very long unreadable subtitle line.
-    expect(description.className).toContain("max-w-[68ch]");
-    expect(view.container.textContent).toContain("Needs you");
+    const text = screen.getByText(description);
+    expect(text.className).toContain("truncate");
+    expect(text.className).not.toContain("max-w-[68ch]");
+    expect(text.getAttribute("title")).toBe(description);
+    expect(heading.getAttribute("aria-describedby")).toBe(text.id);
   });
 
-  it("keeps route meta in the title block instead of the action row", () => {
+  it("drops the description under the title only below 1024px", () => {
+    render(<PageHeader description="Plain page." title="Outcomes" />);
+
+    const titleBlock = screen.getByRole("heading", {
+      name: "Outcomes",
+    }).parentElement;
+    expect(titleBlock?.className).toContain("flex-col");
+    expect(titleBlock?.className).toContain("lg:flex-row");
+    expect(titleBlock?.className).toContain("lg:items-baseline");
+  });
+
+  it("omits the actions region when no actions are given", () => {
     const view = render(
-      <PageHeader
-        actions={<button type="button">Search now</button>}
-        description="Search your sources and review the strongest matches."
-        layout="stacked-until-xl"
-        meta={<span>2 search targets · 1 location · 1 enabled source</span>}
-        title="Find jobs"
-      />,
+      <PageHeader description="Plain page." title="Outcomes" />,
     );
 
-    const meta = within(view.container).getByText(
-      "2 search targets · 1 location · 1 enabled source",
-    );
-    const metaRegion = meta.closest("[data-page-header-meta]");
-    expect(metaRegion).not.toBeNull();
-    expect(metaRegion?.closest("[data-page-header-actions]")).toBeNull();
-
-    const heading = within(view.container).getByRole("heading", {
-      name: "Find jobs",
-    });
-    expect(heading.parentElement?.contains(metaRegion)).toBe(true);
     expect(
-      within(view.container)
-        .getByRole("button", { name: "Search now" })
-        .closest("[data-page-header-actions]"),
-    ).not.toBeNull();
-  });
-
-  it("omits the meta region when no meta is given", () => {
-    const view = render(
-      <PageHeader description="Supporting sentence." title="Applications" />,
-    );
-
-    expect(view.container.querySelector("[data-page-header-meta]")).toBeNull();
+      view.container.querySelector("[data-page-header-actions]"),
+    ).toBeNull();
   });
 });
 
@@ -120,101 +90,78 @@ describe("PageHeaderStack", () => {
       "[data-page-header-divider]",
     );
     expect(dividers).toHaveLength(1);
-
-    const header = Array.from(stack?.children ?? []).find((child) =>
-      child.hasAttribute("data-page-header"),
-    );
-    expect(header).toBeTruthy();
-    expect(header?.className).not.toContain("border-b");
     expect(stack?.className).toContain("mb-(--gap-page-header-body)");
     expect(dividers[0]?.className).toContain("border-b");
   });
 
-  it("places an auxiliary subnav 8px below the title block above the divider", () => {
+  it("renders no status line when there is nothing to report", () => {
     const view = render(
       <PageHeaderStack
-        description="Review progress, resolve blockers, and continue applications."
-        subnav={
-          <div role="group" aria-label="Applications workspace view">
-            modes
-          </div>
-        }
+        description="Plain page."
+        statusItems={[]}
         title="Applications"
       />,
     );
 
-    const stack = view.container.querySelector("[data-page-header-stack]");
-    const subnav = view.container.querySelector("[data-page-header-subnav]");
-    const divider = view.container.querySelector("[data-page-header-divider]");
-
-    expect(subnav?.className).toContain("mt-(--gap-page-header-aux)");
-    expect(subnav?.textContent).toBe("modes");
-    expect(divider?.className).toContain("mt-(--gap-page-header-aux)");
     expect(
-      screen.getByRole("group", { name: "Applications workspace view" }),
-    ).toBeTruthy();
-    expect(stack?.className).toContain("mb-(--gap-page-header-body)");
+      view.container.querySelector("[data-page-header-status]"),
+    ).toBeNull();
   });
 
-  it("renders status content in a full-width row outside the title actions", () => {
+  it("places the status line under the title row and above the subnav", () => {
     const view = render(
-      <PageHeaderStack
-        actions={<button type="button">Search now</button>}
-        description="Search your sources and review the strongest matches."
-        status={
-          <span id="search-readiness" role="status">
-            Add a source before searching.
-          </span>
-        }
-        title="Find jobs"
-      />,
+      <MemoryRouter>
+        <PageHeaderStack
+          actions={<button type="button">Open tracker</button>}
+          description="Track your applications and their hiring progress."
+          statusItems={[
+            {
+              id: "holds",
+              tone: "critical",
+              text: "3 safeguard holds are pausing some work",
+              action: {
+                kind: "link",
+                label: "Open Safeguards",
+                to: "/job-finder/safeguards",
+              },
+            },
+          ]}
+          subnav={
+            <div role="group" aria-label="Plan scope">
+              scope
+            </div>
+          }
+          title="Applications"
+        />
+      </MemoryRouter>,
     );
 
+    const header = view.container.querySelector("[data-page-header]");
     const status = screen.getByRole("status");
-    const statusRow = view.container.querySelector("[data-page-header-status]");
+    const subnav = view.container.querySelector("[data-page-header-subnav]");
     const actions = view.container.querySelector("[data-page-header-actions]");
 
-    expect(statusRow).toBeTruthy();
-    expect(statusRow?.className).toContain("min-w-0");
-    expect(statusRow?.contains(status)).toBe(true);
+    expect(status.hasAttribute("data-page-header-status")).toBe(true);
     expect(actions?.contains(status)).toBe(false);
-    expect(status.id).toBe("search-readiness");
     expect(
-      (actions?.compareDocumentPosition(statusRow as Node) ?? 0) &
+      (header?.compareDocumentPosition(status) ?? 0) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-  });
-
-  it("tolerates deprecated header props without changing the stack", () => {
-    const view = render(
-      <PageHeaderStack
-        compact
-        description="Short supporting explanation."
-        eyebrow="Profile"
-        title="Resume strategy"
-      />,
-    );
-
     expect(
-      view.container.querySelectorAll("[data-page-header-divider]"),
-    ).toHaveLength(1);
-    expect(screen.queryByText("Profile")).toBeNull();
+      (status.compareDocumentPosition(subnav as Node) ?? 0) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(subnav?.className).toContain("mt-(--gap-page-header-aux)");
+    expect(screen.getByRole("link", { name: "Open Safeguards" })).toBeTruthy();
   });
 });
 
 describe("PageSubnav", () => {
   it("is a layout-only row that forwards semantics to its children", () => {
     const view = render(
-      <PageSubnav
-        aria-label="Find jobs workspace"
-        className="w-fit gap-1 rounded-(--radius-field) border border-(--surface-panel-border) p-1"
-        role="group"
-      >
+      <PageSubnav aria-label="Find jobs workspace" role="group">
         <button aria-pressed type="button">
           Results
-        </button>
-        <button aria-pressed={false} type="button">
-          Search setup
         </button>
       </PageSubnav>,
     );
@@ -222,11 +169,8 @@ describe("PageSubnav", () => {
     const subnav = view.container.querySelector("[data-page-subnav]");
     expect(subnav?.tagName).toBe("DIV");
     expect(subnav?.className).toContain("flex-wrap");
-    expect(subnav?.className).toContain("rounded-(--radius-field)");
     expect(
       screen.getByRole("group", { name: "Find jobs workspace" }),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Results" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Search setup" })).toBeTruthy();
   });
 });

@@ -60,6 +60,73 @@ describe("reading the choices of lists the page draws itself", () => {
     browser = await chromium.launch({ headless: true });
   }, 60_000);
 
+  test("keeps the outer step legend on a nested skills group", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent(`
+        <form><fieldset><legend>Step 3 of 6: Skills</legend>
+          <label>Email <input type="email" name="email"></label>
+          <fieldset><legend>Select your skills</legend>
+            <label><input type="checkbox" name="skills" value="Analysis">Analysis</label>
+            <label><input type="checkbox" name="skills" value="Coordination">Coordination</label>
+          </fieldset>
+        </fieldset></form>
+      `);
+      const observation = await readRawApplyPage(page);
+      expect(
+        observation.controls
+          .filter((control) => control.name === "skills")
+          .map((control) => control.groupLabel),
+      ).toEqual([
+        "Step 3 of 6: Skills — Select your skills",
+        "Step 3 of 6: Skills — Select your skills",
+      ]);
+      expect(
+        observation.controls.find((control) => control.name === "email")
+          ?.groupLabel,
+      ).toBe("Step 3 of 6: Skills");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("reads the upload format and numeric/month constraints from the actual inputs", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent(
+        '<form><label>Resume<input type="file" accept=".txt,.pdf"></label><label>Experience<input type="number" min="0" max="50" step="1"></label><label>From<input type="month" min="2000-01" max="2026-10"></label></form>',
+      );
+      const raw = await readRawApplyPage(page);
+      expect(raw.controls[0]).toMatchObject({ accept: ".txt,.pdf" });
+      expect(raw.controls[1]).toMatchObject({
+        inputType: "number",
+        min: "0",
+        max: "50",
+        step: "1",
+      });
+      expect(raw.controls[2]).toMatchObject({
+        inputType: "month",
+        min: "2000-01",
+        max: "2026-10",
+      });
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("a file on a disabled wizard step stays disabled even when the input has no disabled attribute", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent(
+        '<fieldset disabled hidden><input type="file" required></fieldset><button>Send application</button>',
+      );
+      const raw = await readRawApplyPage(page);
+      expect(raw.controls[0]).toMatchObject({ disabled: true, visible: false });
+    } finally {
+      await page.close();
+    }
+  });
+
   afterAll(async () => {
     await browser?.close();
   });
@@ -160,6 +227,18 @@ describe("reading the choices of lists the page draws itself", () => {
     expect(goto).toHaveBeenCalledTimes(1);
     await page.close();
   }, 60_000);
+
+  test("reads a progress bar and notices a marker added after an earlier read", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent("<p>Application form</p>");
+      expect((await readRawApplyPage(page)).stepLabel).toBeNull();
+      await page.setContent('<div role="progressbar">Page 2 of 3</div>');
+      expect((await readRawApplyPage(page)).stepLabel).toBe("Page 2 of 3");
+    } finally {
+      await page.close();
+    }
+  });
 
   test("reads the current step from an accessible step list", async () => {
     const page = await browser.newPage();
@@ -338,6 +417,65 @@ describe("reading the choices of lists the page draws itself", () => {
     });
     expect(await page.locator("#consent").isChecked()).toBe(true);
     await page.close();
+  });
+
+  test("native activation cannot accept a disabled or rejected toggle", async () => {
+    const page = await browser.newPage();
+    try {
+      for (const html of [
+        '<fieldset disabled><input type="checkbox"></fieldset>',
+        '<input type="checkbox" onclick="event.preventDefault()">',
+      ]) {
+        await page.setContent(html);
+        const input = page.locator("input");
+        const fallback = vi
+          .spyOn(input, "setChecked")
+          .mockRejectedValue(new Error("Not accepted"));
+        const mechanics = createPlaywrightApplyPageMechanics({
+          locator: () => ({ nth: () => input }),
+        } as unknown as Parameters<
+          typeof createPlaywrightApplyPageMechanics
+        >[0]);
+        expect(await mechanics.setToggle("c0", true)).toMatchObject({
+          ok: false,
+        });
+        expect(await input.isChecked()).toBe(false);
+        expect(fallback).toHaveBeenCalledOnce();
+      }
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("a native toggle uses its normal click and change events once", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent(`
+        <input type="checkbox" id="choice">
+        <script>
+          window.clicks = 0; window.changes = 0; window.trusted = [];
+          const choice = document.getElementById("choice");
+          choice.addEventListener("click", (event) => { window.clicks++; window.trusted.push(event.isTrusted); });
+          choice.addEventListener("change", () => window.changes++);
+        </script>
+      `);
+      const mechanics = createPlaywrightApplyPageMechanics(page);
+      expect(await mechanics.setToggle("c0", true)).toMatchObject({ ok: true });
+      expect(await mechanics.setToggle("c0", true)).toMatchObject({ ok: true });
+      expect(await page.evaluate("[window.clicks, window.changes]")).toEqual([
+        1, 1,
+      ]);
+      expect(await page.evaluate("window.trusted")).toEqual([true]);
+      expect(await mechanics.setToggle("c0", false)).toMatchObject({
+        ok: true,
+      });
+      expect(await page.locator("#choice").isChecked()).toBe(false);
+      expect(await page.evaluate("[window.clicks, window.changes]")).toEqual([
+        2, 2,
+      ]);
+    } finally {
+      await page.close();
+    }
   });
 
   test("checks an enabled radio even when another element covers its pointer target", async () => {

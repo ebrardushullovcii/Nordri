@@ -1,3 +1,4 @@
+import { normalizePublicLinkUrl } from "@nordri/contracts";
 import type {
   ResumeProfileExtraction,
   TailoredResumeDraft,
@@ -284,7 +285,7 @@ export function toValidUrlOrNull(
   }
 
   try {
-    return new URL(value).toString();
+    return new URL(normalizePublicLinkUrl(value)).toString();
   } catch {
     return null;
   }
@@ -389,6 +390,7 @@ export function mergeExperienceRecords(
     ]);
     const matchIndex = merged.findIndex(
       (existingEntry) =>
+        ("id" in entry && entry.id === existingEntry.id) ||
         normalizeRecordKey([
           existingEntry.companyName,
           existingEntry.title,

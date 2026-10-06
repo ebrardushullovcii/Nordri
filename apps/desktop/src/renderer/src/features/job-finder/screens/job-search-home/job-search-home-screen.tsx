@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import type {
   ApplicationAutomationMode,
@@ -10,8 +10,10 @@ import type {
   ResumeImportProgressEvent,
 } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
-import { cn } from "@renderer/lib/cn";
-import { PageHeaderStack } from "../../components/page-header";
+import {
+  PageHeaderStack,
+  type PageStatusItem,
+} from "../../components/page-header";
 import { CampaignNotificationCenter } from "../../components/campaign-notification-center";
 import { buildJobFinderTaskCenterModel } from "../../components/task-center/job-finder-task-center-model";
 import { JOB_FINDER_ROUTE_PATHS } from "../../lib/job-finder-route-hrefs";
@@ -111,13 +113,16 @@ export function listCurrentUnreadNotifications(
       steps.length > 0 &&
       steps.every(
         ({ request }) =>
-          request.state === "resolved" || request.state === "skipped",
+          request.state === "resolved" ||
+          request.state === "skipped" ||
+          request.state === "cancelled",
       ) &&
       steps.some(
         ({ request }) =>
-          request.state === "resolved" &&
-          Boolean(request.resolvedAt) &&
-          request.resolvedAt! >= notification.createdAt,
+          (request.state === "resolved" ||
+            request.state === "skipped" ||
+            request.state === "cancelled") &&
+          request.updatedAt >= notification.createdAt,
       )
     );
   };
@@ -170,12 +175,16 @@ const PANEL_CLASS =
   "surface-panel-shell grid min-w-0 gap-3 rounded-(--radius-panel) border border-(--surface-panel-border) p-5";
 
 export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
   const [applyPending, setApplyPending] = useState(false);
   const [dismissedActionState, setDismissedActionState] =
     useState<ActionState | null>(null);
   const actionMessage =
-    props.actionState?.message &&
-    props.actionState !== dismissedActionState
+    props.actionState?.message && props.actionState !== dismissedActionState
       ? props.actionState.message
       : null;
   const tasks = buildJobFinderTaskCenterModel({
@@ -191,8 +200,10 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
   // its own corrective action. A finished search is a status fact and reads
   // as the line under the title instead.
   const model = buildJobSearchHomeModel({
+    now,
     workspace: props.workspace,
     tasks,
+    tailoredDraftPreparation: props.tailoredDraftPreparation,
     discoveryRunPending: props.discoveryRunPending ?? false,
     canRunDiscovery: Boolean(props.onRunDiscovery),
     applicationAutomationMode:
@@ -359,10 +370,14 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
     );
 
   return (
-    <section className="grid min-w-0 gap-5 pb-8">
+    // The header stack owns its 12px seam; the -mb-2 cancels the part of
+    // the 20px grid gap that would double it.
+    <section className="grid min-w-0 gap-5 pb-8 [&>[data-page-header-stack]]:-mb-2">
       <PageHeaderStack
         actions={
-          model.paused ? (
+          // While paused the next-step card below offers Resume; the header
+          // does not repeat it.
+          model.paused && model.next.id !== "paused" ? (
             <Button
               onClick={() => run({ kind: "resume_activity" })}
               pending={props.activityPending}
@@ -390,7 +405,36 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
             </label>
           ) : undefined
         }
-        description={model.statusLine}
+        description="Your search, shortlisted jobs, and applications."
+        statusItems={[
+          ...model.problems.map((problem): PageStatusItem => {
+            const button = problem.button;
+            return {
+              id: problem.id,
+              tone: problem.tone === "critical" ? "critical" : "warning",
+              text: problem.text,
+              ...(button
+                ? {
+                    // Going to the screen that owns the problem is a link;
+                    // doing something here is the line's one button.
+                    action:
+                      button.action.kind === "navigate"
+                        ? {
+                            kind: "link",
+                            label: button.label,
+                            onClick: () => run(button.action),
+                          }
+                        : {
+                            kind: "button",
+                            label: button.label,
+                            onClick: () => run(button.action),
+                          },
+                  }
+                : {}),
+            };
+          }),
+          { id: "run-summary", text: model.statusLine },
+        ]}
         title="Home"
       />
 
@@ -482,32 +526,6 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
         </div>
       ) : null}
 
-      {model.problems.map((problem) => (
-        <div
-          className={cn(
-            "flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-(--radius-panel) border px-4 py-3 text-sm leading-6",
-            problem.tone === "critical"
-              ? "border-critical/40 bg-critical/10 text-foreground"
-              : "border-warning/40 bg-(--warning-surface) text-(--warning-text)",
-          )}
-          data-testid={`home-problem-${problem.id}`}
-          key={problem.id}
-          role="status"
-        >
-          <p className="min-w-0 flex-1 break-words">{problem.text}</p>
-          {problem.button ? (
-            <Button
-              onClick={() => problem.button && run(problem.button.action)}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {problem.button.label}
-            </Button>
-          ) : null}
-        </div>
-      ))}
-
       {actionMessage ? (
         <div
           aria-atomic="true"
@@ -531,9 +549,7 @@ export function JobSearchHomeScreen(props: JobSearchHomeScreenProps) {
               </Button>
             ) : null}
             <Button
-              onClick={() =>
-                setDismissedActionState(props.actionState ?? null)
-              }
+              onClick={() => setDismissedActionState(props.actionState ?? null)}
               size="sm"
               type="button"
               variant="ghost"

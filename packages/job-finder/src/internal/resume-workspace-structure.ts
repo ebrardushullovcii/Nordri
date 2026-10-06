@@ -21,6 +21,7 @@ import type {
 import { ResumeDraftSchema } from "@nordri/contracts";
 import { fnv1a32 } from "@nordri/core";
 import {
+  createBullet,
   createEntry,
   createSection,
   createSourceRef,
@@ -44,6 +45,18 @@ function joinCompact(
     Boolean(value && value.trim()),
   );
   return values.length > 0 ? values.join(separator) : null;
+}
+
+/** "BA (Hons) Graphic Design" already names its field; it is not repeated. */
+function formatDegreeLine(
+  degree: string | null | undefined,
+  fieldOfStudy: string | null | undefined,
+): string | null {
+  const field = fieldOfStudy?.trim() ?? "";
+  const named =
+    field.length > 0 &&
+    (degree ?? "").toLowerCase().includes(field.toLowerCase());
+  return joinCompact([degree, named ? null : field], ", ");
 }
 
 /**
@@ -359,7 +372,7 @@ function formatDateRange(
     if (namedMonthMatch) {
       const month =
         monthByName[namedMonthMatch[1]?.toLowerCase() ?? ""] ?? null;
-      return month ? formatByMonth(month, namedMonthMatch[2] ?? "") : null;
+      return month ? formatByMonth(month, namedMonthMatch[2] ?? "") : trimmed;
     }
 
     return trimmed;
@@ -428,12 +441,16 @@ function parseResumeDateRange(value: string | null | undefined): {
   };
 }
 
-function formatEntryDateRange(entry: {
-  dateRange?: string | null;
-  endDate?: string | null;
-  isCurrent?: boolean;
-  startDate?: string | null;
-}): string | null {
+function formatEntryDateRange(
+  entry: {
+    dateRange?: string | null;
+    endDate?: string | null;
+    isCurrent?: boolean;
+    startDate?: string | null;
+  },
+  preferDisplayedDate = false,
+): string | null {
+  if (preferDisplayedDate && entry.dateRange) return entry.dateRange;
   return (
     formatDateRange(entry.startDate, entry.endDate, entry.isCurrent) ??
     entry.dateRange ??
@@ -441,7 +458,10 @@ function formatEntryDateRange(entry: {
   );
 }
 
-function toSectionPreviewLines(section: ResumeDraftSection): string[] {
+function toSectionPreviewLines(
+  section: ResumeDraftSection,
+  preferDisplayedDate = false,
+): string[] {
   const lines: string[] = [];
   const orderedSection = normalizeResumeDraftSectionEntryOrdering(section);
 
@@ -452,7 +472,7 @@ function toSectionPreviewLines(section: ResumeDraftSection): string[] {
   for (const entry of orderedSection.entries
     .filter((item) => item.included)
     .sort((left, right) => left.sortOrder - right.sortOrder)) {
-    const entryDateRange = formatEntryDateRange(entry);
+    const entryDateRange = formatEntryDateRange(entry, preferDisplayedDate);
     const heading = joinCompact(
       [
         joinCompact([entry.title, entry.subtitle], " — "),
@@ -536,15 +556,13 @@ function buildCoreAndAdditionalSkills(
   ]);
 
   return {
-    coreSkills: uniqueStrings(draftSkills).slice(0, 10),
-    additionalSkills: allSkills
-      .filter(
-        (skill) =>
-          !new Set(
-            uniqueStrings(draftSkills).map((entry) => normalizeText(entry)),
-          ).has(normalizeText(skill)),
-      )
-      .slice(0, 10),
+    coreSkills: uniqueStrings(draftSkills),
+    additionalSkills: allSkills.filter(
+      (skill) =>
+        !new Set(
+          uniqueStrings(draftSkills).map((entry) => normalizeText(entry)),
+        ).has(normalizeText(skill)),
+    ),
   };
 }
 
@@ -785,127 +803,59 @@ function selectEntrySummary(input: {
   return generated;
 }
 
-function splitResumeDetailLine(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return [];
-  }
-
-  if (trimmed.length < 220 && !/[.!?]\s+\S/.test(trimmed)) {
-    return [trimmed];
-  }
-
-  const sentenceParts = trimmed
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (sentenceParts.length > 1) {
-    return sentenceParts;
-  }
-
-  if (trimmed.length >= 260 && /;\s+/.test(trimmed)) {
-    return trimmed
-      .split(/;\s+/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-  }
-
-  return [trimmed];
-}
-
-function mergeEntryBullets(
-  tailoredBullets: readonly string[],
-  profileBullets: readonly string[],
-  maxBullets = 3,
-): string[] {
-  const normalizedTailoredBullets = tailoredBullets.flatMap(
-    splitResumeDetailLine,
-  );
-  const normalizedProfileBullets = profileBullets.flatMap(
-    splitResumeDetailLine,
-  );
-  const ignoredClaimTokens = new Set([
-    "and",
-    "for",
-    "from",
-    "into",
-    "the",
-    "that",
-    "this",
-    "through",
-    "using",
-    "with",
-  ]);
-  const claimTokens = (value: string) =>
-    new Set(
-      normalizeText(value)
-        .split(/[^\p{L}\p{N}+#.]+/u)
-        .filter((token) => token.length >= 3 && !ignoredClaimTokens.has(token)),
+/** Source IDs carry the model's restatements across languages; no wording guess. */
+function mergeExperienceBullets(input: {
+  entryId: string;
+  recordId: string | null;
+  tailored: readonly string[];
+  sourceIds: readonly string[][] | undefined;
+  source: readonly string[];
+  updatedAt: string;
+  origin: ResumeDraftOrigin;
+  sharedRefs: readonly ResumeDraftSourceRef[];
+}): ResumeDraftBullet[] {
+  const sources = input.source.map((text, index) => ({
+    id: `experience:${input.recordId}:achievement:${index}`,
+    text,
+    index,
+  }));
+  const covered = new Set<string>();
+  const lines = input.tailored.flatMap((text, index) => {
+    const refs = sources.filter(
+      (source) =>
+        input.sourceIds?.[index]?.includes(source.id) ||
+        source.text.trim() === text.trim(),
     );
-  const claimIsCoveredBy = (claim: string, cover: string) => {
-    const normalizedClaim = normalizeText(claim);
-    const normalizedCover = normalizeText(cover);
-    if (normalizedCover === normalizedClaim) {
-      return true;
-    }
-    if (
-      normalizedClaim.length >= 36 &&
-      (normalizedCover.includes(normalizedClaim) ||
-        normalizedClaim.includes(normalizedCover))
-    ) {
-      return true;
-    }
-    const tokens = claimTokens(claim);
-    if (tokens.size < 4) {
-      return false;
-    }
-
-    const coverTokens = claimTokens(cover);
-    const sharedTokenCount = [...tokens].filter((token) =>
-      coverTokens.has(token),
-    ).length;
-    return sharedTokenCount / tokens.size >= 0.67;
-  };
-  // A provider that merges two achievements into one line often returns the
-  // merged line AND the two it was built from, so the same two claims read
-  // back twice within four lines. A claim a longer sibling already covers is
-  // dropped; the longest wording wins, and order is otherwise untouched.
-  const orderedByLengthDescending = [...normalizedTailoredBullets].sort(
-    (left, right) => right.length - left.length,
+    // Keep source facts once. A partly overlapping combined line is dropped;
+    // its uncovered facts are retained below and reach the language writer.
+    if (refs.some((source) => covered.has(source.id))) return [];
+    refs.forEach((source) => covered.add(source.id));
+    return [{ text, refs }];
+  });
+  lines.push(
+    ...sources
+      .filter((source) => !covered.has(source.id))
+      .map((source) => ({
+        text: source.text,
+        refs: [source],
+      })),
   );
-  const coveringTailoredBullets: string[] = [];
-  for (const bullet of orderedByLengthDescending) {
-    if (
-      !coveringTailoredBullets.some((kept) => claimIsCoveredBy(bullet, kept))
-    ) {
-      coveringTailoredBullets.push(bullet);
-    }
-  }
-  const keptTailoredBullets = normalizedTailoredBullets.filter((bullet) =>
-    coveringTailoredBullets.includes(bullet),
+  return lines.map(({ text, refs }, index) =>
+    createBullet(
+      refs[0]
+        ? `${input.entryId}_achievement_${refs[0].index}`
+        : `${input.entryId}_bullet_${index + 1}`,
+      text,
+      input.updatedAt,
+      input.origin,
+      [
+        ...input.sharedRefs,
+        ...refs.map((source) =>
+          createSourceRef("profile", source.id, source.text),
+        ),
+      ],
+    ),
   );
-  const isCoveredByTailoredClaim = (profileClaim: string) =>
-    keptTailoredBullets.some((tailoredClaim) =>
-      claimIsCoveredBy(profileClaim, tailoredClaim),
-    );
-  // Keep canonical details that the provider returned too thinly, but do not
-  // append an original claim immediately after a grounded rewrite of it.
-  const uncoveredProfileBullets = normalizedProfileBullets.filter(
-    (bullet) => !isCoveredByTailoredClaim(bullet),
-  );
-  const canonicalBullets = uniqueStrings([
-    ...keptTailoredBullets,
-    ...uncoveredProfileBullets,
-  ]);
-  const narrativeBullets = canonicalBullets.filter(
-    (bullet) =>
-      !/^[^.!?]{2,80}\([^)]{2,80}\)\s*[–—]\s*[^.!?]{2,120}$/u.test(bullet),
-  );
-
-  return (
-    narrativeBullets.length > 0 ? narrativeBullets : canonicalBullets
-  ).slice(0, maxBullets);
 }
 
 function resolveCoverageMetadataByRecordId(draft: TailoredResumeDraft) {
@@ -1017,15 +967,22 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
           location: canonicalLocation,
           dateRange: canonicalDateRange ?? entry.dateRange,
         }),
-        bullets: mergeEntryBullets(
-          entry.bullets,
-          profileExperience?.achievements ?? [],
-        ),
+        bullets: [],
         updatedAt: createdAt,
         origin,
         sortOrder: index,
         profileRecordId: entry.profileRecordId,
         sourceRefs: sharedRefs,
+      });
+      createdEntry.bullets = mergeExperienceBullets({
+        entryId: createdEntry.id,
+        recordId: entry.profileRecordId,
+        tailored: entry.bullets,
+        sourceIds: entry.bulletSourceAchievementIds,
+        source: profileExperience?.achievements ?? [],
+        updatedAt: createdAt,
+        origin,
+        sharedRefs,
       });
       const coverage = entry.profileRecordId
         ? coverageMetadataByRecordId.get(entry.profileRecordId)
@@ -1044,6 +1001,7 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
   const hiddenProfileEntries = (profile?.experiences ?? [])
     .filter((experience) => !visibleExperienceRecordIds.has(experience.id))
     .map((profileExperience, index) => {
+      const entryId = `experience_${profileExperience.id}`;
       return {
         ...createEntry({
           id: `experience_${profileExperience.id}`,
@@ -1067,7 +1025,20 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
           profileRecordId: profileExperience.id,
           sourceRefs: sharedRefs,
         }),
-        included: false,
+        bullets: mergeExperienceBullets({
+          entryId,
+          recordId: profileExperience.id,
+          tailored: [],
+          sourceIds: undefined,
+          source: profileExperience.achievements,
+          updatedAt: createdAt,
+          origin,
+          sharedRefs,
+        }),
+        included: !["suggested_hidden", "omitted"].includes(
+          coverageMetadataByRecordId.get(profileExperience.id)
+            ?.classification ?? "",
+        ),
       };
     });
   const experienceEntries = orderEntriesNewestFirst([
@@ -1170,14 +1141,20 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
           : `education_entry_${index + 1}`,
         entryType: "education",
         title: entry.school,
-        subtitle: joinCompact([entry.degree, entry.fieldOfStudy], ", "),
+        subtitle: formatDegreeLine(entry.degree, entry.fieldOfStudy),
         location: entry.location,
         dateRange: selectCanonicalDateRange({
           profileDateRange,
           generatedDateRange: entry.dateRange,
         }),
-        startDate: profileEducation?.startDate ?? parsedDates.startDate,
-        endDate: profileEducation?.endDate ?? parsedDates.endDate,
+        startDate: profileEducation
+          ? profileEducation.startDate
+          : parsedDates.endDate || parsedDates.isCurrent
+            ? parsedDates.startDate
+            : null,
+        endDate: profileEducation
+          ? profileEducation.endDate
+          : (parsedDates.endDate ?? parsedDates.startDate),
         isCurrent: parsedDates.isCurrent,
         summary: entry.summary,
         updatedAt: createdAt,
@@ -1259,7 +1236,7 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
   const additionalSkills = uniqueStrings([
     ...draft.additionalSkills,
     ...draftSkills.additionalSkills,
-  ]).slice(0, 10);
+  ]);
   if (additionalSkills.length > 0) {
     sections.push(
       createSection({
@@ -1275,19 +1252,32 @@ function buildDraftSectionsFromStructuredTailoredDraft(input: {
     );
   }
 
-  if (draft.languages.length > 0) {
-    sections.push(
-      createSection({
-        id: "section_languages",
-        kind: "skills",
-        label: "Languages",
-        bullets: uniqueStrings(draft.languages).slice(0, 8),
-        updatedAt: createdAt,
-        origin,
-        sortOrder: sections.length,
-        sourceRefs: skillSourceRefs,
-      }),
-    );
+  const languages = profile?.spokenLanguages.length
+    ? profile.spokenLanguages
+        .map((language) =>
+          joinCompact([language.language, language.proficiency], " — "),
+        )
+        .filter((value): value is string => Boolean(value))
+    : draft.languages;
+  if (languages.length > 0) {
+    const languageSection = createSection({
+      id: "section_languages",
+      kind: "skills",
+      label: "Languages",
+      bullets: uniqueStrings(languages),
+      updatedAt: createdAt,
+      origin,
+      sortOrder: sections.length,
+      sourceRefs: skillSourceRefs,
+    });
+    languageSection.bullets.forEach((bullet, index) => {
+      const language = profile?.spokenLanguages[index];
+      if (language)
+        bullet.sourceRefs.push(
+          createSourceRef("profile", `language:${language.id}`, bullet.text),
+        );
+    });
+    sections.push(languageSection);
   }
 
   if (candidateFacingTargetedKeywords.length > 0) {
@@ -1326,7 +1316,7 @@ export function buildPreviewSectionsFromResumeDraft(
     .sort((left, right) => left.sortOrder - right.sortOrder)
     .map((section) => ({
       heading: section.label,
-      lines: toSectionPreviewLines(section),
+      lines: toSectionPreviewLines(section, Boolean(draft.writtenLanguage)),
     }))
     .filter((section) => section.lines.length > 0);
 }
@@ -1394,7 +1384,10 @@ export function buildResumeRenderDocument(
           .filter((entry) => entry.included)
           .sort((left, right) => left.sortOrder - right.sortOrder)
           .map((entry) => {
-            const dateRange = formatEntryDateRange(entry);
+            const dateRange = formatEntryDateRange(
+              entry,
+              Boolean(draft.writtenLanguage),
+            );
 
             return {
               id: entry.id,
@@ -1673,29 +1666,31 @@ export function seedResumeDraft(input: {
       ),
   );
   const experienceEntries = orderEntriesNewestFirst(
-    input.profile.experiences.map((experience, index) =>
-      createEntry({
-        id: `experience_${experience.id}`,
-        entryType: "experience",
-        title: experience.title,
-        subtitle: experience.companyName,
-        location: experience.location,
-        dateRange: formatDateRange(
-          experience.startDate,
-          experience.endDate,
-          experience.isCurrent,
-        ),
-        startDate: experience.startDate,
-        endDate: experience.endDate,
-        isCurrent: experience.isCurrent,
-        summary: experience.summary,
-        bullets: experience.achievements,
-        updatedAt: now,
-        origin: "imported",
-        sortOrder: index,
-        profileRecordId: experience.id,
-      }),
-    ),
+    input.profile.experiences
+      .filter((record) => !record.isDraft)
+      .map((experience, index) =>
+        createEntry({
+          id: `experience_${experience.id}`,
+          entryType: "experience",
+          title: experience.title,
+          subtitle: experience.companyName,
+          location: experience.location,
+          dateRange: formatDateRange(
+            experience.startDate,
+            experience.endDate,
+            experience.isCurrent,
+          ),
+          startDate: experience.startDate,
+          endDate: experience.endDate,
+          isCurrent: experience.isCurrent,
+          summary: experience.summary,
+          bullets: experience.achievements,
+          updatedAt: now,
+          origin: "imported",
+          sortOrder: index,
+          profileRecordId: experience.id,
+        }),
+      ),
   );
   const projectEntries = orderEntriesNewestFirst(
     input.profile.projects.map((project, index) =>
@@ -1722,50 +1717,54 @@ export function seedResumeDraft(input: {
     ),
   );
   const educationEntries = orderEntriesNewestFirst(
-    input.profile.education.map((education, index) =>
-      createEntry({
-        id: `education_${education.id}`,
-        entryType: "education",
-        title: education.schoolName,
-        subtitle: joinCompact([education.degree, education.fieldOfStudy], ", "),
-        location: education.location,
-        dateRange: formatDateRange(education.startDate, education.endDate),
-        startDate: education.startDate,
-        endDate: education.endDate,
-        isCurrent: false,
-        summary: education.summary,
-        updatedAt: now,
-        origin: "imported",
-        sortOrder: index,
-        profileRecordId: education.id,
-      }),
-    ),
+    input.profile.education
+      .filter((record) => !record.isDraft)
+      .map((education, index) =>
+        createEntry({
+          id: `education_${education.id}`,
+          entryType: "education",
+          title: education.schoolName,
+          subtitle: formatDegreeLine(education.degree, education.fieldOfStudy),
+          location: education.location,
+          dateRange: formatDateRange(education.startDate, education.endDate),
+          startDate: education.startDate,
+          endDate: education.endDate,
+          isCurrent: false,
+          summary: education.summary,
+          updatedAt: now,
+          origin: "imported",
+          sortOrder: index,
+          profileRecordId: education.id,
+        }),
+      ),
   );
   const certificationEntries = orderEntriesNewestFirst(
-    input.profile.certifications.map((certification, index) =>
-      createEntry({
-        id: `certification_${index + 1}`,
-        entryType: "certification",
-        title: certification.name,
-        subtitle: certification.issuer,
-        dateRange: formatDateRange(
-          certification.issueDate,
-          certification.expiryDate,
-        ),
-        startDate: certification.issueDate,
-        endDate: certification.expiryDate,
-        isCurrent: false,
-        updatedAt: now,
-        origin: "imported",
-        sortOrder: index,
-        profileRecordId: certification.id,
-      }),
-    ),
+    input.profile.certifications
+      .filter((record) => !record.isDraft)
+      .map((certification, index) =>
+        createEntry({
+          id: `certification_${index + 1}`,
+          entryType: "certification",
+          title: certification.name,
+          subtitle: certification.issuer,
+          dateRange: formatDateRange(
+            certification.issueDate,
+            certification.expiryDate,
+          ),
+          startDate: certification.issueDate,
+          endDate: certification.expiryDate,
+          isCurrent: false,
+          updatedAt: now,
+          origin: "imported",
+          sortOrder: index,
+          profileRecordId: certification.id,
+        }),
+      ),
   );
   const summaryText =
     input.profile.professionalSummary.fullSummary ??
     input.profile.summary ??
-    `${input.profile.headline} targeting ${input.job.title} opportunities.`;
+    null;
 
   return ResumeDraftSchema.parse(
     normalizeResumeDraftEntryOrdering({

@@ -404,6 +404,12 @@ describe("getDiscoveryResultVisibility", () => {
           contextFingerprint: "context",
           postingFingerprint: "posting",
           dimensions: { roleSuitability: { state: "exact" } },
+          judgment: {
+            source: "batch",
+            judgedAt: "2026-10-02T10:00:00.000Z",
+            score: job.matchAssessment.score,
+            recommendation: job.matchAssessment.recommendation,
+          },
         },
       }) as unknown as SavedJob;
     const strong = bind(createSavedJob("strong", "strong_fit", 80));
@@ -814,4 +820,13 @@ describe("getDiscoveryInspectedJob", () => {
     expect(getDiscoveryInspectedJob([], "top", undefined)).toBeNull();
     expect(getDiscoveryInspectedJob(ranked, "gone", "gone")).toBeNull();
   });
+});
+
+
+it("refreshes shortlist status and removes missing rows while assessments remain stable during a search", () => {
+  const job = createSavedJob("selected", "strong_fit", 80);
+  const snapshot = updateStableDiscoveryRunSnapshot({ current: null, jobs: [job], runId: "running" }).snapshot;
+  const refreshed = updateStableDiscoveryRunSnapshot({ current: snapshot, jobs: [{ ...job, status: "shortlisted" }], runId: "running" });
+  expect(refreshed.jobs[0]?.status).toBe("shortlisted");
+  expect(updateStableDiscoveryRunSnapshot({ current: refreshed.snapshot, jobs: [], runId: "running" }).jobs).toEqual([]);
 });

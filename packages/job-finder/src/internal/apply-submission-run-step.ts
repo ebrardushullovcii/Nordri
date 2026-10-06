@@ -1,3 +1,4 @@
+import { checkSameCompanySends } from "./same-company-sends";
 import { readFile } from "node:fs/promises";
 
 import type {
@@ -133,6 +134,7 @@ export async function recordPreparedApplicationNotSent(input: {
     attempt.formGone
       ? {
           ...result,
+          automaticSendPending: false,
           state: "failed",
           summary: attempt.summary,
           detail: attempt.detail,
@@ -143,6 +145,7 @@ export async function recordPreparedApplicationNotSent(input: {
         }
       : {
           ...result,
+          automaticSendPending: false,
           summary: attempt.summary,
           detail: attempt.detail,
           updatedAt: now,
@@ -198,7 +201,13 @@ function currentEnvelopeCoversPreparedApplication(input: {
 }
 
 export async function sendPreparedApplicationIfAllowed(input: {
-  ctx: Pick<WorkspaceServiceContext, "repository" | "browserRuntime">;
+  ctx: Pick<WorkspaceServiceContext, "repository" | "browserRuntime"> &
+    Partial<
+      Pick<
+        WorkspaceServiceContext,
+        "withIntelligenceTransition" | "documentManager"
+      >
+    >;
   handoff: ApplySubmissionHandoff | null;
   envelope: ApplicationAuthorityEnvelope | null;
   source: JobSource;
@@ -228,6 +237,33 @@ export async function sendPreparedApplicationIfAllowed(input: {
       input.ctx.repository,
       input.signal,
       async () => {
+        const letterIsCurrent = async () => {
+          const prepared = (
+            await input.ctx.repository.listApplyJobResults({
+              jobId: input.lineage.jobId,
+            })
+          ).find((entry) => entry.id === input.lineage.resultId);
+          if (prepared?.reviewCard?.letter?.needsRefresh) return false;
+          const approved =
+            await input.ctx.documentManager?.getApprovedApplicationLetter?.(
+              input.lineage.jobId,
+              input.lineage.applicationRecordId ?? undefined,
+            );
+          return (
+            !approved ||
+            !prepared?.reviewCard?.letter ||
+            prepared.reviewCard.letter.text === approved.content
+          );
+        };
+        if (!(await letterIsCurrent())) {
+          return {
+            ...notSentAttempt(
+              "the approved letter changed",
+              "The form still holds the earlier letter. Prepare again to attach the letter you approved. Nothing was sent.",
+            ),
+            nextActionLabel: "Prepare again",
+          };
+        }
         const now = new Date().toISOString();
         const active =
           await input.ctx.repository.listApplicationAuthorityEnvelopes({
@@ -283,13 +319,43 @@ export async function sendPreparedApplicationIfAllowed(input: {
           return PAGE_CLOSED_ATTEMPT;
         }
 
+        const overlap = await checkSameCompanySends({
+          repository: input.ctx.repository,
+          jobIds: [input.lineage.jobId],
+          ...(input.ctx.withIntelligenceTransition
+            ? { transition: input.ctx.withIntelligenceTransition }
+            : {}),
+        });
+        if (overlap) {
+          return {
+            ...notSentAttempt("choose which applications to send", overlap),
+            nextActionLabel: "Review Safeguards",
+          };
+        }
+
         const result = await submitPreparedApplication({
           repository: input.ctx.repository,
           browserRuntime: {
             observeApplicationForm: (source, options) =>
               runtime.observeApplicationForm!(source, options),
             executeExactlyOneFinalAction: (source, actionInput) =>
-              runtime.executeExactlyOneFinalAction!(source, actionInput),
+              runtime.executeExactlyOneFinalAction!(source, {
+                ...actionInput,
+                veto: async (facts) => {
+                  const overlap = await checkSameCompanySends({
+                    repository: input.ctx.repository,
+                    jobIds: [input.lineage.jobId],
+                    ...(input.ctx.withIntelligenceTransition
+                      ? { transition: input.ctx.withIntelligenceTransition }
+                      : {}),
+                  });
+                  return (
+                    overlap === null &&
+                    (await letterIsCurrent()) &&
+                    (await actionInput.veto(facts))
+                  );
+                },
+              }),
           },
           source: input.source,
           envelope,

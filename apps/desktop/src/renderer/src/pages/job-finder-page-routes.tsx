@@ -1,3 +1,5 @@
+import { inferProfileTimeZone } from "@renderer/features/job-finder/lib/job-finder-timestamp-format";
+import { SearchPlanScope } from "@renderer/features/job-finder/screens/campaigns/search-plan-scope";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { projectPlanSafeguardPauses } from "@nordri/job-finder/plan-safeguard-pauses";
 import type { ReactNode } from "react";
@@ -239,10 +241,23 @@ function onlyValue(values: ReadonlySet<string>): string | null {
 
 export function selectCampaignApplicationsScope(
   workspace: JobFinderWorkspaceSnapshot,
+  allPlans = false,
+  campaignId = workspace.activeCampaignId,
 ) {
   const activeCampaign = workspace.campaigns.find(
-    (campaign) => campaign.id === workspace.activeCampaignId,
+    (campaign) => campaign.id === campaignId,
   );
+  if (allPlans) {
+    return {
+      activeCampaign: null,
+      applicationAttempts: workspace.applicationAttempts,
+      applicationRecords: workspace.applicationRecords,
+      applyJobResults: workspace.applyJobResults,
+      applyRuns: workspace.applyRuns,
+      discoveryJobs: workspace.discoveryJobs,
+      selectedApplyRunId: workspace.selectedApplyRunId,
+    };
+  }
   if (!activeCampaign) {
     return {
       activeCampaign: null,
@@ -975,7 +990,10 @@ export function JobFinderProfileRoute() {
           jobFinderPendingActions.profileMutation(),
         ),
         profileSetup: context.isPending(jobFinderPendingActions.profileSetup()),
-        profileReviewItem: (reviewItemId) => context.isPending(jobFinderPendingActions.profileReviewItem(reviewItemId)),
+        profileReviewItem: (reviewItemId) =>
+          context.isPending(
+            jobFinderPendingActions.profileReviewItem(reviewItemId),
+          ),
         sourceDebug: (targetId) =>
           context.isPending(jobFinderPendingActions.sourceDebug(targetId)),
         sourceInstruction: (targetId) =>
@@ -1107,14 +1125,17 @@ export function JobFinderDiscoveryRoute() {
   const [crossPlanRetry, setCrossPlanRetry] = useState(0);
   const attemptedCrossPlanJobRef = useRef<{ key: string } | null>(null);
   const { onRunAgentDiscovery } = context;
+  const checkedFirstSearchRequest = useRef(false);
 
   // Finishing guided setup lands here with the first search requested: start
   // it once, the same request Search now sends.
   useEffect(() => {
-    if (consumeFirstSearchRequest()) {
+    if (checkedFirstSearchRequest.current) return;
+    checkedFirstSearchRequest.current = true;
+    if (consumeFirstSearchRequest(context.workspace.activeCampaignId)) {
       onRunAgentDiscovery?.({ intent: "", freshness: "any", sourceIds: "all" });
     }
-  }, [onRunAgentDiscovery]);
+  }, [onRunAgentDiscovery, context.workspace.activeCampaignId]);
 
   const handleResumeActivity = () => {
     setActivityPausePending(true);
@@ -1380,6 +1401,7 @@ export function JobFinderDiscoveryRoute() {
         onOpenListing={(url) => {
           void window.nordri.browser.command({ type: "open", url });
         }}
+        onAssessJobListing={context.onAssessJobListing}
         onQueueJob={context.onQueueJob}
         onRunAgentDiscovery={context.onRunAgentDiscovery}
         // Parsed through the schema so a workspace that never saved AI
@@ -1455,8 +1477,10 @@ function JobFinderReviewQueueRouteContent() {
   const context = useJobFinderPageContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigationContext = readJobFinderNavigationContext(searchParams);
+  const scopedPlanId =
+    searchParams.get("plan") ?? context.workspace.activeCampaignId;
   const activeCampaign = context.workspace.campaigns.find(
-    (campaign) => campaign.id === context.workspace.activeCampaignId,
+    (campaign) => campaign.id === scopedPlanId,
   );
   const campaignJobIds = new Set(activeCampaign?.jobIds ?? []);
   const queue = context.workspace.reviewQueue.filter((item) =>
@@ -1549,6 +1573,25 @@ function JobFinderReviewQueueRouteContent() {
       workspace={context.workspace}
     >
       <ReviewQueueScreen
+        scopeControl={
+          <SearchPlanScope
+            campaigns={context.workspace.campaigns}
+            activeCampaignId={scopedPlanId}
+            countsByCampaignId={Object.fromEntries(
+              context.workspace.campaigns.map((plan) => [
+                plan.id,
+                context.workspace.reviewQueue.filter((item) =>
+                  plan.jobIds.includes(item.jobId),
+                ).length,
+              ]),
+            )}
+            collection="Shortlisted"
+            onSelect={(campaignId) => {
+              setSearchParams({ plan: campaignId }, { replace: true });
+              return Promise.resolve(true);
+            }}
+          />
+        }
         actionState={context.actionState}
         applicationAutomationMode={
           context.workspace.settings.applicationAutomationMode ?? "prepare_only"
@@ -1558,6 +1601,9 @@ function JobFinderReviewQueueRouteContent() {
         campaignId={activeCampaign?.id ?? ""}
         resumeOperationStarts={context.resumeOperationStarts}
         draftPreparation={context.tailoredDraftPreparation}
+        resumeBatchCheckpoint={
+          context.workspace.intelligence.resumeBatchCheckpoint
+        }
         globalDailyApplicationPreparationCapacity={
           context.workspace.dashboard
             ?.globalDailyApplicationPreparationCapacity ?? null
@@ -1705,6 +1751,7 @@ export function JobFinderResumeWorkspaceRoute() {
           context.workspace.reviewQueue.find((item) => item.jobId === jobId)
             ?.resumeApplicationMode === "original_resume"
             ? {
+                source: context.workspace.profile.baseResume,
                 levelLabel: describeSavedResumeLevel(
                   context.workspace.searchPreferences.tailoringMode,
                 ),
@@ -1898,6 +1945,8 @@ export function JobFinderApplicationsRoute() {
     searchParams.get(APPLICATIONS_VIEW_QUERY_KEY) === "tracker"
       ? ("crm" as const)
       : ("workflow" as const);
+  const scopedPlanId =
+    searchParams.get("plan") ?? context.workspace.activeCampaignId;
   const navigationContext = readJobFinderNavigationContext(searchParams);
   const {
     activeCampaign,
@@ -1908,8 +1957,13 @@ export function JobFinderApplicationsRoute() {
     discoveryJobs,
     selectedApplyRunId,
   } = useMemo(
-    () => selectCampaignApplicationsScope(context.workspace),
-    [context.workspace],
+    () =>
+      selectCampaignApplicationsScope(
+        context.workspace,
+        searchParams.get("scope") === "all",
+        scopedPlanId,
+      ),
+    [context.workspace, searchParams, scopedPlanId],
   );
   const requestedJobStartPending = Boolean(
     navigationContext.jobId &&
@@ -2235,11 +2289,46 @@ export function JobFinderApplicationsRoute() {
       workspace={context.workspace}
     >
       <ApplicationsScreen
+        requestedRecordId={navigationContext.applicationRecordId}
+        homeTimeZone={
+          inferProfileTimeZone(context.workspace.profile ?? {}).timeZone
+        }
+        scopeControl={
+          <SearchPlanScope
+            campaigns={context.workspace.campaigns}
+            activeCampaignId={scopedPlanId}
+            countsByCampaignId={Object.fromEntries(
+              context.workspace.campaigns.map((plan) => [
+                plan.id,
+                selectCampaignApplicationsScope(
+                  context.workspace,
+                  false,
+                  plan.id,
+                ).applicationRecords.length,
+              ]),
+            )}
+            collection="Applications"
+            onSelect={(campaignId) => {
+              setSearchParams({ plan: campaignId }, { replace: true });
+              return Promise.resolve(true);
+            }}
+          />
+        }
         activityControl={context.workspace.activityControl}
         userActionRequests={context.workspace.userActionRequests}
-        actionMessage={startingApplicationNote ?? context.actionState.message}
+        actionMessage={
+          startingApplicationNote ??
+          (context.actionState.message === "Active search plan updated."
+            ? null
+            : context.actionState.message)
+        }
         applicationAttempts={applicationAttempts}
         applicationRecords={applicationRecords}
+        searchPlanName={activeCampaign?.name}
+        hasOtherPlanApplications={
+          context.workspace.applicationRecords.length >
+          applicationRecords.length
+        }
         applyRuns={applyRuns}
         applyJobResults={applyJobResults}
         companies={context.workspace.intelligence.companies}
@@ -2306,7 +2395,9 @@ export function JobFinderApplicationsRoute() {
         }
         getRecordedOutcomes={(applicationRecordId) =>
           context.workspace.intelligence.outcomeEvents
-            .filter((event) => event.applicationRecordId === applicationRecordId)
+            .filter(
+              (event) => event.applicationRecordId === applicationRecordId,
+            )
             .map((event) => ({
               id: event.id,
               outcome: event.outcome,
@@ -2327,6 +2418,7 @@ export function JobFinderApplicationsRoute() {
           void context.onStartAutoApplyQueue(jobIds, applicationAutomationMode);
         }}
         onStartApplyCopilot={context.onStartApplyCopilot}
+        onReviewResumePdf={context.onReviewResumePdf}
         onSelectRecord={handleSelectRecord}
         selectedApplyRunId={selectedApplyRunId}
         selectedAttempt={selectedAttempt}
@@ -2519,8 +2611,11 @@ export function JobFinderActionsRoute() {
           context.isPending(jobFinderPendingActions.userAction(requestId))
         }
         onApplyGroupedManualAnswer={scope.onApplyGroupedManualAnswer}
-        onCommand={(command) => {
-          void context.onPerformUserAction(command);
+        onGetApplyRunDetails={context.onGetApplyRunDetails}
+        onCommand={async (command) => {
+          await context.onPerformUserAction(command, {
+            rethrowError: command.action === "submit_manual_answer",
+          });
         }}
         onNavigate={context.onNavigateSafely}
         onProjectGroupedManualAnswer={scope.onProjectGroupedManualAnswer}
@@ -2571,6 +2666,8 @@ export function JobFinderAnalyticsRoute() {
       workspace={context.workspace}
     >
       <OutcomeAnalyticsScreen
+        applyJobResults={context.workspace.applyJobResults}
+        applyRuns={context.workspace.applyRuns}
         actionMessage={context.actionState.message}
         activeCampaignId={scope.activeCampaignId}
         campaigns={scope.campaigns}
@@ -2633,6 +2730,8 @@ export function JobFinderSafeguardsRoute() {
           )
         }
         onMutateSafeguards={context.onMutateSafeguards}
+        onSetActivityControl={context.onSetActivityControl}
+        onResetBrowser={context.onResetBrowser}
         workspace={context.workspace}
       />
     </JobFinderHydrationGate>

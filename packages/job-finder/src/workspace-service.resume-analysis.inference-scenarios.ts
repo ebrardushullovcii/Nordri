@@ -21,12 +21,12 @@ describe("createJobFinderWorkspaceService", () => {
         id: "resume_inferred_company",
         fileName: "CV.pdf",
         textContent: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "Address: Prishtina, Kosovo (Home)",
           "ABOUT ME",
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
           "WORK EXPERIENCE",
-          "INFOTECH L.L.C – PRISHTINA, KOSOVO",
+          "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO",
           ".NET CONSULTANT – 01/2022 – Current",
           "• Provide on-call architecture and performance triage, cutting query response times by up to 60% in critical workflows.",
           ".NET DEVELOPER – 08/2019 – 01/2022",
@@ -47,12 +47,12 @@ describe("createJobFinderWorkspaceService", () => {
           {
             pageNumber: 1,
             text: [
-              "Ebrar Dushullovci",
+              "Elian Morava",
               "Address: Prishtina, Kosovo (Home)",
               "ABOUT ME",
               "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
               "WORK EXPERIENCE",
-              "INFOTECH L.L.C – PRISHTINA, KOSOVO",
+              "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO",
               ".NET CONSULTANT – 01/2022 – Current",
               ".NET DEVELOPER – 08/2019 – 01/2022",
             ].join("\n"),
@@ -62,24 +62,24 @@ describe("createJobFinderWorkspaceService", () => {
           },
         ],
         blocks: [
-          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "Ebrar Dushullovci", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
+          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "Elian Morava", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_2", pageNumber: 1, readingOrder: 1, text: "Address: Prishtina, Kosovo (Home)", kind: "paragraph", sectionHint: "contact", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_3", pageNumber: 1, readingOrder: 2, text: "ABOUT ME", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_4", pageNumber: 1, readingOrder: 3, text: "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.", kind: "paragraph", sectionHint: "summary", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_5", pageNumber: 1, readingOrder: 4, text: "WORK EXPERIENCE", kind: "heading", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
-          { id: "page_1_block_6", pageNumber: 1, readingOrder: 5, text: "INFOTECH L.L.C – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
+          { id: "page_1_block_6", pageNumber: 1, readingOrder: 5, text: "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_7", pageNumber: 1, readingOrder: 6, text: ".NET CONSULTANT – 01/2022 – Current", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_8", pageNumber: 1, readingOrder: 7, text: "• Provide on-call architecture and performance triage, cutting query response times by up to 60% in critical workflows.", kind: "list_item", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_9", pageNumber: 1, readingOrder: 8, text: ".NET DEVELOPER – 08/2019 – 01/2022", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_10", pageNumber: 1, readingOrder: 9, text: "• Supported and enhanced a comprehensive .NET desktop application for business management covering inventory, sales, tax documentation, POS, restaurant orders, car repair, and fuel-pump control.", kind: "list_item", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
         ],
         fullText: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "Address: Prishtina, Kosovo (Home)",
           "ABOUT ME",
           "A passionate software developer with 6+ years of full-stack experience building impactful solutions using React, Next.js, Node.js, .NET Core, SQL Server and AWS/Azure.",
           "WORK EXPERIENCE",
-          "INFOTECH L.L.C – PRISHTINA, KOSOVO",
+          "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO",
           ".NET CONSULTANT – 01/2022 – Current",
           "• Provide on-call architecture and performance triage, cutting query response times by up to 60% in critical workflows.",
           ".NET DEVELOPER – 08/2019 – 01/2022",
@@ -98,11 +98,11 @@ describe("createJobFinderWorkspaceService", () => {
 
     expect(snapshot.profile.experiences).toEqual(seed.profile.experiences);
     expect(dotNetDeveloperCandidate?.resolution).toBe("needs_review");
-    expect(dotNetDeveloperCandidate?.label).toContain("INFOTECH L.L.C");
+    expect(dotNetDeveloperCandidate?.label).toContain("BRIDGEWAY L.L.C");
     expect(dotNetDeveloperCandidate?.value).toEqual(
       expect.objectContaining({
         title: ".NET Developer",
-        companyName: "INFOTECH L.L.C",
+        companyName: "BRIDGEWAY L.L.C",
         location: "Prishtina, Kosovo",
       }),
     );
@@ -185,7 +185,7 @@ describe("createJobFinderWorkspaceService", () => {
         id: "resume_cross_page_company",
         fileName: "CV.pdf",
         textContent: [
-          "BEAUTYQUE – PRISHTINA, KOSOVO",
+          "LUMIQUE – PRISHTINA, KOSOVO",
           "PROJECT MANAGER – 04/2018 – 12/2018",
           "• Managed end-to-end project lifecycle for the development of e-commerce and landing sites, ensuring timely delivery and quality standards.",
           "• Standardized QA checklists, cutting post-launch defect reports by 40 %.",
@@ -206,7 +206,7 @@ describe("createJobFinderWorkspaceService", () => {
           {
             pageNumber: 2,
             text: [
-              "BEAUTYQUE – PRISHTINA, KOSOVO",
+              "LUMIQUE – PRISHTINA, KOSOVO",
               "PROJECT MANAGER – 04/2018 – 12/2018",
               "• Managed end-to-end project lifecycle for the development of e-commerce and landing sites, ensuring timely delivery and quality standards.",
             ].join("\n"),
@@ -227,7 +227,7 @@ describe("createJobFinderWorkspaceService", () => {
           },
         ],
         blocks: [
-          { id: "page_2_block_1", pageNumber: 2, readingOrder: 0, text: "BEAUTYQUE – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
+          { id: "page_2_block_1", pageNumber: 2, readingOrder: 0, text: "LUMIQUE – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_2_block_2", pageNumber: 2, readingOrder: 1, text: "PROJECT MANAGER – 04/2018 – 12/2018", kind: "heading", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_2_block_3", pageNumber: 2, readingOrder: 2, text: "• Managed end-to-end project lifecycle for the development of e-commerce and landing sites, ensuring timely delivery and quality standards.", kind: "list_item", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_3_block_1", pageNumber: 3, readingOrder: 0, text: "• Standardized QA checklists, cutting post-launch defect reports by 40 %.", kind: "list_item", sectionHint: "summary", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
@@ -235,7 +235,7 @@ describe("createJobFinderWorkspaceService", () => {
           { id: "page_3_block_3", pageNumber: 3, readingOrder: 2, text: "• Grew social reach by 120 % and email CTR by 35 % through data-driven A/B campaigns.", kind: "list_item", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
         ],
         fullText: [
-          "BEAUTYQUE – PRISHTINA, KOSOVO",
+          "LUMIQUE – PRISHTINA, KOSOVO",
           "PROJECT MANAGER – 04/2018 – 12/2018",
           "• Managed end-to-end project lifecycle for the development of e-commerce and landing sites, ensuring timely delivery and quality standards.",
           "• Standardized QA checklists, cutting post-launch defect reports by 40 %.",
@@ -258,7 +258,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(digitalMarketingCandidate?.value).toEqual(
       expect.objectContaining({
         title: "Digital Marketing Manager",
-        companyName: "BEAUTYQUE",
+        companyName: "LUMIQUE",
         location: "Prishtina, Kosovo",
       }),
     );
@@ -335,7 +335,7 @@ describe("createJobFinderWorkspaceService", () => {
         id: "resume_ceo_previous_page_company",
         fileName: "CV.pdf",
         textContent: [
-          "AUTOMATEDPROS – PRISHTINA, KOSOVO",
+          "NORTHLANE – PRISHTINA, KOSOVO",
           "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current",
           "• Implemented a custom integration layer via API routes to run tests on demand and stream real-time results, accelerating feedback loops.",
           "• Built a centralized dashboard with ShadCN components for logging outcomes, generating reports, and tracking historical data, giving QA and engineering teams a single source of truth.",
@@ -356,7 +356,7 @@ describe("createJobFinderWorkspaceService", () => {
           {
             pageNumber: 1,
             text: [
-              "AUTOMATEDPROS – PRISHTINA, KOSOVO",
+              "NORTHLANE – PRISHTINA, KOSOVO",
               "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current",
               "• Implemented a custom integration layer via API routes to run tests on demand and stream real-time results, accelerating feedback loops.",
             ].join("\n"),
@@ -377,7 +377,7 @@ describe("createJobFinderWorkspaceService", () => {
           },
         ],
         blocks: [
-          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "AUTOMATEDPROS – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
+          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "NORTHLANE – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_2", pageNumber: 1, readingOrder: 1, text: "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current", kind: "heading", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_3", pageNumber: 1, readingOrder: 2, text: "• Implemented a custom integration layer via API routes to run tests on demand and stream real-time results, accelerating feedback loops.", kind: "list_item", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_2_block_1", pageNumber: 2, readingOrder: 0, text: "• Built a centralized dashboard with ShadCN components for logging outcomes, generating reports, and tracking historical data, giving QA and engineering teams a single source of truth.", kind: "list_item", sectionHint: "summary", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
@@ -385,7 +385,7 @@ describe("createJobFinderWorkspaceService", () => {
           { id: "page_2_block_4", pageNumber: 2, readingOrder: 2, text: "• Led and oversaw customer experience initiatives, ensuring smooth and efficient interactions between support, QA, and development teams.", kind: "list_item", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
         ],
         fullText: [
-          "AUTOMATEDPROS – PRISHTINA, KOSOVO",
+          "NORTHLANE – PRISHTINA, KOSOVO",
           "SENIOR FULL-STACK SOFTWARE ENGINEER – 07/2023 – Current",
           "• Implemented a custom integration layer via API routes to run tests on demand and stream real-time results, accelerating feedback loops.",
           "• Built a centralized dashboard with ShadCN components for logging outcomes, generating reports, and tracking historical data, giving QA and engineering teams a single source of truth.",
@@ -408,7 +408,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(chiefExperienceOfficerCandidate?.value).toEqual(
       expect.objectContaining({
         title: "Chief Experience Officer",
-        companyName: "AUTOMATEDPROS",
+        companyName: "NORTHLANE",
         location: "Prishtina, Kosovo",
       }),
     );
@@ -431,10 +431,10 @@ describe("createJobFinderWorkspaceService", () => {
                 {
                   target: { section: "identity", key: "fullName", recordId: null },
                   label: "Full name",
-                  value: "Ebrar Dushullovci",
-                  normalizedValue: "Ebrar Dushullovci",
-                  valuePreview: "Ebrar Dushullovci",
-                  evidenceText: "Ebrar Dushullovci",
+                  value: "Elian Morava",
+                  normalizedValue: "Elian Morava",
+                  valuePreview: "Elian Morava",
+                  evidenceText: "Elian Morava",
                   sourceBlockIds: ["page_1_block_1"],
                   confidence: 0.98,
                   notes: [],
@@ -455,7 +455,7 @@ describe("createJobFinderWorkspaceService", () => {
                   target: { section: "experience", key: "record", recordId: "experience_1" },
                   label: "Malformed experience",
                   value: {
-                    companyName: "INFOTECH L.L.C",
+                    companyName: "BRIDGEWAY L.L.C",
                     title: ".NET Developer",
                     startDate: "08/2019",
                     endDate: "01/2022",
@@ -492,9 +492,9 @@ describe("createJobFinderWorkspaceService", () => {
         id: "resume_malformed_arrays",
         fileName: "CV.pdf",
         textContent: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "WORK EXPERIENCE",
-          "INFOTECH L.L.C – PRISHTINA, KOSOVO",
+          "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO",
           ".NET DEVELOPER – 08/2019 – 01/2022",
         ].join("\n"),
       },
@@ -510,14 +510,14 @@ describe("createJobFinderWorkspaceService", () => {
         languageHints: [],
         pages: [],
         blocks: [
-          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "Ebrar Dushullovci", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
-          { id: "page_1_block_2", pageNumber: 1, readingOrder: 1, text: "INFOTECH L.L.C – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
+          { id: "page_1_block_1", pageNumber: 1, readingOrder: 0, text: "Elian Morava", kind: "paragraph", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
+          { id: "page_1_block_2", pageNumber: 1, readingOrder: 1, text: "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO", kind: "heading", sectionHint: "identity", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
           { id: "page_1_block_3", pageNumber: 1, readingOrder: 2, text: ".NET DEVELOPER – 08/2019 – 01/2022", kind: "paragraph", sectionHint: "experience", bbox: null, sourceParserKinds: ["pdfjs_text"], sourceConfidence: 0.72 },
         ],
         fullText: [
-          "Ebrar Dushullovci",
+          "Elian Morava",
           "WORK EXPERIENCE",
-          "INFOTECH L.L.C – PRISHTINA, KOSOVO",
+          "BRIDGEWAY L.L.C – PRISHTINA, KOSOVO",
           ".NET DEVELOPER – 08/2019 – 01/2022",
         ].join("\n"),
       },
@@ -535,7 +535,7 @@ describe("createJobFinderWorkspaceService", () => {
     expect(malformedExperienceCandidate?.resolution).toBe("needs_review");
     expect(malformedExperienceCandidate?.value).toEqual(
       expect.objectContaining({
-        companyName: "INFOTECH L.L.C",
+        companyName: "BRIDGEWAY L.L.C",
         title: ".NET Developer",
         achievements: [],
         skills: [],

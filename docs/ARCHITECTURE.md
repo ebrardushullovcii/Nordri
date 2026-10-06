@@ -36,8 +36,8 @@ See [ADR 0007](adr/0007-source-generic-browser-workflows.md) for the source-gene
 - desktop: renderer -> preload -> Electron main -> package services
 - resume import: desktop ingress -> parser/text/vision branches -> review candidates -> accepted canonical writes
 - discovery: the model owns each search and source-check run on `runAgentLoop`
-  with general page tools plus `extract_jobs`, `scan_cards`, `saved_jobs`, and
-  `finish` (ADR 0023). `browser-agent` owns the source-generic search policy,
+  with general page tools plus `extract_jobs`, `saved_jobs`, and `finish`
+  (ADR 0023); job details come from the model reading the page (ADR 0041). `browser-agent` owns the source-generic search policy,
   prompts, and structured outputs; `job-finder` owns budgets, canonical merge,
   matching, dedupe, ledger, persistence, and run truth. Each checkpoint's new
   postings use the same canonical merge path as final collection.

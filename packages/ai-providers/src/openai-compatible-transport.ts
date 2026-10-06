@@ -400,6 +400,7 @@ export function buildModelRequestBody(input: {
   jsonOutput?: boolean;
   tools?: readonly CompatibleTool[];
   maxOutputTokens?: number | undefined;
+  parallelToolCalls?: boolean | undefined;
   /**
    * Ask the Responses API for reasoning summaries. The text is ignored; the
    * summary events are what keep a streamed request visibly alive while the
@@ -425,7 +426,13 @@ export function buildModelRequestBody(input: {
       ...(input.jsonOutput ? { response_format: { type: "json_object" } } : {}),
       messages: input.messages,
       ...(input.tools && input.tools.length > 0
-        ? { tools: input.tools, tool_choice: "auto" }
+        ? {
+            tools: input.tools,
+            tool_choice: "auto",
+            ...(input.parallelToolCalls === undefined
+              ? {}
+              : { parallel_tool_calls: input.parallelToolCalls }),
+          }
         : {}),
       ...(typeof input.maxOutputTokens === "number"
         ? { max_tokens: input.maxOutputTokens }
@@ -451,6 +458,9 @@ export function buildModelRequestBody(input: {
             parameters: tool.function.parameters,
           })),
           tool_choice: "auto",
+          ...(input.parallelToolCalls === undefined
+            ? {}
+            : { parallel_tool_calls: input.parallelToolCalls }),
         }
       : {}),
     ...(typeof input.maxOutputTokens === "number"

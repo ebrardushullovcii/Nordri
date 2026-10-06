@@ -1,3 +1,4 @@
+import { waitForDisplayedDestination } from "./navigation-display";
 import { ASSISTANT_NARROW_CONTENT_MIN_WIDTH } from "./use-assistant-side-menu-collapse";
 import {
   useCallback,
@@ -274,6 +275,8 @@ function AssistantSidebarPanel() {
   const assistant = useAssistant();
   const navigate = useNavigate();
   const location = useLocation();
+  const displayedLocation = useRef(location);
+  displayedLocation.current = location;
   const headerBottom = useHeaderBottom();
   const browserChip = useVisibleBrowserTitle();
   const contentWidth = useContentWidth();
@@ -291,7 +294,15 @@ function AssistantSidebarPanel() {
     loadOlder,
     clearError,
   } = useAssistantConversation({
-    onOpenRoute: (route) => void navigate(route),
+    onOpenRoute: async (route) => {
+      assistant?.setNarrowView("page");
+      await navigate(route);
+      return waitForDisplayedDestination(
+        route,
+        () =>
+          `${displayedLocation.current.pathname}${displayedLocation.current.search}`,
+      );
+    },
   });
   const [text, setText] = useState("");
   const [mentions, setMentions] = useState<AssistantEntityRef[]>([]);
@@ -323,6 +334,13 @@ function AssistantSidebarPanel() {
   const [announcement, setAnnouncement] = useState("");
   const threadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    if (text)
+      textarea.style.height = `${Math.min(192, window.innerHeight * 0.25, textarea.scrollHeight)}px`;
+  }, [text]);
   const findRef = useRef<HTMLInputElement>(null);
 
   const open = assistant?.open ?? false;
@@ -663,10 +681,10 @@ function AssistantSidebarPanel() {
 
   return createPortal(
     <>
-      {open && narrow ? (
+      {open && narrow && !showPanel ? (
         <div
           aria-label="Show the page or the chat"
-          className="fixed bottom-4 right-4 z-[125] flex overflow-hidden rounded-full border border-(--control-border) bg-(--surface-panel) text-[13px] shadow-lg"
+          className="fixed bottom-4 left-4 z-[125] flex overflow-hidden rounded-full border border-(--control-border) bg-(--surface-panel) text-[13px] shadow-lg"
           data-assistant-narrow-switch
           role="group"
         >
@@ -691,7 +709,7 @@ function AssistantSidebarPanel() {
       <aside
         aria-label="Assistant"
         className={cn(
-          "fixed bottom-0 right-0 z-[120] flex flex-col border-l border-(--surface-panel-shell-border) bg-(--shell-header-bg) text-[14px] leading-[1.55] text-foreground",
+          "fixed bottom-0 right-0 z-[120] flex flex-col border-l border-(--surface-panel-shell-border) bg-background text-[14px] leading-[1.55] text-foreground",
           !showPanel && "hidden",
         )}
         data-assistant-sidebar
@@ -707,6 +725,31 @@ function AssistantSidebarPanel() {
         onKeyDown={onSidebarKeyDown}
         style={panelStyle}
       >
+        {open && narrow ? (
+          <div
+            aria-label="Show the page or the chat"
+            className="flex w-fit shrink-0 overflow-hidden rounded-full border border-(--control-border) bg-(--surface-panel) text-[13px] shadow-lg"
+            data-assistant-narrow-switch
+            role="group"
+          >
+            {(["page", "chat"] as const).map((view) => (
+              <button
+                aria-pressed={assistant.narrowView === view}
+                className={cn(
+                  "px-3 py-1.5 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
+                  assistant.narrowView === view
+                    ? "bg-(--nav-active-surface) font-semibold text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                key={view}
+                onClick={() => assistant.setNarrowView(view)}
+                type="button"
+              >
+                {view === "page" ? "Page" : "Chat"}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {!narrow ? (
           <div
             aria-label="Resize the assistant"
@@ -1103,7 +1146,7 @@ function AssistantSidebarPanel() {
           ) : null}
           <textarea
             aria-label="Message the assistant"
-            className="max-h-48 min-h-[2.5rem] w-full resize-none rounded-(--radius-field) border border-(--control-border) bg-(--surface-panel) px-3 py-2 text-[14px] outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40"
+            className="max-h-[min(12rem,25vh)] min-h-[2.5rem] w-full resize-none rounded-(--radius-field) border border-(--control-border) bg-(--surface-panel) px-3 py-2 text-[14px] outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40"
             data-assistant-composer
             onChange={(event) => {
               setText(event.target.value);
@@ -1111,9 +1154,6 @@ function AssistantSidebarPanel() {
                 event.target.value,
                 event.target.selectionStart ?? event.target.value.length,
               );
-              const target = event.target;
-              target.style.height = "auto";
-              target.style.height = `${Math.min(192, target.scrollHeight)}px`;
             }}
             onKeyDown={onComposerKeyDown}
             placeholder={

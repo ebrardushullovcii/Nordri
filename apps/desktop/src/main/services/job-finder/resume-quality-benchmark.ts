@@ -14,6 +14,7 @@ import {
   CandidateProfileSchema,
   type JobPosting,
   JobPostingSchema,
+  ResumeQualityBenchmarkMetricsSchema,
   ResumeQualityBenchmarkReportSchema,
   ResumeQualityBenchmarkRequestSchema,
   SavedJobSchema,
@@ -81,12 +82,8 @@ function matchesWholePhrase(candidate: string, phrase: string): boolean {
     return false
   }
 
-  const desiredTokens = normalizedPhrase.split(' ').filter(Boolean)
-  if (desiredTokens.length === 1) {
-    return new Set(normalizedCandidate.split(' ').filter(Boolean)).has(desiredTokens[0] ?? '')
-  }
-
-  return new RegExp(`(^|\\s)${escapeRegex(normalizedPhrase)}($|\\s)`).test(normalizedCandidate)
+  // The plural counts too: "workflow platforms" covers "Workflow platform".
+  return new RegExp(`(^|\\s)${escapeRegex(normalizedPhrase)}(?:e?s)?($|\\s)`).test(normalizedCandidate)
 }
 
 function firstNonEmptyValue(values: readonly (string | null | undefined)[]): string | null {
@@ -436,7 +433,24 @@ export function calculateProfessionalExperienceSummaryRate(
   )
 }
 
-export function passesResumeQualityAcceptance(metrics: ResumeQualityBenchmarkMetrics): boolean {
+export function passesResumeQualityAcceptance(
+  metrics: ResumeQualityBenchmarkMetrics,
+  options: { expectsThinOutput?: boolean } = {},
+): boolean {
+  // A profile too thin for a full resume passes when the resume is flagged as
+  // thin instead of padded: its keywords cannot all be covered, and the thin
+  // flag is the issue it is expected to raise.
+  if (options.expectsThinOutput) {
+    return (
+      metrics.groundedVisibleSkillRate === 1 &&
+      metrics.fragmentFreeExperienceBulletRate === 1 &&
+      metrics.bleedFreeCaseRate === 1 &&
+      metrics.duplicateIssueFreeRate === 1 &&
+      metrics.thinOutputFreeRate === 0 &&
+      metrics.pageTargetPassRate === 1 &&
+      metrics.atsRenderPassRate === 1
+    )
+  }
   return (
     metrics.groundedVisibleSkillRate === 1 &&
     metrics.workHistoryRepresentationRate === 1 &&
@@ -1278,36 +1292,37 @@ const realFixtureQualityTargets: Record<
     keySkills: ['TypeScript', 'React', 'Accessibility', 'AWS'],
     summary: 'Build reliable, accessible workflow software for operations teams.',
   },
-  aaron_murphy_pdf: {
-    title: 'Staff Software Engineer',
-    company: 'Northstar Platform',
-    keySkills: ['Software Engineering', 'Platform', 'React', 'Node.js', 'AWS'],
-    summary: 'Lead product-platform engineering for a growing SaaS organization.',
+  persona_lina_txt: {
+    title: 'Junior Data Analyst',
+    company: 'Metro Mobility Analytics',
+    keySkills: ['SQL', 'Python', 'BigQuery', 'Looker Studio', 'A/B testing'],
+    summary: 'Turn operations data into weekly dashboards and experiment readouts.',
+    seniority: 'Junior',
+  },
+  persona_priya_pdf: {
+    title: 'Senior Product Designer',
+    company: 'Harbor Health',
+    keySkills: ['Figma', 'Design Systems', 'User Research', 'Accessibility', 'Prototyping'],
+    summary: 'Lead product design for patient-facing scheduling and onboarding flows.',
+  },
+  persona_dev_pdf: {
+    title: 'Staff Backend Engineer',
+    company: 'Ledgerline Payments',
+    keySkills: ['Go', 'Kafka', 'PostgreSQL', 'AWS', 'Distributed Systems'],
+    summary: 'Own high-throughput payment services from design through on-call.',
     seniority: 'Staff',
   },
-  ebrar_pdf: {
-    title: 'Senior Full-Stack Engineer',
-    company: 'Automated Systems Group',
-    keySkills: ['.NET', 'React', 'TypeScript', 'SQL', 'Azure'],
-    summary: 'Build and modernize full-stack web applications for business automation teams.',
+  persona_maya_docx: {
+    title: 'Instructional Designer',
+    company: 'Brightpath Learning',
+    keySkills: ['Instructional Design', 'Articulate Storyline', 'Canvas', 'Curriculum Development'],
+    summary: 'Design online courses and train facilitators for a growing learning platform.',
   },
-  ebrar_new_pdf: {
-    title: 'Senior Full-Stack Engineer',
-    company: 'Workflow Automation Labs',
-    keySkills: ['.NET', 'React', 'TypeScript', 'SQL', 'Docker'],
-    summary: 'Own full-stack automation products from API design through user-facing delivery.',
-  },
-  paul_asselin_pdf: {
-    title: 'Senior Software Engineer',
-    company: 'Mercury Product Cloud',
-    keySkills: ['Ruby', 'React', 'API Design', 'PostgreSQL', 'AWS'],
-    summary: 'Ship reliable financial-product software with strong backend and frontend ownership.',
-  },
-  ryan_holstien_pdf: {
-    title: 'Senior Platform Engineer',
-    company: 'DataHub Cloud',
-    keySkills: ['Java', 'Distributed Systems', 'AWS', 'Microservices', 'Kubernetes'],
-    summary: 'Design scalable platform services for high-volume data and marketplace products.',
+  persona_roberto_md: {
+    title: 'Supply Chain Manager',
+    company: 'Iberia Fulfilment',
+    keySkills: ['Warehouse Operations', 'Lean Six Sigma', 'Team Leadership', 'Last-Mile Delivery'],
+    summary: 'Run fulfilment and last-mile operations across two distribution centres.',
   },
 }
 
@@ -1479,6 +1494,11 @@ function sortProfileForResumeCoverage(profile: JobFinderRepositoryState['profile
   })
 }
 
+// Inside Electron the benchmark exports a PDF, as the app does, so the page
+// count is measured and the page-target gate means something. Plain Node (the
+// unit tests) has no print window and exports HTML; the gate stays unmeasured.
+const BENCHMARK_RESUME_FORMAT = process.versions.electron ? 'pdf' : 'html'
+
 function buildStateForCase(input: {
   templateId: ResumeTemplateId
   profile: JobFinderRepositoryState['profile']
@@ -1499,7 +1519,7 @@ function buildStateForCase(input: {
     settings: {
       ...state.settings,
       resumeTemplateId: input.templateId,
-      resumeFormat: 'html',
+      resumeFormat: BENCHMARK_RESUME_FORMAT,
       fontPreset: input.templateId === 'compact_exec' ? 'space_grotesk_display' : 'inter_requisite',
       keepSessionAlive: false,
     },
@@ -1862,6 +1882,17 @@ function aggregateMetrics(results: readonly ResumeQualityBenchmarkCaseResult[]):
   }
 }
 
+/** An error's message followed by the messages of what caused it. */
+function describeErrorChain(error: unknown): string {
+  const messages: string[] = []
+  let current: unknown = error
+  while (current instanceof Error && messages.length < 4) {
+    messages.push(current.message)
+    current = current.cause
+  }
+  return messages.length > 0 ? messages.join(' <- ') : String(error)
+}
+
 async function persistHtmlArtifact(input: {
   sourcePath: string
   persistArtifactsDirectory: string | null
@@ -1953,7 +1984,26 @@ export async function runDesktopResumeQualityBenchmark(
             }
 
             const generationStartedAt = performance.now()
-            await workspaceService.generateResume(jobId)
+            try {
+              await workspaceService.generateResume(jobId)
+            } catch (error) {
+              // A resume the AI could not write is a failed case, not a stopped run.
+              results.push({
+                caseId: fixture.definition.id,
+                label: fixture.definition.label,
+                templateId,
+                passed: false,
+                visibleSkills: [],
+                issueCategories: [],
+                issueCount: 0,
+                generationDurationMs: performance.now() - generationStartedAt,
+                generationDiagnostics: buildGenerationDiagnostics(undefined),
+                metrics: ResumeQualityBenchmarkMetricsSchema.parse({}),
+                htmlArtifactRelativePath: null,
+                notes: [`Generation failed: ${describeErrorChain(error)}`],
+              })
+              continue
+            }
             const generationDurationMs = performance.now() - generationStartedAt
             const workspace = await workspaceService.getResumeWorkspace(jobId)
             const asset = workspace.tailoredAsset
@@ -1964,9 +2014,11 @@ export async function runDesktopResumeQualityBenchmark(
               )
             }
 
-            const html = asset.storagePath.endsWith('.html') ? await readFile(asset.storagePath, 'utf8') : ''
+            // A PDF export writes the HTML it printed beside the PDF.
+            const htmlPath = asset.storagePath.replace(/\.pdf$/i, '.html')
+            const html = htmlPath.endsWith('.html') ? await readFile(htmlPath, 'utf8').catch(() => '') : ''
             const htmlArtifactRelativePath = await persistHtmlArtifact({
-              sourcePath: asset.storagePath,
+              sourcePath: htmlPath,
               persistArtifactsDirectory: request.persistArtifactsDirectory,
               caseId: fixture.definition.id,
               templateId,
@@ -1982,7 +2034,9 @@ export async function runDesktopResumeQualityBenchmark(
               new Set((workspace.validation?.issues ?? []).map((issue) => issue.category)),
             )
 
-            const passed = passesResumeQualityAcceptance(metrics)
+            const passed = passesResumeQualityAcceptance(metrics, {
+              expectsThinOutput: fixture.definition.tags.includes('abstention'),
+            })
 
             const templateName = asset.templateName?.trim() ?? ''
             const pageCountMeasured = (workspace.validation?.pageCount ?? null) !== null

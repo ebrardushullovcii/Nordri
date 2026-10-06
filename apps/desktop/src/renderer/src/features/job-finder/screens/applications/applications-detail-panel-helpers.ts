@@ -362,7 +362,10 @@ export function getCustomerFacingApplyText(
   receipt?: ApplicationPrivacyReceipt | null,
 ): string | null {
   void receipt;
-  const text = splitBlockedAttemptNote(value).message;
+  const text = splitBlockedAttemptNote(value).message?.replace(
+    /from chosen on the form(?! by Job Finder)/giu,
+    "from a choice Job Finder made on the form",
+  );
   if (!text) {
     return null;
   }
@@ -405,8 +408,10 @@ export function applyResultNeedsResumeAttachment(
       .filter(Boolean)
       .join(" ");
     return (
-      /\b(?:resume|cv)\b/i.test(text) &&
-      /\b(?:not attached|attach(?:ment)? needs|could not be attached|retry.*attach|upload.*failed)\b/i.test(
+      (/\b(?:resume|cv)\b/i.test(text) ||
+        (Boolean(result.privacyReceipt?.resume?.fileName) &&
+          /upload.*(?:pdf|docx|format)/i.test(text))) &&
+      /\b(?:not attached|attach(?:ment)? needs|could not be attached|retry.*attach|upload.*failed|rejected|not accepted|unsupported (?:file|format)|upload a nonempty)\b/i.test(
         text,
       )
     );
@@ -622,7 +627,9 @@ export function getQueueStateExplanation(
     skippedJobCount: number;
     failedJobCount: number;
     completedJobCount: number;
+    waitingJobCount?: number;
     unfinishedJobCount: number;
+    stopReason?: string | null;
   } | null,
 ) {
   if (!input) {
@@ -633,6 +640,10 @@ export function getQueueStateExplanation(
     return "This run is still working through its jobs. Progress and outcomes update here as each application finishes.";
   }
 
+  if ((input.waitingJobCount ?? 0) > 0) {
+    return `${input.completedJobCount} sent. ${input.waitingJobCount} ${input.waitingJobCount === 1 ? "application needs" : "applications need"} your answers or review. Open each waiting application to continue.`;
+  }
+
   if (input.runState === "paused_for_consent") {
     return "This application is paused until you deal with the item below — often signing in on the job site. Handle it in Needs you, then Job Finder carries on. You can also start again on just the jobs that stopped.";
   }
@@ -641,8 +652,8 @@ export function getQueueStateExplanation(
   // never resume; finishing the remaining jobs requires a fresh recovery run.
   if (input.runState === "paused_for_user_review") {
     return input.unfinishedJobCount > 0
-      ? "Job Finder paused because one of your safety limits was reached and will not carry on by itself. Review the prepared sample in Safeguards. Use Prepare remaining jobs to finish the ones it did not get to."
-      : "Job Finder paused because one of your safety limits was reached and will not carry on by itself. Review the completed outcomes in Safeguards.";
+      ? `${input.stopReason?.trim() || "A safety limit paused this run."} It will not carry on by itself. Open Safeguards to see the limit, then press Try again on an unstarted job when the limit allows it.`
+      : `${input.stopReason?.trim() || "A safety limit paused this run."} It will not carry on by itself. Review each job's outcome.`;
   }
 
   if (input.runState === "awaiting_submit_approval") {
@@ -654,7 +665,7 @@ export function getQueueStateExplanation(
   }
 
   if (input.failedJobCount > 0) {
-    return "Some jobs in this run failed before the flow could reach a stable review-safe state. Review the per-job outcomes below before preparing only the unfinished jobs.";
+    return "Some applications could not be prepared. Check each job below before trying again.";
   }
 
   if (input.blockedJobCount > 0 || input.skippedJobCount > 0) {

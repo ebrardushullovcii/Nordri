@@ -33,6 +33,7 @@ export type FailureKind =
   | "site_blocked"
   | "assistant_unavailable"
   | "invalid_details"
+  | "unusable_resume"
   | "paused"
   | "unknown";
 
@@ -60,6 +61,8 @@ export const FAILURE_SENTENCES = {
   paused:
     "Background work is paused, so nothing new can start. Press Resume background work on the Job Finder Home screen, then try again.",
   unknown: "Something went wrong and this did not finish. Try again.",
+  unusable_resume:
+    "No resume details were found in this file. Choose another file.",
 } as const satisfies Record<FailureKind, string>;
 
 /**
@@ -226,6 +229,7 @@ const KIND_PATTERNS: readonly (readonly [
   ["offline", OFFLINE_PATTERNS],
   ["not_found", NOT_FOUND_PATTERNS],
   ["assistant_unavailable", ASSISTANT_UNAVAILABLE_PATTERNS],
+  ["unusable_resume", [/No resume details were found in this file/i]],
   ["invalid_details", INVALID_DETAILS_PATTERNS],
 ];
 
@@ -321,4 +325,111 @@ export function splitBlockedAttemptNote(value: string | null | undefined): {
   }
 
   return { message, technicalDetails: match[1].trim() };
+}
+
+/** Restore errors use a closed set of recovery instructions, never thrown copy. */
+export function describeWorkspaceRestoreFailure(
+  error: unknown,
+): FailureDescription {
+  const failure = describeFailure(error, {
+    action: "restore your workspace",
+    unknownSentence: "Choose the export again and try once more.",
+  });
+  const detail = failure.technicalDetails ?? "";
+  const sentences: readonly [string, string][] = [
+    [
+      "version Nordri cannot restore",
+      "This export uses a version Nordri cannot restore. Your workspace was kept.",
+    ],
+    [
+      "older export does not contain",
+      "This older export does not contain the full workspace needed to restore it. Make a new export from the original workspace. Your current workspace was kept.",
+    ],
+    [
+      "not a Nordri workspace export",
+      "This file is not a Nordri workspace export. Choose an export made in Settings.",
+    ],
+    [
+      "incomplete or damaged",
+      "This export is incomplete or damaged. Your workspace was kept.",
+    ],
+    [
+      "unsafe or damaged document",
+      "This export contains an unsafe or damaged document. Your workspace was kept.",
+    ],
+    [
+      "conflicting",
+      "This export contains conflicting information. Your workspace was kept. Choose another export.",
+    ],
+    [
+      "missing a document folder",
+      "This export is missing documents needed to restore it. Your workspace was kept.",
+    ],
+    [
+      "could not fully undo",
+      "Restore stopped and could not fully undo the changes. Restore the safety export saved in Documents.",
+    ],
+    [
+      "current work to finish",
+      "Wait for Job Finder's current work to finish or stop it before restoring. Your workspace was kept.",
+    ],
+    ["Choose the export again", "Choose the export again before restoring."],
+  ];
+  const sentence = sentences.find(([match]) => detail.includes(match))?.[1];
+  return sentence ? { ...failure, sentence, userMessage: sentence } : failure;
+}
+
+// These are service-authored recovery messages, not provider or transport text.
+const LISTING_READ_MESSAGES = new Set([
+  "The listing could not be read from this page. Open the listing and try again.",
+  "The fit assessment could not be completed. Your previous assessment was kept. Try again.",
+  "The listing could not be assessed. Your previous assessment was kept.",
+  "This job is not in the saved or pending list. Use Assess next 1 listing in Find jobs to assess the search results.",
+  "The AI is unavailable. Try again.",
+  "The linked listing names a different role. Open the listing and choose the role you want.",
+  "Only a short excerpt could be read. Open the listing to check the requirements.",
+  "The site asked Job Finder to slow down (HTTP 429). The listing is read again on the next search.",
+]);
+
+/** Preserve the service's recovery advice, while removing IPC wrappers. */
+export function describeListingReadFailure(
+  error: unknown,
+  options: { listingUrl?: string; online?: boolean } = {},
+): string {
+  const online =
+    options.online ??
+    (typeof navigator === "undefined" || navigator.onLine !== false);
+  if (!online) return FAILURE_SENTENCES.offline;
+  if (classifyFailure(error) === "offline") {
+    let host: string | null = null;
+    try {
+      host = options.listingUrl ? new URL(options.listingUrl).hostname : null;
+    } catch {
+      /* No usable site address. */
+    }
+    return host
+      ? `Job Finder could not reach ${host}. Open the listing in the browser and try again.`
+      : "Job Finder could not reach this job site. Open the listing in the browser and try again.";
+  }
+  const detail = getJobFinderErrorDetail(error);
+  if (detail && LISTING_READ_MESSAGES.has(detail)) return detail;
+  if (detail?.startsWith("The page answered "))
+    return "The job site could not provide this listing. Open it in the browser and try again.";
+  return describeFailure(error, {
+    unknownSentence: "Could not assess this listing. Try again.",
+  }).userMessage;
+}
+
+const BROWSER_JOB_MESSAGES = new Set([
+  "Open a job listing on a website first.",
+  "Wait for this page to finish loading, then try again.",
+  "No job listing was found on this page. Open the job's own listing and try again.",
+  "This job could not be saved. Try again.",
+]);
+export function describeBrowserJobFailure(error: unknown): string {
+  const detail = getJobFinderErrorDetail(error);
+  if (detail && BROWSER_JOB_MESSAGES.has(detail)) return detail;
+  return describeFailure(error, {
+    unknownSentence: "Could not save this job. Try again.",
+  }).userMessage;
 }

@@ -25,7 +25,8 @@ const jobs = Array.from({ length: 60 }, (_, id) =>
 function harness() {
   const keep = vi.fn(() => true);
   const checkpoint = vi.fn(() => Promise.resolve());
-  const tools = createSearchCatalogTools({ jobs, keep, checkpoint });
+  const onInspect = vi.fn();
+  const tools = createSearchCatalogTools({ jobs, keep, checkpoint, onInspect });
   const call = (name: string, args: unknown, signal?: AbortSignal) =>
     tools
       .find((tool) => tool.definition.function.name === name)!
@@ -33,7 +34,7 @@ function harness() {
         step: 1,
         ...(signal ? { signal } : {}),
       });
-  return { call, keep, checkpoint };
+  return { call, keep, checkpoint, onInspect };
 }
 
 describe("public feed catalog tools", () => {
@@ -122,4 +123,25 @@ describe("public feed catalog tools", () => {
     ).rejects.toThrow();
     expect(keep).not.toHaveBeenCalled();
   });
+});
+
+test("records every read and preserves the model's catalog rejection reason", async () => {
+  const { call, keep, onInspect } = harness();
+  await call("list_catalog_jobs", {});
+  expect(onInspect).toHaveBeenCalledTimes(25);
+  await call("save_catalog_jobs", {
+    ids: [0],
+    rejected: [
+      { id: 1, category: "role", reason: "Outside your requested roles." },
+    ],
+  });
+  expect(keep).toHaveBeenCalledWith(
+    expect.objectContaining({
+      sourceJobId: "1",
+      searchRejection: {
+        category: "role",
+        reason: "Outside your requested roles.",
+      },
+    }),
+  );
 });

@@ -429,6 +429,8 @@ function openEditorSection(sectionId: string): void {
 }
 
 function buildScreenElement(options?: {
+  isWorkspacePending?: boolean;
+  actionMessage?: string | null;
   assistantMessages?: ResumeAssistantMessage[];
   assistantPending?: boolean;
   onApplyPatch?: (
@@ -468,11 +470,11 @@ function buildScreenElement(options?: {
 
   return (
     <ResumeWorkspaceScreen
-      actionMessage={null}
+      actionMessage={options?.actionMessage ?? null}
       assistantMessages={options?.assistantMessages ?? []}
       assistantPending={options?.assistantPending ?? false}
       availableResumeTemplates={availableResumeTemplates}
-      isWorkspacePending={false}
+      isWorkspacePending={options?.isWorkspacePending ?? false}
       jobId="job_ready"
       onApplyPatch={options?.onApplyPatch ?? vi.fn()}
       onApproveCurrentResume={vi.fn()}
@@ -573,6 +575,61 @@ describe("ResumeWorkspaceScreen", () => {
     // desktop split view.
     Reflect.deleteProperty(window, "matchMedia");
     vi.clearAllMocks();
+  });
+
+  it("language picker saves the language change without regenerating the draft", () => {
+    const onRegenerateDraft = vi.fn();
+    const onSaveDraftAndThen = vi.fn((_draft: ResumeDraft, next: () => void) =>
+      next(),
+    );
+    renderScreen({ onRegenerateDraft, onSaveDraftAndThen });
+    fireEvent.change(screen.getByLabelText("Resume language"), {
+      target: { value: "German" },
+    });
+    expect(onSaveDraftAndThen).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "German" }),
+      expect.any(Function),
+      null,
+      expect.any(Function),
+    );
+    expect(onRegenerateDraft).not.toHaveBeenCalled();
+  });
+
+  it("offers one rewrite for an older translation and hides unreliable additions", () => {
+    const workspace = buildWorkspace();
+    delete workspace.draft.writtenLanguage;
+    workspace.draft.language = "German";
+    const skills = {
+      ...workspace.draft.sections[0]!,
+      id: "legacy_skills",
+      kind: "skills" as const,
+      entries: [],
+      bullets: [],
+    };
+    workspace.draft.sections.push(skills);
+    skills.text = "Polnisch C1, Englisch B1";
+    skills.sourceRefs = [];
+    const onRegenerateDraft = vi.fn();
+    renderScreen({ workspace, onRegenerateDraft });
+    expect(screen.queryByText("Keywords added:")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Rewrite to refresh the comparison" }),
+    );
+    expect(onRegenerateDraft).toHaveBeenCalledWith(workspace.job.id);
+  });
+
+  it("a failed language choice leaves the saved draft clean and does not save again", () => {
+    const onSaveDraftAndThen = vi.fn(); // Failure: no success callback.
+    const onDirtyChange = vi.fn();
+    renderScreen({ onSaveDraftAndThen, onDirtyChange });
+    fireEvent.change(screen.getByLabelText("Resume language"), {
+      target: { value: "German" },
+    });
+    expect(onSaveDraftAndThen).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByLabelText<HTMLSelectElement>("Resume language").value,
+    ).toBe("German");
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true);
   });
 
   it("opens the one mounted proof disclosure from Review 1 line at desktop width", async () => {
@@ -2205,5 +2262,134 @@ describe("ResumeWorkspaceScreen", () => {
     // Accept/Reject ~37,000px below the fold. The Assistant is now one bounded
     // floating panel at every width. These four sizes are the ones the gate
     // captures.
+  });
+  it("hides an entry in the draft being saved and can show it again", () => {
+    const workspace = buildWorkspace();
+    const experience = workspace.draft.sections.find(
+      (section) => section.kind === "experience",
+    )!;
+    const entry = experience.entries[0]!;
+    const onSaveDraft = vi.fn();
+    const onApplyPatch = vi.fn();
+    renderScreen({ workspace, onSaveDraft, onApplyPatch });
+    openEditorSection(experience.id);
+    fireEvent.click(
+      screen.getByRole("button", { name: `Hide ${entry.title}` }),
+    );
+    expect(
+      screen.getByRole("button", { name: `Show ${entry.title}` }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Save draft" })[0]!);
+    const saved = onSaveDraft.mock.calls[0]?.[0] as ResumeDraft;
+    expect(
+      saved.sections
+        .find((section) => section.id === experience.id)
+        ?.entries.find((item) => item.id === entry.id)?.included,
+    ).toBe(false);
+    expect(onApplyPatch).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: `Show ${entry.title}` }),
+    );
+    expect(
+      screen.getByRole("button", { name: `Hide ${entry.title}` }),
+    ).toBeTruthy();
+  });
+  it("offers Try again beside a failed language change and retries the same choice", () => {
+    const onSaveDraftAndThen = vi.fn();
+    const { rerender } = renderScreen({ onSaveDraftAndThen });
+    fireEvent.change(screen.getByLabelText("Resume language"), {
+      target: { value: "German" },
+    });
+    rerender(
+      buildScreenElement({
+        onSaveDraftAndThen,
+        actionMessage:
+          "The language change did not cover the whole resume. Your previous resume was kept; try again.",
+      }),
+    );
+    expect(
+      screen.getByText(
+        "The writing assistant did not answer. Try again in a few minutes.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/did not cover the whole resume/)).toBeNull();
+    const failure = screen.getByRole("alert");
+    expect(
+      document
+        .querySelector("[data-resume-language-picker]")
+        ?.parentElement?.contains(failure),
+    ).toBe(true);
+    expect(screen.queryByText("Ready to approve")).toBeNull();
+    expect(
+      screen.getByLabelText<HTMLSelectElement>("Resume language").value,
+    ).toBe("German");
+
+    rerender(
+      buildScreenElement({
+        onSaveDraftAndThen,
+        isWorkspacePending: true,
+        actionMessage: "Saving resume draft…",
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.getByText("Saving resume draft…")).toBeTruthy();
+    rerender(
+      buildScreenElement({
+        onSaveDraftAndThen,
+        actionMessage:
+          "The writing assistant did not answer. Try again in a few minutes.",
+      }),
+    );
+    expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(
+      1,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onSaveDraftAndThen).toHaveBeenLastCalledWith(
+      expect.objectContaining({ language: "German" }),
+      expect.any(Function),
+      null,
+      expect.any(Function),
+    );
+  });
+
+  it("offers a full rewrite retry beside its saved failure reason", () => {
+    const workspace = buildWorkspace();
+    workspace.tailoredAsset = {
+      ...workspace.tailoredAsset!,
+      failureMessage:
+        "AI could not write the resume. Your previous resume was kept.",
+      failedAt: "2026-10-05T10:00:00.000Z",
+    };
+    const onRegenerateDraft = vi.fn();
+    const { rerender } = renderScreen({ workspace, onRegenerateDraft });
+    expect(
+      screen.getByText(
+        "The writing assistant did not answer. Try again in a few minutes.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("Rewrite failed")).toBeNull();
+    expect(
+      screen.queryByText(
+        "Your previous resume was kept. Try the rewrite again.",
+      ),
+    ).toBeNull();
+    expect(screen.queryByText("Your previous resume was kept.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRegenerateDraft).toHaveBeenCalledWith("job_ready");
+    rerender(
+      buildScreenElement({
+        workspace,
+        onRegenerateDraft,
+        isWorkspacePending: true,
+        actionMessage: "Saving resume draft…",
+      }),
+    );
+    expect(screen.getByText("Saving resume draft…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(
+      screen.queryByText(
+        "The writing assistant did not answer. Try again in a few minutes.",
+      ),
+    ).toBeNull();
   });
 });

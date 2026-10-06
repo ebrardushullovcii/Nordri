@@ -27,9 +27,115 @@ import {
   jobFinderListRowTitleLineClassName,
 } from "../../components/list-row";
 
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  value: vi.fn(),
+});
 afterEach(cleanup);
 
 describe("ApplicationsRecordsPanel", () => {
+  it("removes stale preparing guidance from a failed row", () => {
+    const record = ApplicationRecordSchema.parse({
+      id: "failed",
+      jobId: "job_failed",
+      title: "Engineer",
+      company: "Example",
+      status: "approved",
+      lastAttemptState: "failed",
+      lastActionLabel: "Profile changed",
+      nextActionLabel: "Job Finder is preparing this job now.",
+      lastUpdatedAt: "2026-10-02T10:00:00.000Z",
+    });
+    const result = ApplyJobResultSchema.parse({
+      id: "result",
+      runId: "run",
+      jobId: record.jobId,
+      applicationRecordId: record.id,
+      state: "failed",
+      summary: "Could not apply",
+      detail: "Profile changed",
+      startedAt: record.lastUpdatedAt,
+      updatedAt: record.lastUpdatedAt,
+    });
+    render(
+      <MemoryRouter>
+        <ApplicationsRecordsPanel
+          activeFilter="all"
+          applicationRecords={[record]}
+          latestApplyResultByRecordId={new Map([[record.id, result]])}
+          filterCounts={{
+            all: 1,
+            needs_action: 1,
+            in_progress: 0,
+            submitted: 0,
+            manual_only: 0,
+          }}
+          hasAnyApplications
+          onFilterChange={vi.fn()}
+          onSelectRecord={vi.fn()}
+          selectedRecord={record}
+        />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.queryByText(/Job Finder is preparing this job now/),
+    ).toBeNull();
+    expect(screen.getByText("Next: Try again")).toBeTruthy();
+  });
+  it("names an empty plan and links to all saved applications", () => {
+    render(
+      <MemoryRouter>
+        <ApplicationsRecordsPanel
+          activeFilter="all"
+          applicationRecords={[]}
+          filterCounts={{
+            all: 0,
+            needs_action: 0,
+            in_progress: 0,
+            submitted: 0,
+            manual_only: 0,
+          }}
+          hasAnyApplications={false}
+          searchPlanName="UK design"
+          hasOtherPlanApplications
+          onFilterChange={vi.fn()}
+          onSelectRecord={vi.fn()}
+          selectedRecord={null}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("No applications in UK design")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: "Show all applications" })
+        .getAttribute("href"),
+    ).toBe("/job-finder/applications?scope=all");
+  });
+  it("keeps filter guidance when the current plan has applications", () => {
+    render(
+      <MemoryRouter>
+        <ApplicationsRecordsPanel
+          activeFilter="submitted"
+          applicationRecords={[]}
+          filterCounts={{
+            all: 1,
+            needs_action: 1,
+            in_progress: 0,
+            submitted: 0,
+            manual_only: 0,
+          }}
+          hasAnyApplications
+          searchPlanName="UK design"
+          hasOtherPlanApplications
+          onFilterChange={vi.fn()}
+          onSelectRecord={vi.fn()}
+          selectedRecord={null}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("No applications in this view")).toBeTruthy();
+    expect(screen.queryByText("No applications in UK design")).toBeNull();
+  });
   it.each(["filling", "submitted"] as const)(
     "announces the current %s result instead of a stale attempt",
     (state) => {
@@ -83,7 +189,7 @@ describe("ApplicationsRecordsPanel", () => {
       )?.textContent;
       expect(description).toContain(
         state === "filling"
-          ? "Preparation attempt Filling in"
+          ? "Preparation attempt Preparing"
           : "Preparation attempt Applied",
       );
       expect(description).not.toMatch(
@@ -92,7 +198,7 @@ describe("ApplicationsRecordsPanel", () => {
     },
   );
 
-  it("titles the preparation workspace after its own view instead of the tracker", () => {
+  it("leaves the title and count to the page header instead of repeating them", () => {
     render(
       <MemoryRouter>
         <ApplicationsRecordsPanel
@@ -114,8 +220,9 @@ describe("ApplicationsRecordsPanel", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "All applications" }),
-    ).toBeTruthy();
+      screen.queryByRole("heading", { name: "All applications" }),
+    ).toBeNull();
+    expect(screen.queryByText(/^\d+ applications?$/i)).toBeNull();
     expect(screen.queryByText("Application tracker")).toBeNull();
     expect(screen.getByText("Nothing applied to yet")).toBeTruthy();
     expect(
@@ -253,7 +360,7 @@ describe("ApplicationsRecordsPanel", () => {
     const stateDescriptionId = firstRowAction.getAttribute("aria-describedby");
     expect(stateDescriptionId).toBeTruthy();
     expect(document.getElementById(stateDescriptionId!)?.textContent).toBe(
-      "Stage Needs you.",
+      "Status Needs you.",
     );
     expect(screen.queryByText("Needs follow-up")).toBeNull();
     expect(firstRowAction.getAttribute("aria-keyshortcuts")).toBe(
@@ -359,10 +466,9 @@ describe("ApplicationsRecordsPanel", () => {
     expect(rowBadgeSlot?.textContent).toContain("Needs you");
     expect(within(application).queryByText("Job")).toBeNull();
     expect(within(application).queryByText("Latest activity")).toBeNull();
-    // The stage is announced exactly once, through the row description, so
-    // "Stage" is not read twice beside its own badge.
-    expect(within(application).queryByText("Stage")).toBeNull();
-    expect((application.textContent ?? "").split("Stage").length - 1).toBe(1);
+    // The status is announced exactly once, through the row description.
+    expect(within(application).queryByText("Status")).toBeNull();
+    expect((application.textContent ?? "").split("Status").length - 1).toBe(1);
     // Needs you already covers paused prep — no second "Needs follow-up" badge.
     expect(within(application).queryByText("Apply attempt")).toBeNull();
     expect(within(application).queryByText("Needs follow-up")).toBeNull();
@@ -425,13 +531,17 @@ describe("ApplicationsRecordsPanel", () => {
       </MemoryRouter>,
     );
 
-    const headerBar = container.querySelector(":scope > section > div");
-    expect(headerBar?.className).toContain("px-5");
-    expect(headerBar?.className).toContain("py-3");
+    // The toolbar is the panel's first row: no panel title above it.
+    const toolbar = container.querySelector(":scope > section > div");
+    expect(toolbar?.hasAttribute("data-applications-list-toolbar")).toBe(true);
+    expect(toolbar?.className).toContain("min-h-12");
+    expect(toolbar?.className).toContain("px-3");
+    expect(container.querySelector("section h2")).toBeNull();
 
     const filterGroup = screen.getByRole("group", {
       name: "Application filters",
     });
+    expect(filterGroup).toBe(toolbar);
     expect(filterGroup.className).toContain("flex-wrap");
     expect(filterGroup.className).toContain("w-full");
 
@@ -439,6 +549,8 @@ describe("ApplicationsRecordsPanel", () => {
     expect(filterButtons.length).toBeGreaterThan(1);
     for (const filterButton of filterButtons) {
       expect(filterButton.className).toContain("shrink-0");
+      // Chips are the 24px size so they share the toolbar row.
+      expect(filterButton.className).toContain("h-6");
     }
 
     // Zero-count views are hidden so a single record cannot wrap the filter
@@ -450,8 +562,8 @@ describe("ApplicationsRecordsPanel", () => {
       screen.getByRole("button", { name: /waiting on you/i }),
     ).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /in progress/i }));
-    expect(onFilterChange).toHaveBeenCalledWith("in_progress");
+    fireEvent.click(screen.getByRole("button", { name: /waiting on you/i }));
+    expect(onFilterChange).toHaveBeenCalledWith("needs_action");
   });
 
   it("names the waiting-applications filter apart from the Needs you step badge", () => {
@@ -551,7 +663,7 @@ describe("ApplicationsRecordsPanel", () => {
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByText("Needs you")).toBeTruthy();
     expect(within(rows[1]!).queryByText("Needs you")).toBeNull();
-    expect(within(rows[1]!).getByText("Needs recovery")).toBeTruthy();
+    expect(within(rows[1]!).getByText("Could not apply")).toBeTruthy();
   });
 
   it("filters by the newest five-state result instead of the older record stage", () => {
@@ -767,7 +879,7 @@ describe("ApplicationsRecordsPanel", () => {
       "[data-locked-pane-scroll-region]",
     );
     expect(rowRegion?.textContent ?? "").not.toMatch(/In progress/);
-    expect(screen.getByText("Needs recovery")).not.toBeNull();
+    expect(screen.getByText("Could not apply")).not.toBeNull();
     // "Needs recovery" already says the attempt failed; the row carries one
     // badge, and the failure detail lives in the panel.
     expect(screen.queryByText("Attempt failed")).toBeNull();
@@ -778,7 +890,7 @@ describe("ApplicationsRecordsPanel", () => {
     const stateDescriptionId = rowAction.getAttribute("aria-describedby");
     expect(stateDescriptionId).toBeTruthy();
     expect(document.getElementById(stateDescriptionId!)?.textContent).toBe(
-      "Stage Needs recovery. Preparation attempt Attempt failed.",
+      "Status Could not apply. Preparation attempt Attempt failed.",
     );
   });
 
@@ -1092,7 +1204,158 @@ describe("ApplicationsRecordsPanel", () => {
       screen.getByRole("list", { name: "Applications" }),
     ).getByRole("listitem");
     const badge = application.querySelector('[data-slot="badge"]');
-    expect(badge?.textContent).toBe("Paused");
+    expect(badge?.textContent).toBe("Preparing");
     expect(application.textContent).not.toContain("Filling in");
   });
+});
+
+it("finds a company and an offer across 300 applications before paging", () => {
+  const records = Array.from({ length: 300 }, (_, index) =>
+    ApplicationRecordSchema.parse({
+      id: `application_${index}`,
+      jobId: `job_${index}`,
+      title: index === 299 ? "Design Lead" : `Role ${index}`,
+      company: index === 299 ? "Willow" : "Acorn",
+      status: index === 299 ? "offer" : "submitted",
+      lastActionLabel: "Tracked",
+      nextActionLabel: null,
+      lastUpdatedAt: "2026-10-02T10:00:00Z",
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <ApplicationsRecordsPanel
+        activeFilter="all"
+        applicationRecords={records}
+        filterCounts={{
+          all: 300,
+          needs_action: 0,
+          in_progress: 0,
+          submitted: 299,
+          manual_only: 0,
+        }}
+        hasAnyApplications
+        onFilterChange={vi.fn()}
+        onSelectRecord={vi.fn()}
+        selectedRecord={null}
+      />
+    </MemoryRouter>,
+  );
+  fireEvent.change(screen.getByLabelText("Search applications"), {
+    target: { value: "Willow" },
+  });
+  expect(screen.getByText("Design Lead")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Search applications"), {
+    target: { value: "" },
+  });
+  fireEvent.click(screen.getByRole("combobox", { name: "Hiring stage" }));
+  fireEvent.click(screen.getByRole("option", { name: "Offer" }));
+  expect(screen.getByText("Design Lead")).toBeTruthy();
+  expect(screen.queryByText("Role 0")).toBeNull();
+});
+
+it("counts chips from unarchived search and stage matches and keeps filters in one row", () => {
+  const records = ["visible", "archived", "other"].map((id) =>
+    ApplicationRecordSchema.parse({
+      id,
+      jobId: id,
+      title: "Engineer",
+      company: id === "other" ? "Other" : "Acme",
+      status: "submitted",
+      lastActionLabel: "Sent",
+      nextActionLabel: null,
+      lastUpdatedAt: "2026-10-05T10:00:00Z",
+      crm: {
+        stage: "applied",
+        stageSource: "user",
+        stageChangedAt: "2026-10-05T10:00:00Z",
+        archivedAt: id === "archived" ? "2026-10-05T10:00:00Z" : null,
+      },
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <ApplicationsRecordsPanel
+        activeFilter="all"
+        applicationRecords={records}
+        filterCounts={{
+          all: 3,
+          needs_action: 0,
+          submitted: 3,
+          in_progress: 0,
+          manual_only: 0,
+        }}
+        hasAnyApplications
+        onFilterChange={vi.fn()}
+        onSelectRecord={vi.fn()}
+        selectedRecord={null}
+      />
+    </MemoryRouter>,
+  );
+  expect(
+    screen.getByRole("button", { name: "All: 2 applications" }),
+  ).toBeTruthy();
+  const group = screen.getByRole("group", { name: "Application filters" });
+  expect(group.contains(screen.getByLabelText("Search applications"))).toBe(
+    true,
+  );
+  expect(
+    group.contains(screen.getByRole("combobox", { name: "Hiring stage" })),
+  ).toBe(true);
+  fireEvent.change(screen.getByLabelText("Search applications"), {
+    target: { value: "Acme" },
+  });
+  expect(
+    screen.getByRole("button", { name: "All: 1 application" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Submitted: 1 application" }),
+  ).toBeTruthy();
+  // The count lives on the All chip; the panel does not repeat it.
+  expect(screen.queryByText("1 application")).toBeNull();
+});
+
+it("distinguishes equal titles and companies by location in rows and accessible names", () => {
+  const records = ["Beirut/MENA", "Manchester"].map((location, i) =>
+    ApplicationRecordSchema.parse({
+      id: `app_${i}`,
+      jobId: `job_${i}`,
+      title: "Senior Accountant",
+      company: "Spool Hushmeadow",
+      status: "approved",
+      lastActionLabel: "Prepared",
+      nextActionLabel: "Review",
+      lastUpdatedAt: "2026-10-05T10:00:00.000Z",
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <ApplicationsRecordsPanel
+        activeFilter="all"
+        applicationRecords={records}
+        discoveryJobs={records.map((record, i) => ({
+          id: record.jobId,
+          canonicalUrl: `https://example.test/jobs/${i}`,
+          location: i === 0 ? "Beirut/MENA" : "Manchester",
+        }))}
+        filterCounts={{
+          all: 2,
+          needs_action: 0,
+          in_progress: 0,
+          submitted: 0,
+          manual_only: 0,
+        }}
+        hasAnyApplications
+        onFilterChange={vi.fn()}
+        onSelectRecord={vi.fn()}
+        selectedRecord={null}
+      />
+    </MemoryRouter>,
+  );
+  for (const location of ["Beirut/MENA", "Manchester"])
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(`View details for.*${location}`),
+      }),
+    ).toBeTruthy();
 });

@@ -1,8 +1,13 @@
+import {
+  listResumeReviewsNeeded,
+  listFinalApplicationActions,
+} from "../attention";
 import { APPLICATION_SKIPPED_BY_PERSON_LABEL } from "@nordri/contracts";
 import { isProvisionalMatchAssessment } from "../../discovery-ordering";
 import { getFitEvidenceDepth } from "../../discovery-result-bands";
 import type {
   ApplicationRecord,
+  ApplicationCrmInterview,
   AssistantMessagePart,
   DiscoveryJobView,
   JobFinderWorkspaceSnapshot,
@@ -36,8 +41,8 @@ export function fitLabel(job: SavedJob | DiscoveryJobView): string {
     job.matchAssessment.postingFingerprint,
   ].every((value) => typeof value === "string" && value.trim().length > 0);
   if (isProvisionalMatchAssessment(job) || !bound) return "Fit not assessed";
-  if (getFitEvidenceDepth(job.matchAssessment).isTitleOnly)
-    return "Title-only estimate";
+  if (getFitEvidenceDepth(job.matchAssessment).isNotJudged)
+    return "Not judged yet";
   return job.matchAssessment.scoreIsUpperBound
     ? `Up to ${job.matchAssessment.score}% fit`
     : `${job.matchAssessment.score}% fit`;
@@ -54,8 +59,15 @@ export function compactJob(job: SavedJob | DiscoveryJobView) {
     fit: fitLabel(job),
     recommendation: job.matchAssessment.recommendation,
     postedAt: job.postedAt,
+    lastSeenAt: job.lastSeenAt,
+    lastVerifiedActiveAt: job.lastVerifiedActiveAt,
     salary: job.salaryText,
     url: job.applicationUrl ?? job.canonicalUrl,
+    listingUrl: job.canonicalUrl,
+    sourceIds:
+      "provenance" in job
+        ? [...new Set(job.provenance.map((entry) => entry.targetId))]
+        : [],
     listing:
       "listingActivity" in job && job.listingActivity
         ? job.listingActivity.status
@@ -69,6 +81,21 @@ export function jobEvidence(job: SavedJob | DiscoveryJobView) {
     reasons: job.matchAssessment.reasons.slice(0, 6),
     gaps: job.matchAssessment.gaps.slice(0, 6),
     rationale: job.matchAssessment.recommendationRationale,
+    locationReach: job.matchAssessment.locationReach,
+    remoteGeographies: job.screeningHints.remoteGeographies,
+    sponsorshipText: job.screeningHints.sponsorshipText,
+    judgedAt: job.matchAssessment.judgment?.judgedAt ?? null,
+    minimumQualifications: job.minimumQualifications.slice(0, 15),
+    preferredQualifications: job.preferredQualifications.slice(0, 15),
+    requirements: job.matchAssessment.requirements
+      .slice(0, 20)
+      .map((requirement) => ({
+        label: requirement.label,
+        importance: requirement.importance,
+        status: requirement.status,
+        jobEvidence: requirement.jobEvidence,
+        explanation: requirement.explanation,
+      })),
     keySkills: job.keySkills.slice(0, 20),
     seniority: job.seniority,
     employmentType: job.employmentType,
@@ -81,10 +108,8 @@ export function jobDetail(job: SavedJob | DiscoveryJobView) {
   return {
     ...jobEvidence(job),
     summary: job.summary,
-    description: job.description.slice(0, 6_000),
+    description: job.description,
     responsibilities: job.responsibilities.slice(0, 15),
-    minimumQualifications: job.minimumQualifications.slice(0, 15),
-    preferredQualifications: job.preferredQualifications.slice(0, 15),
     benefits: job.benefits.slice(0, 10),
   };
 }
@@ -119,6 +144,8 @@ export function compactApplication(record: ApplicationRecord) {
     crmRevision: record.crm?.revision ?? 0,
     mode: record.automationMode,
     updatedAt: record.lastUpdatedAt,
+    appliedAt: record.crm?.appliedAt ?? null,
+    lastEmployerActivityAt: record.crm?.lastEmployerActivityAt ?? null,
   };
 }
 
@@ -300,6 +327,60 @@ export function pausedByPersonMessage(
   return `Nothing started: the person paused background work${since}${reason}, so ${what} cannot run. Do not resume it yourself. Tell them it is paused and ask whether to resume it and go ahead. Resume with pause_activity only if their message already says to go ahead even though it is paused, and say that you resumed it.`;
 }
 
+/** A UTC instant displayed in its saved zone; invalid zones never relabel UTC. */
+export function localDateTime(at: string, timeZone: string | null) {
+  const instant = new Date(at);
+  if (!Number.isFinite(instant.getTime())) return "Invalid saved date";
+  const format = (zone: string) =>
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(instant);
+  try {
+    return format(timeZone ?? "UTC");
+  } catch {
+    return `${format("UTC")} (saved time zone unavailable)`;
+  }
+}
+
+export function interviewForModel(interview: ApplicationCrmInterview) {
+  return {
+    ...interview,
+    localTime: localDateTime(interview.startsAt, interview.timeZone),
+    localEndTime: interview.endsAt
+      ? localDateTime(interview.endsAt, interview.timeZone)
+      : null,
+  };
+}
+
+/** Reviews and final sends are person-owned actions even without a browser request. */
+export function outstandingReviews(snapshot: JobFinderWorkspaceSnapshot) {
+  const resumes = listResumeReviewsNeeded(snapshot).map((item) => ({
+    kind: "resume_review",
+    jobId: item.jobId,
+    title: item.title,
+    company: item.company,
+    reason: item.resumeLinesToDecide
+      ? "Decide which resume lines to keep"
+      : "Review the unapproved resume draft",
+    route: RESUME_ROUTE(item.jobId),
+  }));
+  const applications = listFinalApplicationActions(snapshot).map((record) => ({
+    kind: "application_send",
+    jobId: record.jobId,
+    title: record.title,
+    company: record.company,
+    reason: "Review the prepared form and send it",
+    route: APPLICATION_ROUTE(record.id),
+  }));
+  return [...resumes, ...applications];
+}
+
 /**
  * What the tracker says is due: pending reminders and scheduled interviews,
  * overdue first, with the time zone each was saved in. One reading for the
@@ -355,7 +436,10 @@ export function trackerAgenda(
     }
   }
   // By instant, not by text: saved times can carry different UTC offsets.
-  return items.sort(
-    (left, right) => Date.parse(left.at) - Date.parse(right.at),
-  );
+  return items
+    .map((item) => ({
+      ...item,
+      localTime: localDateTime(item.at, item.timeZone),
+    }))
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
 }

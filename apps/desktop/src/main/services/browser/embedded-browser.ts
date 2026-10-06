@@ -1,3 +1,7 @@
+import {
+  measureWaitingFormMemory,
+  waitingFormsHaveCapacity,
+} from "./waiting-form-memory";
 import { randomUUID } from "node:crypto";
 import {
   app,
@@ -17,7 +21,9 @@ import {
   type DesktopBrowserAttention,
   type DesktopBrowserCommand,
   type DesktopBrowserSnapshot,
+  type RawApplyPage,
   type DesktopBrowserViewport,
+  type WaitingFormMemory,
 } from "@nordri/contracts";
 import path from "node:path";
 import { routeMainWindowZoomShortcut } from "../../setup/window-zoom";
@@ -40,6 +46,7 @@ import {
 
 export const EMBEDDED_BROWSER_PARTITION = "persist:nordri-browser";
 const MAX_TABS = 8;
+const MAX_TOTAL_TABS = 16;
 interface BrowserPage extends BrowserCdpPage {
   view: WebContentsView;
   createdAt: number;
@@ -67,6 +74,8 @@ export interface AutomationRunOptions {
    * result id), reported back through `handback` if the person steps in.
    */
   owner?: string | null;
+  /** Finished discovery pages can be closed by the person in one action. */
+  cleanupOnFinish?: boolean;
 }
 
 /** Reports the page a run works in, so a click there stops only that run. */
@@ -94,6 +103,57 @@ export class EmbeddedBrowser {
   private readonly pageListeners = new Set<(page: BrowserCdpPage) => void>();
   private stateListeners = new Set<(state: DesktopBrowserState) => void>();
   private activeTabId: string | null = null;
+  private unboundSendNotice: { id: string; tabId: string } | null = null;
+  private readonly personInputAt = new Map<string, number>();
+
+  /** A prompt to record an outcome, never evidence that the site received it. */
+  private noteUnboundSend(tabId: string): void {
+    if (Date.now() - (this.personInputAt.get(tabId) ?? 0) > 2_000) return;
+    if (this.applicationTabLabels.has(tabId)) return;
+    this.personInputAt.delete(tabId);
+    this.unboundSendNotice = { id: randomUUID(), tabId };
+    this.emit();
+  }
+  private applicationTabLabels = new Map<
+    string,
+    { title: string; url: string; baseLabel: string; reference: string }
+  >();
+
+  setApplicationTabLabel(
+    tabId: string,
+    title: string,
+    company: string,
+    location = "",
+    reference = tabId.slice(-6),
+  ): void {
+    const page = this.pageMap.get(tabId);
+    if (!page || page.contents.isDestroyed()) return;
+    const baseLabel =
+      // The place leads, so two tabs for the same role differ where the tab
+      // text is cut; the short reference is only added when even that matches.
+      [location, title.slice(0, 120), company.slice(0, 80)]
+        .filter(Boolean)
+        .join(" · ")
+        .slice(0, 280);
+    this.applicationTabLabels.set(tabId, {
+      title: baseLabel,
+      baseLabel,
+      reference,
+      url: page.contents.getURL(),
+    });
+    const matches = [...this.applicationTabLabels.values()].filter(
+      (label) => label.baseLabel === baseLabel,
+    );
+    if (matches.length > 1)
+      for (const [index, label] of matches.entries()) {
+        const repeated = matches.some(
+          (other) => other !== label && other.reference === label.reference,
+        );
+        label.title = `${label.reference}${repeated ? `-${index + 1}` : ""} · ${baseLabel}`;
+      }
+    this.emit();
+  }
+
   private automationPlaceholderTabId: string | null = null;
   private presentation: DesktopBrowserState["presentation"] = "minimized";
   private closed = true;
@@ -119,6 +179,7 @@ export class EmbeddedBrowser {
   >();
   /** Tabs the person opened themselves; automation never uses or closes them. */
   private readonly personTabs = new Set<string>();
+  private readonly personInputTabs = new Set<string>();
   /**
    * Tabs the person lent the assistant by sending a message while looking at
    * them (ADR 0038). Only the assistant's lease works there; the person's own
@@ -268,11 +329,102 @@ export class EmbeddedBrowser {
   }
 
   private visibleAttention(): DesktopBrowserAttention | null {
-    if (this.attention) return this.attention;
-    const banners = [...this.parkedTabs.values()].filter(
-      (banner): banner is DesktopBrowserAttention => banner !== null,
-    );
-    return banners.at(-1) ?? null;
+    if (this.attention && this.attentionTabId === this.activeTabId)
+      return this.attention;
+    return this.activeTabId
+      ? (this.parkedTabs.get(this.activeTabId) ?? null)
+      : null;
+  }
+
+  private readonly finishedTabs = new Set<string>();
+  private readonly ownedTabs = new Map<string, Set<string>>();
+  private readonly releasedOwnedTabs = new Set<string>();
+
+  async reclaimOwnedTabs(owner: string): Promise<void> {
+    const tabs = this.ownedTabs.get(owner);
+    if (!tabs) return;
+    for (const id of tabs) {
+      this.heldTabs.delete(id);
+      this.parkedTabs.delete(id);
+      this.personTabs.delete(id);
+    }
+    await this.getOpenBrowser();
+    for (const id of tabs) {
+      const page = this.pageMap.get(id);
+      await this.closeTabForAutomation(id);
+      if (page && this.bridge) await this.bridge.reclaimPage(page);
+    }
+  }
+
+  transferOwnedTabs(previousKey: string, nextKey: string): void {
+    if (previousKey === nextKey) return;
+    const tabs = this.ownedTabs.get(previousKey);
+    if (!tabs) return;
+    const next = this.ownedTabs.get(nextKey) ?? new Set<string>();
+    for (const id of tabs) next.add(id);
+    this.ownedTabs.set(nextKey, next);
+    this.ownedTabs.delete(previousKey);
+  }
+
+  /**
+   * A finished owner lets go of its tabs. They close, except a tab the person
+   * has: with `keepForPerson` (they opened the form to finish it) it becomes
+   * their own tab, and a tab they hold or a parked tab is never closed under
+   * them.
+   */
+  releaseOwnedTabs(
+    owner: string,
+    options: { keepForPerson?: boolean } = {},
+  ): void {
+    const tabs = this.ownedTabs.get(owner);
+    this.ownedTabs.delete(owner);
+    for (const id of tabs ?? []) {
+      if (options.keepForPerson || this.personInputTabs.has(id)) {
+        this.personTabs.add(id);
+        this.bridge?.releasePage(id);
+      } else this.releasedOwnedTabs.add(id);
+    }
+    this.closeReleasedOwnedTabs();
+    if (options.keepForPerson && tabs?.size) this.emit();
+  }
+
+  private closeReleasedOwnedTabs(): void {
+    for (const id of this.releasedOwnedTabs) {
+      if (
+        [...this.operationClaims.values()].some((claim) => claim.tabs.has(id))
+      )
+        continue;
+      this.closePageForAutomation(id);
+      this.releasedOwnedTabs.delete(id);
+    }
+  }
+
+  markFinishedTabs(tabIds: readonly string[]): void {
+    for (const id of tabIds) this.finishedTabs.add(id);
+  }
+
+  private closeFinishedTabs(): void {
+    let closed = 0;
+    for (const id of this.finishedTabs) {
+      if (
+        this.heldTabs.has(id) ||
+        this.parkedTabs.has(id) ||
+        this.personTabs.has(id) ||
+        this.lentTabs.has(id) ||
+        [...this.operationClaims.values()].some((claim) => claim.tabs.has(id))
+      )
+        continue;
+      this.closePage(id);
+      closed += 1;
+      this.finishedTabs.delete(id);
+    }
+    if (closed === 0)
+      this.requestAttention({
+        kind: "error",
+        title: "No finished tabs to close",
+        detail:
+          "The open tabs are still in use or belong to you. Close a tab you no longer need to free space.",
+      });
   }
   onStateChanged(listener: (state: DesktopBrowserState) => void): () => void {
     this.stateListeners.add(listener);
@@ -280,8 +432,27 @@ export class EmbeddedBrowser {
   }
 
   getState(): DesktopBrowserState {
+    // A stopped task on another tab does not describe this page. A prepared
+    // form the person owns has no interrupted task for Resume to carry on.
+    const paused =
+      this.activityPaused ||
+      this.closedByPerson ||
+      Boolean(
+        this.activeTabId &&
+        (this.heldTabs.get(this.activeTabId)?.length ?? 0) > 0,
+      );
+    const activeOperations = [...this.operations.entries()].filter(
+      ([controller]) => {
+        const claim = this.operationClaims.get(controller);
+        return (
+          !claim ||
+          Boolean(this.activeTabId && claim.tabs.has(this.activeTabId))
+        );
+      },
+    );
     return DesktopBrowserStateSchema.parse({
       revision: this.revision,
+      unboundSendNotice: this.unboundSendNotice,
       phase: this.closing
         ? "closing"
         : this.closed
@@ -290,21 +461,28 @@ export class EmbeddedBrowser {
             ? "pausing"
             : this.visibleAttention()
               ? "needs_you"
-              : this.operations.size > 0
+              : activeOperations.length > 0
                 ? "working"
-                : this.isPausedForPerson()
+                : paused
                   ? "paused"
                   : "ready",
       presentation: this.presentation,
       activeTabId: this.activeTabId,
-      activity: [...this.operations.values()].at(-1) ?? null,
+      activity: activeOperations.at(-1)?.[1] ?? null,
       attention: this.visibleAttention(),
-      automationPaused: this.isPausedForPerson(),
+      automationPaused: paused,
       tabs: [...this.pageMap.values()]
         .filter((page) => !page.contents.isDestroyed())
         .map((page) => ({
           id: page.id,
-          title: (page.contents.getTitle() || "New tab").slice(0, 300),
+          title: (
+            (this.applicationTabLabels.get(page.id)?.url ===
+            page.contents.getURL()
+              ? this.applicationTabLabels.get(page.id)?.title
+              : null) ||
+            page.contents.getTitle() ||
+            "New tab"
+          ).slice(0, 300),
           url: browserDisplayUrl(page.contents.getURL()),
           loading: page.contents.isLoading(),
           canGoBack: page.contents.navigationHistory.canGoBack(),
@@ -515,9 +693,205 @@ export class EmbeddedBrowser {
     return { url, value };
   }
 
+  private handleUserInput(
+    tabId: string,
+    kind: "pointer" | "key",
+    key?: { code: string; key: string },
+  ): void {
+    const page = this.pageMap.get(tabId);
+    if (!page) return;
+    if (kind === "pointer") {
+      // Every press automation sends is noted before it reaches the page,
+      // so a mouse-down with no noted press behind it is the person's own
+      // click, even a second click without moving the pointer or one just
+      // after the agent's own input.
+      if (this.agentPresses.claimPress(page.id)) return;
+      if (!this.isPointerOverPage(page)) return;
+    } else {
+      if (key && this.agentPresses.claimKey(page.id, key)) return;
+    }
+    this.notePersonInput(page.id);
+    if (this.lentTabs.has(page.id)) {
+      // The person's click or key in a lent tab takes it back from the
+      // assistant, and only from the assistant (ADR 0038).
+      this.revokeLoan(page.id, "You took this tab back.");
+      if (this.personTabs.has(page.id)) return;
+    }
+    const focusAction = getEmbeddedBrowserFocusAction({
+      focusedTabId: page.id,
+      operations: this.describeOperations(),
+      parked: this.parkedTabs.has(page.id),
+      // A tab the person opened is already theirs; no run works there.
+      held: this.heldTabs.has(page.id) || this.personTabs.has(page.id),
+      bannerOnTab:
+        (this.parkedTabs.get(page.id) ?? null) !== null ||
+        (this.attention !== null && this.attentionTabId === page.id),
+      handoverPending: this.handoverPromise !== null,
+    });
+    if (focusAction.type === "dismiss_attention") {
+      // Helping on a parked tab is task-local: its banner goes, and work in
+      // other tabs carries on through every click and keystroke here.
+      if (this.parkedTabs.has(page.id)) this.parkedTabs.set(page.id, null);
+      if (this.attentionTabId === page.id) {
+        this.attention = null;
+        this.attentionTabId = null;
+      }
+      this.emit();
+    } else if (focusAction.type === "take_tab") {
+      this.takeTab(page.id, focusAction.operationIds);
+    }
+  }
+
+  /** Called only after the native input ledger has excluded automation. */
+  private notePersonInput(tabId: string): void {
+    this.personInputTabs.add(tabId);
+    this.personInputAt.set(tabId, Date.now());
+    // An idle prepared form has no running claim, but its guard and network
+    // interception still belong to automation. Release that exact tab first.
+    const owned = [...this.ownedTabs.values()].some((tabs) => tabs.has(tabId));
+    if (owned && !this.heldTabs.has(tabId)) {
+      const claims = this.describeOperations().filter((operation) =>
+        operation.tabIds.includes(tabId),
+      );
+      this.takeTab(
+        tabId,
+        claims.map((claim) => claim.id),
+      );
+    } else this.openTabForPerson(tabId);
+  }
+
+  async readApplicationPageWithPerson(
+    owner: string,
+  ): Promise<RawApplyPage | null> {
+    const tabs = [...(this.ownedTabs.get(owner) ?? [])].filter((id) =>
+      this.personInputTabs.has(id),
+    );
+    if (tabs.length !== 1) return null;
+    const read = await this.readTab<{ title: string; bodyText: string }>(
+      tabs[0]!,
+      "({ title: document.title, bodyText: document.body?.innerText ?? '' })",
+    );
+    if (!read) return null;
+    return {
+      url: read.url,
+      title: read.value.title,
+      bodyText: read.value.bodyText,
+      headings: [],
+      controls: [],
+      actions: [],
+      links: [],
+      clickables: [],
+      openedTabs: [],
+      validationErrors: [],
+      stepLabel: null,
+      loading: false,
+    };
+  }
+
   /** Every open tab, the person's own included; the limit counts them all. */
   openTabCount(): number {
     return this.pageMap.size;
+  }
+
+  /** Waiting forms keep their renderers and attachments but release working capacity. */
+  workingTabCount(): number {
+    const working = new Set(
+      [...this.operationClaims.values()].flatMap((claim) => [...claim.tabs]),
+    );
+    const waiting = new Set(
+      [...this.ownedTabs.values()].flatMap((tabs) => [...tabs]),
+    );
+    return [...this.pageMap.keys()].filter(
+      (id) => working.has(id) || (!this.parkedTabs.has(id) && !waiting.has(id)),
+    ).length;
+  }
+
+  private isWaitingTab(id: string): boolean {
+    return (
+      (this.parkedTabs.has(id) ||
+        [...this.ownedTabs.values()].some((tabs) => tabs.has(id))) &&
+      ![...this.operationClaims.values()].some((claim) => claim.tabs.has(id))
+    );
+  }
+
+  private shouldThrottleTab(id: string): boolean {
+    return this.operations.size === 0 || this.isWaitingTab(id);
+  }
+
+  private memoryCleanup: Promise<void> | null = null;
+  private lastMemoryCleanupAt = 0;
+
+  /** Read native process metrics; no page content or answer leaves its renderer. */
+  getWaitingFormMemory(): WaitingFormMemory {
+    const tabs = [...this.pageMap.values()].filter(
+      (page) => !page.contents.isDestroyed() && this.isWaitingTab(page.id),
+    );
+    return measureWaitingFormMemory({
+      recordedAt: new Date().toISOString(),
+      tabs: tabs.map((page) => ({
+        tabId: page.id,
+        processId: page.contents.getOSProcessId(),
+        backgroundThrottled: this.shouldThrottleTab(page.id),
+      })),
+      processes: app.getAppMetrics?.() ?? [],
+    });
+  }
+
+  async reduceWaitingFormMemory(): Promise<WaitingFormMemory> {
+    if (this.memoryCleanup) await this.memoryCleanup;
+    const memory = this.getWaitingFormMemory();
+    if (
+      !waitingFormsHaveCapacity(memory) &&
+      Date.now() - this.lastMemoryCleanupAt > 10_000
+    ) {
+      this.lastMemoryCleanupAt = Date.now();
+      const hidden = memory.tabs.filter(
+        (tab) =>
+          tab.tabId !== this.activeTabId || this.presentation === "minimized",
+      );
+      this.memoryCleanup = Promise.all(
+        hidden.map(async ({ tabId }) => {
+          const page = this.pageMap.get(tabId);
+          if (!page || page.contents.isDestroyed() || !this.isWaitingTab(tabId))
+            return;
+          page.contents.setBackgroundThrottling(true);
+          // Only unreachable objects are collected. The live DOM, selected files,
+          // session and form answers remain in the same tab.
+          if (page.contents.debugger.isAttached()) {
+            let deadline: ReturnType<typeof setTimeout> | undefined;
+            await Promise.race([
+              page.contents.debugger
+                .sendCommand("HeapProfiler.collectGarbage")
+                .catch(() => undefined),
+              new Promise<void>((resolve) => {
+                deadline = setTimeout(resolve, 2_000);
+              }),
+            ]).finally(() => clearTimeout(deadline));
+          }
+        }),
+      )
+        .then(() => undefined)
+        .finally(() => {
+          this.memoryCleanup = null;
+        });
+      await this.memoryCleanup;
+    }
+    return this.getWaitingFormMemory();
+  }
+
+  hasAutomationTabCapacity(): boolean {
+    const memory = this.getWaitingFormMemory();
+    if (!waitingFormsHaveCapacity(memory))
+      void this.reduceWaitingFormMemory().catch(() => undefined);
+    return this.hasTabCapacity();
+  }
+
+  private hasTabCapacity(): boolean {
+    return (
+      this.pageMap.size < MAX_TOTAL_TABS &&
+      this.workingTabCount() < MAX_TABS &&
+      waitingFormsHaveCapacity(this.getWaitingFormMemory())
+    );
   }
 
   assertAutomationSafe(): void {
@@ -544,8 +918,8 @@ export class EmbeddedBrowser {
       );
     if (!this.window || this.window.isDestroyed())
       throw new Error("The app window is not available.");
-    if (this.pageMap.size >= MAX_TABS)
-      throw new Error("Close a browser tab before opening another one.");
+    if (!this.hasTabCapacity())
+      throw new Error("The browser is full. Close an unused tab to continue.");
     const destination = normalizeBrowserNavigation(url);
     const view = new WebContentsView({
       ...popupOptions,
@@ -601,6 +975,32 @@ export class EmbeddedBrowser {
     };
     page.contents.on("did-start-loading", update);
     page.contents.on("did-stop-loading", update);
+    // Observe the person's final control without cancelling it or granting
+    // page scripts access to any app command. The native input ledger excludes
+    // automation; this message can only create a dismissible recording hint.
+    const submitNoticeToken = `nordri-unbound-send-${randomUUID()}`;
+    const installSubmitNotice = () => {
+      if (page.contents.isDestroyed()) return;
+      for (const frame of page.contents.mainFrame.framesInSubtree)
+        void frame
+          .executeJavaScript(
+            `(() => {
+        if (window.__nordriUnboundSendObserver) return;
+        window.__nordriUnboundSendObserver = true;
+        const isBound = () => window.__nordriPreparedApplication || sessionStorage.getItem('__nordriPreparedApplication');
+        const finalControl = element => element && /(?:submit|send[-_\\s]*application|complete[-_\\s]*(?:the[-_\\s]*)?application|apply[-_\\s]*(?:now|job))/iu.test([element.textContent, element.getAttribute('aria-label'), element.value].filter(Boolean).join(' '));
+        const note = element => { if (!isBound() && finalControl(element)) console.debug(${JSON.stringify(submitNoticeToken)}); };
+        document.addEventListener('submit', event => { if (event.isTrusted) note(event.submitter); }, true);
+        document.addEventListener('click', event => { if (event.isTrusted) note(event.target?.closest('button,input[type=submit],[role=button]')); }, true);
+      })()`,
+          )
+          .catch(() => undefined);
+    };
+    page.contents.on("dom-ready", installSubmitNotice);
+    page.contents.on("did-frame-finish-load", installSubmitNotice);
+    page.contents.on("console-message", (details) => {
+      if (details.message === submitNoticeToken) this.noteUnboundSend(page.id);
+    });
     page.contents.on("page-title-updated", update);
     page.contents.on("did-navigate", update);
     page.contents.on("did-navigate-in-page", update);
@@ -646,52 +1046,8 @@ export class EmbeddedBrowser {
     // watching an application fill in must never end it. Only a real click or
     // keypress on the page is the user stepping in.
     // Then the agent stops and their input lands, without a control button.
-    const handleUserInput = (
-      kind: "pointer" | "key",
-      key?: { code: string; key: string },
-    ) => {
-      if (kind === "pointer") {
-        // Every press automation sends is noted before it reaches the page,
-        // so a mouse-down with no noted press behind it is the person's own
-        // click, even a second click without moving the pointer or one just
-        // after the agent's own input.
-        if (this.agentPresses.claimPress(page.id)) return;
-        if (!this.isPointerOverPage(page)) return;
-      } else {
-        if (key && this.agentPresses.claimKey(page.id, key)) return;
-      }
-      if (this.lentTabs.has(page.id)) {
-        // The person's click or key in a lent tab takes it back from the
-        // assistant, and only from the assistant (ADR 0038).
-        this.revokeLoan(page.id, "You took this tab back.");
-        if (this.personTabs.has(page.id)) return;
-      }
-      const focusAction = getEmbeddedBrowserFocusAction({
-        focusedTabId: page.id,
-        operations: this.describeOperations(),
-        parked: this.parkedTabs.has(page.id),
-        // A tab the person opened is already theirs; no run works there.
-        held: this.heldTabs.has(page.id) || this.personTabs.has(page.id),
-        bannerOnTab:
-          (this.parkedTabs.get(page.id) ?? null) !== null ||
-          (this.attention !== null && this.attentionTabId === page.id),
-        handoverPending: this.handoverPromise !== null,
-      });
-      if (focusAction.type === "dismiss_attention") {
-        // Helping on a parked tab is task-local: its banner goes, and work in
-        // other tabs carries on through every click and keystroke here.
-        if (this.parkedTabs.has(page.id)) this.parkedTabs.set(page.id, null);
-        if (this.attentionTabId === page.id) {
-          this.attention = null;
-          this.attentionTabId = null;
-        }
-        this.emit();
-      } else if (focusAction.type === "take_tab") {
-        this.takeTab(page.id, focusAction.operationIds);
-      }
-    };
     page.contents.on("input-event", (_event, input) => {
-      if (input.type === "mouseDown") handleUserInput("pointer");
+      if (input.type === "mouseDown") this.handleUserInput(page.id, "pointer");
     });
     page.contents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown") return;
@@ -706,7 +1062,10 @@ export class EmbeddedBrowser {
       }
       // Native input-event reports rawKeyDown; before-input-event supplies
       // the same key code that was recorded before an automation dispatch.
-      handleUserInput("key", { code: input.code, key: input.key });
+      this.handleUserInput(page.id, "key", {
+        code: input.code,
+        key: input.key,
+      });
       const mod = process.platform === "darwin" ? input.meta : input.control;
       if (input.key === "Escape" && !input.isComposing) {
         event.preventDefault();
@@ -729,7 +1088,7 @@ export class EmbeddedBrowser {
     page.contents.setWindowOpenHandler((details) => {
       if (
         !isBrowserNavigationAllowed(details.url) ||
-        this.pageMap.size >= MAX_TABS ||
+        !this.hasTabCapacity() ||
         this.closing
       )
         return { action: "deny" };
@@ -737,13 +1096,23 @@ export class EmbeddedBrowser {
         action: "allow",
         createWindow: (options) => {
           const popup = this.createPage("about:blank", page.id, options);
+          for (const tabs of this.ownedTabs.values())
+            if (tabs.has(page.id)) tabs.add(popup.id);
           return popup.contents;
         },
       };
     });
     page.contents.once("destroyed", () => {
       this.pageMap.delete(page.id);
+      this.finishedTabs.delete(page.id);
+      this.releasedOwnedTabs.delete(page.id);
+      for (const [owner, tabs] of this.ownedTabs) {
+        tabs.delete(page.id);
+        if (tabs.size === 0) this.ownedTabs.delete(owner);
+      }
       this.agentPresses.forget(page.id);
+      this.personInputTabs.delete(page.id);
+      this.personInputAt.delete(page.id);
       this.parkedTabs.delete(page.id);
       this.heldTabs.delete(page.id);
       this.personTabs.delete(page.id);
@@ -888,7 +1257,7 @@ export class EmbeddedBrowser {
         });
         if (bounds) page.view.setBounds(bounds);
         page.view.setVisible(true);
-        page.contents.setBackgroundThrottling(this.operations.size === 0);
+        page.contents.setBackgroundThrottling(this.shouldThrottleTab(page.id));
         continue;
       }
       // Minimize preserves the last usable viewport; never resize a live page
@@ -910,7 +1279,7 @@ export class EmbeddedBrowser {
       // Native view visibility can hide a newly created render widget after
       // its preferences were applied. Reassert the active-run rendering policy
       // after visibility changes so background tabs keep animation frames.
-      page.contents.setBackgroundThrottling(this.operations.size === 0);
+      page.contents.setBackgroundThrottling(this.shouldThrottleTab(page.id));
     }
   }
 
@@ -959,6 +1328,28 @@ export class EmbeddedBrowser {
     }
   }
 
+  private async closeTabForAutomation(tabId: string): Promise<void> {
+    this.personInputTabs.delete(tabId);
+    this.personInputAt.delete(tabId);
+    const page = this.pageMap.get(tabId);
+    if (!page || page.contents.isDestroyed()) return;
+    await Promise.all(
+      page.contents.mainFrame.framesInSubtree.map((frame) =>
+        frame
+          .executeJavaScript(
+            `(() => {
+              const state = window.__nordriPrepareOnlyMutationGuardV1;
+              if (state) {
+                state.finalActionAllowed = false;
+                state.authorizedFormActionWindow = null;
+              }
+            })()`,
+          )
+          .catch(() => undefined),
+      ),
+    );
+  }
+
   private takeTab(tabId: string, operationIds: readonly string[]): void {
     const stopping = [...this.operationClaims.entries()].filter(([, claim]) =>
       operationIds.includes(claim.id),
@@ -987,6 +1378,10 @@ export class EmbeddedBrowser {
     const page = this.pageMap.get(tabId);
     if (!page || page.contents.isDestroyed())
       throw new Error("That browser tab is closed.");
+    if (this.lentTabs.has(tabId))
+      throw new Error(
+        "The assistant is already working in this tab. Wait for the turn to finish.",
+      );
     const busy = [...this.operationClaims.values()].some(
       (claim) =>
         claim.tabs.has(tabId) && !(claim.owner ?? "").startsWith("assistant:"),
@@ -995,6 +1390,7 @@ export class EmbeddedBrowser {
       throw new Error(
         "A search or an application is working in that tab. Use another tab or wait for it to finish.",
       );
+    await this.closeTabForAutomation(tabId);
     this.lentTabs.add(tabId);
     if (this.bridge) await this.bridge.reclaimPage(page);
   }
@@ -1006,8 +1402,23 @@ export class EmbeddedBrowser {
       this.heldTabs.has(tabId) ||
       this.parkedTabs.has(tabId) ||
       this.personTabs.has(tabId)
-    )
+    ) {
       this.bridge?.releasePage(tabId);
+      this.openTabForPerson(tabId);
+    }
+  }
+
+  getApplicationTabIds(owner: string): string[] {
+    return [...(this.ownedTabs.get(owner) ?? [])].filter((id) => {
+      const page = this.pageMap.get(id);
+      return page && !page.contents.isDestroyed();
+    });
+  }
+
+  isApplicationPageLent(owner: string): boolean {
+    return [...(this.ownedTabs.get(owner) ?? [])].some((tabId) =>
+      this.lentTabs.has(tabId),
+    );
   }
 
   isTabLent(tabId: string): boolean {
@@ -1157,7 +1568,18 @@ export class EmbeddedBrowser {
       const landed = bridge
         .waitForToken(token, 5_000)
         .then((tabId) => {
-          if (tabId && this.operations.has(controller)) claim.tabs.add(tabId);
+          if (tabId && this.operations.has(controller)) {
+            claim.tabs.add(tabId);
+            if (claim.owner) {
+              const tabs = this.ownedTabs.get(claim.owner) ?? new Set<string>();
+              tabs.add(tabId);
+              this.ownedTabs.set(claim.owner, tabs);
+            }
+            this.finishedTabs.delete(tabId);
+            const claimedPage = this.pageMap.get(tabId);
+            if (claimedPage && !claimedPage.contents.isDestroyed())
+              claimedPage.contents.setBackgroundThrottling(false);
+          }
         })
         .catch(() => undefined)
         .finally(() => pendingClaims.delete(landed));
@@ -1174,7 +1596,7 @@ export class EmbeddedBrowser {
     this.releasePending = false;
     for (const page of this.pageMap.values())
       if (!page.contents.isDestroyed())
-        page.contents.setBackgroundThrottling(false);
+        page.contents.setBackgroundThrottling(this.shouldThrottleTab(page.id));
     this.focusApp();
     this.hostPages();
     this.emit();
@@ -1191,13 +1613,17 @@ export class EmbeddedBrowser {
       combined.throwIfAborted();
       throw error;
     } finally {
+      if (options.cleanupOnFinish) this.markFinishedTabs(await claimedTabs());
       this.operations.delete(controller);
       this.operationClaims.delete(controller);
-      if (this.operations.size === 0)
-        for (const page of this.pageMap.values()) {
-          if (!page.contents.isDestroyed())
-            page.contents.setBackgroundThrottling(true);
-        }
+      this.closeReleasedOwnedTabs();
+      for (const page of this.pageMap.values()) {
+        if (!page.contents.isDestroyed())
+          page.contents.setBackgroundThrottling(
+            this.shouldThrottleTab(page.id),
+          );
+      }
+      void this.reduceWaitingFormMemory().catch(() => undefined);
       if (this.operations.size === 0)
         await this.bridge?.syncFocusEmulation().catch(() => undefined);
       this.emit();
@@ -1249,6 +1675,7 @@ export class EmbeddedBrowser {
       this.heldTabs.clear();
       for (const [tabId] of handedBack) {
         const page = this.pageMap.get(tabId);
+        await this.closeTabForAutomation(tabId);
         if (page && this.bridge) await this.bridge.reclaimPage(page);
       }
       this.closedByPerson = false;
@@ -1261,6 +1688,8 @@ export class EmbeddedBrowser {
       if (owners.length > 0 && this.activityHooks?.handback)
         void this.activityHooks.handback(owners).catch(() => undefined);
     } else if (command.type === "select_tab") this.selectPage(command.tabId);
+    else if (command.type === "close_finished_tabs") this.closeFinishedTabs();
+    else if (command.type === "new_tab") this.openPersonTab("about:blank");
     else if (command.type === "close_tab") {
       this.takeTabByPerson(command.tabId, false, true);
       this.closePage(command.tabId);
@@ -1274,7 +1703,6 @@ export class EmbeddedBrowser {
         this.attention = null;
         this.attentionTabId = null;
       }
-      if (command.type === "new_tab") this.openPersonTab("about:blank");
       if (command.type === "navigate") {
         // Typed input follows browser rules: an address opens, anything else
         // becomes a search. Agent and app navigation ("open") stays strict.
@@ -1465,6 +1893,8 @@ export class EmbeddedBrowser {
       this.attentionTabId = null;
       this.parkedTabs.clear();
       this.heldTabs.clear();
+      this.ownedTabs.clear();
+      this.releasedOwnedTabs.clear();
       this.closePromise = null;
       this.emit();
     });

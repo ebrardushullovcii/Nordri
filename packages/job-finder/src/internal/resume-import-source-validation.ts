@@ -6,9 +6,12 @@ import type {
 
 import {
   isObject,
+  stripImportFormatting,
+  splitImportedSkills,
   toCandidateListValues,
   toStringArray,
 } from "./resume-import-common";
+import { canonicalizeRecordDateText } from "./resume-record-identity";
 import { normalizeText } from "./shared";
 import {
   importedRoleWordPattern as roleWordPattern,
@@ -85,25 +88,44 @@ function sourceLines(bundle?: ResumeDocumentBundle): SourceLine[] {
       pageEdges.set(key, pages);
     }
   }
+  for (let index = 0; index < blocks.length - 1; index += 1) {
+    const block = blocks[index];
+    const next = blocks[index + 1];
+    if (
+      block &&
+      next &&
+      /\p{L}-\s*$/u.test(block.text) &&
+      /^\s*\p{Ll}/u.test(next.text)
+    ) {
+      blocks[index] = {
+        ...block,
+        text: block.text.replace(/-\s*$/, "") + next.text.trimStart(),
+      };
+      blocks[index + 1] = { ...next, text: "" };
+    }
+  }
   let section = "header";
   return blocks
     .flatMap((block) =>
-      block.text.split(/\r?\n/).map((raw) => {
-        const text = raw.trim();
-        if (headingPattern.test(text))
-          section = text
-            .toLowerCase()
-            .replace(/[:–—-]+$/, "")
-            .trim();
-        const key = normalizeText(text.replace(/\b\d+\b/g, "#"));
-        const chrome =
-          !headingPattern.test(text) &&
-          ((pageEdges.get(key)?.size ?? 0) > 1 ||
-            /^(?:page\s+\d+(?:\s+of\s+\d+)?|disclaimer\s*:|©|copyright\b)/i.test(
-              text,
-            ));
-        return { text, section, blockId: block.id, chrome };
-      }),
+      block.text
+        .replace(/(\p{L})-\s*\r?\n\s*(?=\p{Ll})/gu, "$1")
+        .split(/\r?\n/)
+        .map((raw) => {
+          const text = stripImportFormatting(raw);
+          if (headingPattern.test(text))
+            section = text
+              .toLowerCase()
+              .replace(/[:–—-]+$/, "")
+              .trim();
+          const key = normalizeText(text.replace(/\b\d+\b/g, "#"));
+          const chrome =
+            !headingPattern.test(text) &&
+            ((pageEdges.get(key)?.size ?? 0) > 1 ||
+              /^(?:page\s+\d+(?:\s+of\s+\d+)?|disclaimer\s*:|©|copyright\b)/i.test(
+                text,
+              ));
+          return { text, section, blockId: block.id, chrome };
+        }),
     )
     .filter((line) => line.text);
 }
@@ -128,17 +150,47 @@ function objectiveRolesFromSource(lines: SourceLine[]) {
   return lines
     .filter(
       (line) =>
-        /objective$/.test(line.section) && !headingPattern.test(line.text),
+        (/objective$|target roles$/.test(line.section) ||
+          /\b(?:seeking|looking for|target(?:ing)? roles?)\b/i.test(
+            line.text,
+          )) &&
+        !headingPattern.test(line.text),
     )
     .flatMap((line) => {
       const match = line.text.match(
-        /(?:seeking|looking for|objective:)\s+(?:an?\s+)?(.+?)(?:\s+(?:role|position|job|with|where|at)\b|[.!]|$)/i,
+        /(?:seeking|looking for|objective:)\s+(?:an?\s+)?(.+?)(?:\s+(?:roles?|positions?|jobs?|with|where|at)\b|[.!]|$)/i,
       );
-      const role = (match?.[1] ?? line.text).trim();
-      return role.length <= 80 && roleWordPattern.test(role)
-        ? [{ role, line }]
-        : [];
+      const role = (match?.[1] ?? line.text).trim().replace(/[.!]+$/, "");
+      return role
+        .split(/\s+(?:or|and)\s+|\s*[/;]\s*/)
+        .flatMap((entry) =>
+          entry.length <= 80 && roleWordPattern.test(entry)
+            ? [{ role: entry.trim(), line }]
+            : [],
+        );
     });
+}
+
+function statedHeaderTitle(lines: SourceLine[]): SourceLine | undefined {
+  const header = lines.filter(
+    (line) => line.section === "header" && !headingPattern.test(line.text),
+  );
+  const isTitle = (line: SourceLine) =>
+    line.text.length <= 80 &&
+    !/@|(?:https?:\/\/|www\.|\b[\w-]+\.(?:com|net|org|io)\b)|^\+?[\d(]|^address:/i.test(
+      line.text,
+    ) &&
+    !isImportedLocationLine(line.text) &&
+    !/,.*\d/.test(line.text) &&
+    line.text.split(/\s+/).length <= 10 &&
+    /\p{L}/u.test(line.text);
+  const role = header.find(
+    (line) => isTitle(line) && roleWordPattern.test(line.text),
+  );
+  // A short identity directly under the name can also be a headline, such as
+  // a student's field of study. Later contact lines are not title candidates.
+  const identity = header[1];
+  return role ?? (identity && isTitle(identity) ? identity : undefined);
 }
 
 function mostRecentSourceRole(
@@ -245,6 +297,193 @@ function sourceIdentifiesLocation(
   });
 }
 
+function onlyInSection(
+  value: string,
+  lines: SourceLine[],
+  section: RegExp,
+): boolean {
+  const matches = lines.filter((line) => containsValue(line.text, value));
+  return (
+    matches.length > 0 && matches.every((line) => section.test(line.section))
+  );
+}
+
+const dateToken = String.raw`(?:\d{4}-\d{2}(?:-\d{2})?|\d{1,2}/(?:\d{1,2}/)?\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{4}|(?:19|20)\d{2})`;
+const sourceDateRange = new RegExp(
+  `(${dateToken})\\s*[-–—]\\s*(${dateToken}|present|current|ongoing)`,
+  "i",
+);
+
+/** Match the source entry before repairing its dates or location. */
+function groundSourceRecord(
+  value: { [key: string]: ResumeImportFieldCandidate["value"] },
+  section: string,
+  lines: SourceLine[],
+): { [key: string]: ResumeImportFieldCandidate["value"] } {
+  const identityKey = section === "experience" ? "companyName" : "schoolName";
+  const titleKey = section === "experience" ? "title" : "degree";
+  const identity =
+    typeof value[identityKey] === "string" ? String(value[identityKey]) : "";
+  const title =
+    typeof value[titleKey] === "string" ? String(value[titleKey]) : "";
+  const sectionPattern =
+    section === "experience"
+      ? /(?:experience|employment|history|background)$/
+      : /education/;
+  const matches = lines
+    .flatMap((line, index) => {
+      if (
+        !sectionPattern.test(line.section) ||
+        headingPattern.test(line.text) ||
+        /^[-•]/.test(line.text)
+      )
+        return [];
+      const identityMatch =
+        identity &&
+        containsValue(line.text, identity.split(",")[0] ?? identity);
+      const titleMatch = title && containsValue(line.text, title);
+      const nearbyRange = lines
+        .slice(index, index + 3)
+        .map((entry) => entry.text.match(sourceDateRange))
+        .find(Boolean);
+      const sourceStart = canonicalizeRecordDateText(nearbyRange?.[1]);
+      const candidateStart = canonicalizeRecordDateText(value.startDate);
+      const matchingStart =
+        sourceStart &&
+        candidateStart &&
+        sourceStart.slice(0, 4) === candidateStart.slice(0, 4);
+      if (
+        (!identityMatch && !titleMatch) ||
+        (section === "education" && identity && !identityMatch)
+      )
+        return [];
+      return [
+        {
+          line,
+          index,
+          score:
+            Number(Boolean(matchingStart)) * 4 +
+            Number(Boolean(identityMatch)) * 2 +
+            Number(Boolean(titleMatch)) * 3 +
+            Number(
+              Boolean(
+                titleMatch &&
+                identity &&
+                lines
+                  .slice(Math.max(0, index - 1), index + 3)
+                  .some((entry) =>
+                    containsValue(
+                      entry.text,
+                      identity.split(",")[0] ?? identity,
+                    ),
+                  ),
+              ),
+            ) *
+              3,
+        },
+      ];
+    })
+    .sort((left, right) => right.score - left.score);
+  const match = matches[0];
+  if (section === "experience" && isImportedLocationLine(title)) return value;
+  if (
+    !match ||
+    (matches[1]?.score === match.score &&
+      matches[1].line.text !== match.line.text &&
+      !identity)
+  )
+    return value;
+  const nearby = lines
+    .slice(match.index, match.index + 3)
+    .filter(
+      (line) =>
+        sectionPattern.test(line.section) &&
+        !headingPattern.test(line.text) &&
+        !/^[-•]/.test(line.text),
+    );
+  const ownLines = [
+    match.line,
+    ...nearby.filter((line) => line !== match.line),
+  ];
+  const rangeLine = ownLines.find((line) => sourceDateRange.test(line.text));
+  const range = rangeLine?.text.match(sourceDateRange);
+  const result = { ...value };
+  if (range) {
+    result.startDate = canonicalizeRecordDateText(range[1]);
+    result.isCurrent = /^(present|current|ongoing)$/i.test(range[2] ?? "");
+    result.endDate = result.isCurrent
+      ? null
+      : canonicalizeRecordDateText(range[2]);
+    if (section === "education") delete result.isCurrent;
+  } else if (section === "education") {
+    const graduation = ownLines
+      .find((line) => /(?:19|20)\d{2}/.test(line.text))
+      ?.text.match(/\b((?:19|20)\d{2})\b/);
+    if (graduation) {
+      result.startDate = null;
+      result.endDate = graduation[1] ?? null;
+    }
+  }
+  if (section === "experience" && identity) {
+    const employerLine = ownLines.find(
+      (line) =>
+        containsValue(line.text, identity) ||
+        (identity.includes(",") &&
+          containsValue(line.text, identity.split(",")[0] ?? "")),
+    );
+    if (employerLine) {
+      let employerText =
+        employerLine.text
+          .replace(sourceDateRange, "")
+          .split(/\s*[|·]\s*/)
+          .find((part) => containsValue(part, identity.split(",")[0] ?? ""))
+          ?.trim() ?? "";
+      const employerStart = employerText
+        .toLowerCase()
+        .indexOf((identity.split(",")[0] ?? identity).toLowerCase());
+      if (employerStart > 0) employerText = employerText.slice(employerStart);
+      const parts = employerText.split(",").map((part) => part.trim());
+      const location = parts.slice(1).join(", ");
+      if (parts.length >= 3 && isImportedLocationLine(location)) {
+        result.companyName = parts[0] ?? null;
+        result.location = location;
+      } else {
+        const roleLocation = ownLines.find(
+          (line) =>
+            isImportedLocationLine(line.text) &&
+            !containsValue(line.text, identity),
+        );
+        if (roleLocation) result.location = roleLocation.text;
+        else if (
+          typeof value.location === "string" &&
+          lines.some(
+            (line) =>
+              line.section === "header" &&
+              containsValue(
+                line.text,
+                typeof value.location === "string" ? value.location : "",
+              ),
+          )
+        )
+          result.location = null;
+      }
+    }
+  }
+  if (section === "education") {
+    const inline = match.line.text.match(
+      /^([^,]+),\s*([^,]+)(?:,\s*([^,]+))?,\s*((?:19|20)\d{2})$/,
+    );
+    if (inline) {
+      const qualification = (inline[1] ?? "").match(/^(.+?)\s+in\s+(.+)$/i);
+      result.schoolName = inline[2] ?? null;
+      result.degree = qualification?.[1] ?? inline[1] ?? null;
+      result.fieldOfStudy = qualification?.[2] ?? null;
+      result.location = inline[3] ?? null;
+    }
+  }
+  return result;
+}
+
 /** Validate every extraction branch against source structure before auto-apply. */
 export function validateResumeImportSourceCandidate(
   candidate: ResumeImportFieldCandidate,
@@ -262,17 +501,31 @@ export function validateResumeImportSourceCandidate(
       (line) => /skills$/.test(line.section) && !headingPattern.test(line.text),
     )
     .flatMap((line) =>
-      line.text
-        .replace(/^(?:tools|core|technical skills)\s*:\s*/i, "")
-        .split(/[,;|•]/),
+      splitImportedSkills(
+        line.text.replace(/^(?:tools|core|technical skills)\s*:\s*/i, ""),
+      ),
     )
     .map((entry) => entry.trim().replace(/^[-*]\s*/, ""))
     .filter(Boolean);
+  const wrappedSkills = Array.from(
+    (
+      bundle?.fullText ??
+      bundle?.blocks.map((block) => block.text).join("\n") ??
+      ""
+    ).matchAll(/(\p{L}+)-\s*\r?\n\s*(\p{Ll}+)/gu),
+    (match) => `${match[1]}${match[2]}`.toLowerCase(),
+  );
   const validSkill = (skill: string) => {
-    if (headingPattern.test(skill)) return false;
+    if (headingPattern.test(skill) || /[()]/.test(skill)) return false;
+    if (onlyInSection(skill, lines, /languages?$|language skills$/))
+      return false;
     const normalized = normalizeText(skill);
     if (sourceSkills.some((item) => normalizeText(item) === normalized))
       return true;
+    // Reject parts of a source word broken by a soft line break, without
+    // treating substrings of unrelated skills as fragments.
+    if (wrappedSkills.some((entry) => entry.includes(skill.toLowerCase())))
+      return false;
     return !sourceSkills.some(
       (item) =>
         normalizeText(item) !== normalized &&
@@ -283,8 +536,20 @@ export function validateResumeImportSourceCandidate(
     );
   };
 
+  if (
+    section === "identity" &&
+    key === "yearsExperience" &&
+    value === 0 &&
+    !/\b0\s+years?\b/i.test(bundle?.fullText ?? "")
+  ) {
+    // A default numeric zero is not evidence that the person has no work.
+    value = null;
+    review = true;
+  }
   if (section === "skill") {
-    const skills = toStringArray(value).filter(validSkill);
+    const skills = toStringArray(value)
+      .flatMap(splitImportedSkills)
+      .filter(validSkill);
     reject = skills.length === 0;
     value =
       typeof value === "string" && skills.length === 1
@@ -292,6 +557,7 @@ export function validateResumeImportSourceCandidate(
         : skills;
   }
   if (section === "experience" && isObject(value)) {
+    value = groundSourceRecord(value, section, lines);
     const title = typeof value.title === "string" ? value.title : "";
     const split = splitImportedRole(
       title,
@@ -314,7 +580,9 @@ export function validateResumeImportSourceCandidate(
       ...value,
       title: split.title,
       companyName: value.companyName || split.companyName,
-      skills: toStringArray(value.skills).filter(validSkill),
+      skills: toStringArray(value.skills)
+        .flatMap(splitImportedSkills)
+        .filter(validSkill),
     };
     const activityEvidence =
       candidate.visualEvidence?.some((entry) =>
@@ -323,6 +591,7 @@ export function validateResumeImportSourceCandidate(
         ),
       ) ?? false;
     reject =
+      !/\p{L}/u.test(title) ||
       locationEvidence ||
       headingPattern.test(title) ||
       onlyInActivities(title, lines) ||
@@ -350,12 +619,12 @@ export function validateResumeImportSourceCandidate(
         line.section === "header" &&
         normalizeText(line.text) === normalizeText(title),
     );
-    if (!reject && derivedFromRole && !statedHeadline) {
-      // The headline sits under the person's name on every resume, so it is
-      // the title they hold now; the objective's role is only a fallback.
-      const preferred =
-        mostRecentSourceRole(lines, recordCandidates, bundle) ??
-        objectiveRolesFromSource(lines)[0];
+    const header = statedHeaderTitle(lines);
+    if (!reject && !statedHeadline && (header || derivedFromRole)) {
+      const preferred = header
+        ? { role: header.text, line: header }
+        : (objectiveRolesFromSource(lines)[0] ??
+          mostRecentSourceRole(lines, recordCandidates, bundle));
       if (preferred && !invalidHeadline(preferred.role)) {
         value = preferred.role;
         candidate = {
@@ -365,22 +634,28 @@ export function validateResumeImportSourceCandidate(
         };
       }
     }
+    reject ||= !/\p{L}/u.test(String(value));
   }
+
   if (section === "search_preferences" && key === "targetRoles") {
     const objectives = objectiveRolesFromSource(lines);
     const objectiveLines = objectives.map((entry) => entry.line);
     const objectiveRoles = objectives.map((entry) => entry.role);
+    const headerRole = statedHeaderTitle(lines);
     value =
       objectiveRoles.length > 0
         ? objectiveRoles
-        : toCandidateListValues(candidate)
-            .filter(
-              (role) =>
-                !onlyInActivities(role, lines) &&
-                !isImportedLocationLine(role) &&
-                !headingPattern.test(role),
-            )
-            .map((role) => splitImportedRole(role, null, bundle).title);
+        : headerRole
+          ? [headerRole.text]
+          : toCandidateListValues(candidate)
+              .filter(
+                (role) =>
+                  /\p{L}/u.test(role) &&
+                  !onlyInActivities(role, lines) &&
+                  !isImportedLocationLine(role) &&
+                  !headingPattern.test(role),
+              )
+              .map((role) => splitImportedRole(role, null, bundle).title);
     if (objectiveRoles.length > 0)
       candidate = {
         ...candidate,
@@ -431,8 +706,22 @@ export function validateResumeImportSourceCandidate(
         !proficiencyPattern.test(value.proficiency));
   }
   if (section === "education" && isObject(value)) {
+    value = groundSourceRecord(value, section, lines);
     const school = typeof value.schoolName === "string" ? value.schoolName : "";
+    const evidence = normalizeText(candidate.evidenceText ?? "");
+    const schoolIndex = school ? evidence.indexOf(normalizeText(school)) : -1;
+    const qualificationEvidence =
+      schoolIndex > 0 ? evidence.slice(0, schoolIndex).trim() : "";
+    const unsupportedQualification =
+      /\p{L}/u.test(qualificationEvidence) &&
+      [value.degree, value.fieldOfStudy].some(
+        (field) =>
+          typeof field === "string" &&
+          field.trim() &&
+          !containsValue(candidate.evidenceText ?? "", field),
+      );
     review =
+      unsupportedQualification ||
       (!value.degree &&
         !value.fieldOfStudy &&
         !value.startDate &&

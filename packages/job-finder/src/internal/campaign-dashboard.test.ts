@@ -33,10 +33,17 @@ import {
   recordCampaignDiscoveryResult,
 } from "./workspace-campaign-methods";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
+import {
+  createMatchAssessmentContextFingerprint,
+  createMatchAssessmentPostingFingerprint,
+} from "./match-assessment-session";
+import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
+import { withSavedJobSearchBehavior } from "./job-search-behavior";
 import { createSavedJob, createSeed } from "../workspace-service.test-fixtures";
+import { finalizeRunningTargetExecutions } from "./workspace-discovery-run-helpers";
 
-function savedJob(id: string, score: number) {
-  return createSavedJob({
+function savedJob(id: string, score: number, planId = "campaign_precision") {
+  const job = createSavedJob({
     id,
     source: "target_site",
     sourceJobId: id,
@@ -63,8 +70,37 @@ function savedJob(id: string, score: number) {
     minimumQualifications: [],
     preferredQualifications: [],
     status: "discovered",
-    matchAssessment: { score },
+    // A model verdict, so the plan's minimum fit applies to it (ADR 0041).
+    matchAssessment: {
+      score,
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-08-15T10:00:00.000Z",
+        score,
+        recommendation: "review_before_applying",
+      },
+    },
   });
+  const seed = createSeed();
+  const preferences = withSavedJobSearchBehavior(
+    enrichSearchPreferencesFromProfile(
+      normalizedPreferences(seed.searchPreferences),
+      seed.profile,
+    ),
+    seed.settings,
+  );
+  // A measured verdict for these exact goals and facts, rather than a legacy
+  // fixture score without the context needed to assign it to a plan.
+  job.matchAssessment.judgment = {
+    ...job.matchAssessment.judgment!,
+    contextFingerprint: createMatchAssessmentContextFingerprint(
+      seed.profile,
+      preferences,
+    ),
+    postingFingerprint: createMatchAssessmentPostingFingerprint(job),
+  };
+  job.planAssessments = { [planId]: job.matchAssessment };
+  return job;
 }
 
 /**
@@ -79,48 +115,63 @@ function normalizedPreferences(
 }
 
 describe("dashboard summary recommendations", () => {
-  test.each([false, true])("counts safeguard attention before recommending a search (paused: %s)", (paused) => {
-    const seed = createSeed();
-    const campaign = createCampaign({
-      id: "campaign_idle",
-      name: "Idle plan",
-      mode: "precision",
-      searchPreferences: seed.searchPreferences,
-      now: "2026-08-15T09:00:00.000Z",
-    });
+  test.each([false, true])(
+    "counts safeguard attention before recommending a search (paused: %s)",
+    (paused) => {
+      const seed = createSeed();
+      const campaign = createCampaign({
+        id: "campaign_idle",
+        name: "Idle plan",
+        mode: "precision",
+        searchPreferences: seed.searchPreferences,
+        now: "2026-08-15T09:00:00.000Z",
+      });
 
-    const summary = deriveDashboardSummary({
-      safeguards: JobFinderIntelligenceSafeguardsSchema.parse({ abnormalFailurePauses: paused ? [{
-        id: `automatic_discovery_failures:${campaign.id}`, windowStartedAt: "2026-08-15T09:00:00.000Z",
-        failuresInWindow: 3, sampleSize: 8, failureRatePercent: 37.5, failureRateThresholdPercent: 30,
-        paused: true, explanation: "Review failed searches.", recoveryGuidance: "Open Safeguards",
-      }] : [] }),
-      generatedAt: "2026-08-15T10:00:00.000Z",
-      campaigns: {
-        notifications: [],
-        activeCampaignId: campaign.id,
-        campaigns: [campaign],
-      },
-      savedJobs: [],
-      reviewQueue: [],
-      applicationRecords: [],
-      applyRuns: [],
-      userActionRequests: [],
-      discovery: seed.discovery,
-      searchPreferences: seed.searchPreferences,
-    });
+      const summary = deriveDashboardSummary({
+        safeguards: JobFinderIntelligenceSafeguardsSchema.parse({
+          abnormalFailurePauses: paused
+            ? [
+                {
+                  id: `automatic_discovery_failures:${campaign.id}`,
+                  windowStartedAt: "2026-08-15T09:00:00.000Z",
+                  failuresInWindow: 3,
+                  sampleSize: 8,
+                  failureRatePercent: 37.5,
+                  failureRateThresholdPercent: 30,
+                  paused: true,
+                  explanation: "Review failed searches.",
+                  recoveryGuidance: "Open Safeguards",
+                },
+              ]
+            : [],
+        }),
+        generatedAt: "2026-08-15T10:00:00.000Z",
+        campaigns: {
+          notifications: [],
+          activeCampaignId: campaign.id,
+          campaigns: [campaign],
+        },
+        savedJobs: [],
+        reviewQueue: [],
+        applicationRecords: [],
+        applyRuns: [],
+        userActionRequests: [],
+        discovery: seed.discovery,
+        searchPreferences: seed.searchPreferences,
+      });
 
-    expect(summary.needsYouCount).toBe(paused ? 1 : 0);
-    if (paused) {
-      expect(summary.recommendedNextAction.route).toBe("/job-finder/actions");
-      return;
-    }
-    expect(summary.recommendedNextAction.label).toBe("Find jobs");
-    expect(summary.recommendedNextAction.detail).toBe(
-      "Run the active search plan to collect relevant openings.",
-    );
-    expect(summary.recommendedNextAction.detail).not.toContain("campaign");
-  });
+      expect(summary.needsYouCount).toBe(paused ? 1 : 0);
+      if (paused) {
+        expect(summary.recommendedNextAction.route).toBe("/job-finder/actions");
+        return;
+      }
+      expect(summary.recommendedNextAction.label).toBe("Find jobs");
+      expect(summary.recommendedNextAction.detail).toBe(
+        "Run the active search plan to collect relevant openings.",
+      );
+      expect(summary.recommendedNextAction.detail).not.toContain("campaign");
+    },
+  );
 
   test("counts a never-verified source as healthy once its latest run completed", () => {
     const seed = createSeed();
@@ -435,7 +486,7 @@ describe("campaign workspace core", () => {
               durationMs: 60_000,
               outcome: "completed",
               browserCloseout: null,
-        report: null,
+              report: null,
               timing: null,
             },
           }),
@@ -479,15 +530,20 @@ describe("campaign workspace core", () => {
 
     const state = await repository.getCampaignState();
     expect(state?.campaigns[0]?.jobIds).toEqual(["high", "mid"]);
+    // The run saved three new jobs; the plan retained its strongest two.
+    expect(state?.campaigns[0]?.latestDigest?.report).toMatchObject({
+      new: 3,
+      retained: 2,
+    });
     expect(state?.campaigns[0]?.history[0]?.discoveryRunId).toBe("run_1");
   });
 
   test("retains discovery-only staged jobs so the active campaign can display them", async () => {
     const seed = createSeed();
     const jobs = [
-      savedJob("staged_low", 40),
-      savedJob("staged_mid", 75),
-      savedJob("staged_high", 95),
+      savedJob("staged_low", 40, "campaign_discovery_only"),
+      savedJob("staged_mid", 75, "campaign_discovery_only"),
+      savedJob("staged_high", 95, "campaign_discovery_only"),
     ];
     const target = seed.searchPreferences.discovery.targets[0];
     if (!target) throw new Error("Expected a saved source.");
@@ -549,7 +605,7 @@ describe("campaign workspace core", () => {
               durationMs: 60_000,
               outcome: "completed",
               browserCloseout: null,
-        report: null,
+              report: null,
               timing: null,
             },
           }),
@@ -666,7 +722,7 @@ describe("campaign workspace core", () => {
               durationMs: 60_000,
               outcome: "completed",
               browserCloseout: null,
-        report: null,
+              report: null,
               timing: null,
             },
           }),
@@ -704,9 +760,11 @@ describe("campaign workspace core", () => {
 
     const stored = (await repository.getCampaignState())?.campaigns[0];
     expect(stored?.jobIds).toEqual(["shared"]);
+    // "New" counts jobs new to this device; the plan keeping a job it
+    // already had elsewhere shows up as retained, not new.
     expect(stored?.latestDigest?.report).toMatchObject({
       duplicates: 1,
-      new: 1,
+      new: 0,
       retained: 1,
     });
   });
@@ -825,7 +883,7 @@ describe("campaign in-flight retention protection", () => {
       retained: 0,
     });
     expect(stored?.schedule.runFacts.lastRunSummary).toContain(
-      "0 found · 0 new · 0 kept",
+      "0 postings seen · 0 unique jobs · 0 new to you · 0 kept by this plan",
     );
     expect(stored?.jobIds).toHaveLength(15);
     expect(stored?.progress.jobsFound).toBe(15);
@@ -1218,8 +1276,8 @@ describe("campaign retention reconciliation", () => {
         savedJobs: [savedJob("job_a", 90)],
         searchPreferences: seed.searchPreferences,
         now: "2026-08-15T11:00:00.000Z",
-      }),
-    ).toBeNull();
+      })?.campaigns[0]?.jobIds,
+    ).toEqual([]);
   });
 
   test("leaves user-created empty campaigns untouched to keep zero-sample funnels honest", () => {
@@ -2061,7 +2119,10 @@ describe("ready-for-approval notification resolves once preparation begins", () 
     });
   }
 
-  function summaryFor(lastAttemptState: string | null) {
+  function summaryFor(
+    lastAttemptState: string | null,
+    status: "approved" | "ready_for_review" = "approved",
+  ) {
     const seed = createSeed();
     const campaign = createCampaign({
       id: "campaign_approval",
@@ -2080,7 +2141,7 @@ describe("ready-for-approval notification resolves once preparation begins", () 
       },
       savedJobs: [],
       reviewQueue: [],
-      applicationRecords: [approvalRecord(lastAttemptState)],
+      applicationRecords: [{ ...approvalRecord(lastAttemptState), status }],
       applyRuns: [],
       userActionRequests: [],
       discovery: seed.discovery,
@@ -2088,10 +2149,16 @@ describe("ready-for-approval notification resolves once preparation begins", () 
     });
   }
 
-  test("counts an approved application that has not been prepared yet", () => {
-    expect(summaryFor(null).applicationsReadyForApproval).toBe(1);
-    expect(summaryFor("not_started").applicationsReadyForApproval).toBe(1);
-    expect(summaryFor("ready").applicationsReadyForApproval).toBe(1);
+  test("does not mistake resume approval or a ready form for pending approval", () => {
+    expect(summaryFor(null).applicationsReadyForApproval).toBe(0);
+    expect(summaryFor("not_started").applicationsReadyForApproval).toBe(0);
+    expect(summaryFor("ready").applicationsReadyForApproval).toBe(0);
+  });
+
+  test("counts a real resume approval request before preparation", () => {
+    expect(
+      summaryFor(null, "ready_for_review").applicationsReadyForApproval,
+    ).toBe(1);
   });
 
   test("stops counting once the application was prepared", () => {
@@ -2106,7 +2173,7 @@ describe("ready-for-approval notification resolves once preparation begins", () 
   });
 
   test("drops the recommended approval step once preparation began", () => {
-    expect(summaryFor(null).recommendedNextAction.label).toBe(
+    expect(summaryFor(null).recommendedNextAction.label).not.toBe(
       "Review prepared applications",
     );
     expect(summaryFor("paused").recommendedNextAction.label).not.toBe(
@@ -2202,3 +2269,207 @@ describe("a plan card uses the application ledger", () => {
     expect(progress.applicationsPrepared).toBe(5);
   });
 });
+
+test("the first search ignores unrelated live membership and the second keeps the same list", async () => {
+  const seed = createSeed();
+  const own = savedJob("own", 90, "one-source");
+  const unrelated = savedJob("elsewhere", 90, "other-plan");
+  const plan = createCampaign({
+    id: "one-source",
+    name: "One source",
+    mode: "precision",
+    searchPreferences: seed.searchPreferences,
+    now: "2026-10-05T10:00:00.000Z",
+  });
+  const repository = createInMemoryJobFinderRepository({
+    ...seed,
+    savedJobs: [own, unrelated],
+  });
+  const ctx = {
+    repository,
+    withCampaignTransition: async <T>(operation: () => Promise<T>) =>
+      operation(),
+  } as WorkspaceServiceContext;
+  for (const [index, priorIds] of [[], [own.id]].entries()) {
+    await repository.saveCampaignState({
+      activeCampaignId: plan.id,
+      notifications: [],
+      campaigns: [{ ...plan, jobIds: [own.id, unrelated.id] }],
+    });
+    const run = DiscoveryRunRecordSchema.parse({
+      id: `search-${index}`,
+      campaignId: plan.id,
+      state: "completed",
+      runPhase: "complete",
+      scope: "run_all",
+      startedAt: "2026-10-05T10:00:00.000Z",
+      completedAt: "2026-10-05T10:01:00.000Z",
+      targetIds: [plan.sourceTargetIds[0]!],
+      targetExecutions: [
+        {
+          targetId: plan.sourceTargetIds[0]!,
+          adapterKind: "target_site",
+          state: "completed",
+          encounteredJobIds: [own.id],
+        },
+      ],
+    });
+    await repository.commitDiscoveryStateUpdate(() => ({
+      ...seed.discovery,
+      recentRuns: [run],
+    }));
+    await recordCampaignDiscoveryResult({
+      ctx,
+      campaignId: plan.id,
+      beforeCampaignJobIds: priorIds,
+      beforeJobProvenanceFingerprints: new Map(),
+    });
+    expect((await repository.getCampaignState())!.campaigns[0]!.jobIds).toEqual(
+      [own.id],
+    );
+  }
+});
+
+test("a one-site plan keeps only its listings when three sites reuse posting numbers", async () => {
+  const seed = createSeed();
+  const own = {
+    ...savedJob("own", 90, "one-source"),
+    sourceJobId: "2",
+    canonicalUrl: "https://jobs.example.com/first/jobs/2",
+  };
+  const unrelated = {
+    ...savedJob("elsewhere", 90, "other-plan"),
+    sourceJobId: "2",
+    canonicalUrl: "https://jobs.example.com/second/jobs/2",
+  };
+  const hidden = {
+    ...savedJob("hidden", 90, "other-plan"),
+    sourceJobId: "2",
+    canonicalUrl: "https://jobs.example.com/third/jobs/2",
+    status: "archived" as const,
+  };
+  const ownHidden = {
+    ...hidden,
+    id: "own-hidden",
+    sourceJobId: "3",
+    canonicalUrl: "https://jobs.example.com/first/jobs/3",
+  };
+  const plan = createCampaign({
+    id: "one-source",
+    name: "One source",
+    mode: "precision",
+    searchPreferences: seed.searchPreferences,
+    now: "2026-10-05T10:00:00.000Z",
+  });
+  const repository = createInMemoryJobFinderRepository({
+    ...seed,
+    savedJobs: [own, unrelated, hidden, ownHidden],
+  });
+  const ctx = {
+    repository,
+    withCampaignTransition: async <T>(operation: () => Promise<T>) =>
+      operation(),
+  } as WorkspaceServiceContext;
+  for (const [index, priorIds] of [[], [own.id]].entries()) {
+    await repository.saveCampaignState({
+      activeCampaignId: plan.id,
+      notifications: [],
+      campaigns: [
+        { ...plan, jobIds: [own.id, unrelated.id, hidden.id, ownHidden.id] },
+      ],
+    });
+    const run = DiscoveryRunRecordSchema.parse({
+      id: `search-${index}`,
+      campaignId: plan.id,
+      state: "completed",
+      runPhase: "complete",
+      scope: "run_all",
+      startedAt: "2026-10-05T10:00:00.000Z",
+      completedAt: "2026-10-05T10:01:00.000Z",
+      targetIds: [plan.sourceTargetIds[0]!],
+      targetExecutions: [
+        {
+          targetId: plan.sourceTargetIds[0]!,
+          adapterKind: "target_site",
+          state: "completed",
+          encounteredJobIds: [ownHidden.id],
+          agentCheckpoint: {
+            revision: 1,
+            savedAt: "2026-10-05T10:01:00.000Z",
+            currentUrl: "https://jobs.example.com/first",
+            lastStableUrl: "https://jobs.example.com/first",
+            stepCount: 3,
+            collectedJobs: [own],
+            visitedUrls: [],
+            phaseEvidence: {},
+          },
+        },
+      ],
+    });
+    await repository.commitDiscoveryStateUpdate(() => ({
+      ...seed.discovery,
+      recentRuns: [run],
+    }));
+    await recordCampaignDiscoveryResult({
+      ctx,
+      campaignId: plan.id,
+      beforeCampaignJobIds: priorIds,
+      beforeJobProvenanceFingerprints: new Map(),
+    });
+    expect((await repository.getCampaignState())!.campaigns[0]!.jobIds).toEqual(
+      [own.id],
+    );
+  }
+});
+
+test.each(["cancelled", "failed"] as const)(
+  "%s searches do not turn merely visited addresses into pages covered",
+  (state) => {
+    const target = createSeed().searchPreferences.discovery.targets[0]!;
+    const run = DiscoveryRunRecordSchema.parse({
+      id: "interrupted-search",
+      state: "running",
+      startedAt: "2026-10-06T10:00:00.000Z",
+      targetIds: [target.id],
+      targetExecutions: [
+        {
+          targetId: target.id,
+          adapterKind: target.adapterKind,
+          state: "running",
+          agentCheckpoint: {
+            revision: 1,
+            savedAt: "2026-10-06T10:00:30.000Z",
+            currentUrl: target.startingUrl,
+            lastStableUrl: target.startingUrl,
+            stepCount: 3,
+            collectedJobs: [],
+            visitedUrls: [
+              "about:blank",
+              target.startingUrl,
+              `${target.startingUrl}/unread`,
+            ],
+            phaseEvidence: {},
+          },
+        },
+      ],
+    });
+    const finished = finalizeRunningTargetExecutions(
+      run,
+      state,
+      "2026-10-06T10:01:00.000Z",
+    );
+    expect(finished.targetExecutions[0]!.pagesCovered).toBeUndefined();
+    const measured = finalizeRunningTargetExecutions(
+      {
+        ...run,
+        targetExecutions: run.targetExecutions.map((execution) => ({
+          ...execution,
+          pagesCovered: 1,
+        })),
+      },
+      state,
+      "2026-10-06T10:01:00.000Z",
+    );
+    expect(measured.targetExecutions[0]!.pagesCovered).toBe(1);
+  },
+);

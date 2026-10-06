@@ -822,3 +822,26 @@ describe("SavedJobDiscoveryProvenanceSchema sightings", () => {
     expect(parsed.applyPath).toBe("unknown");
   });
 });
+
+test("discovery progress carries phase and bounded live counts", () => {
+  const event = DiscoveryActivityEventSchema.parse({
+    id: "live",
+    runId: "run",
+    timestamp: "2026-10-05T10:00:00.000Z",
+    kind: "progress",
+    stage: "extraction",
+    message: "Reading listings",
+    progress: { phase: "reading_listings", completed: 12, total: 60 },
+  });
+  expect(event.progress).toEqual({
+    phase: "reading_listings",
+    completed: 12,
+    total: 60,
+  });
+  expect(
+    DiscoveryActivityEventSchema.safeParse({
+      ...event,
+      progress: { ...event.progress, completed: -1 },
+    }).success,
+  ).toBe(false);
+});

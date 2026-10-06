@@ -121,6 +121,10 @@ function mapBrowserActionResult(input: {
 }): SyntheticSubmissionExecutorResult {
   const browserAction = {
     reason: input.result.reason,
+    ...(input.result.outcome === "not_submitted" &&
+    input.result.validationErrors?.length
+      ? { detail: input.result.validationErrors.join(" ").slice(0, 500) }
+      : {}),
     actionAttempted: input.result.facts.actionAttempted,
     actionIssued: input.result.facts.actionIssued,
     actionCompleted: input.result.facts.actionCompleted,
@@ -157,9 +161,11 @@ function mapBrowserActionResult(input: {
       outcome: "not_submitted",
       browserAction,
       evidence: [],
-      retry: mapNotSubmittedRetry({
-        authorityVetoed: input.authorityVetoed,
-      }),
+      retry:
+        input.result.reason === "form_validation_failed" &&
+        !input.authorityVetoed
+          ? { eligible: true, blockReason: null }
+          : mapNotSubmittedRetry({ authorityVetoed: input.authorityVetoed }),
     };
   }
 

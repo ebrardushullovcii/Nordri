@@ -1,6 +1,7 @@
 import type { Event, Input, WebContents } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import {
+  applyMainWindowZoomCommand,
   bindMainWindowZoomShortcuts,
   getMainWindowZoomCommand,
   getNextMainWindowZoomFactor,
@@ -28,6 +29,23 @@ function createInput(overrides: Partial<Input> = {}): Input {
 }
 
 describe("main window zoom shortcuts", () => {
+  test("menu clicks step the zoom like the keyboard", () => {
+    let factor = 1;
+    const target = {
+      getZoomFactor: () => factor,
+      setZoomFactor: (next: number) => {
+        factor = next;
+      },
+    };
+    applyMainWindowZoomCommand(target, "in");
+    expect(factor).toBe(1.1);
+    applyMainWindowZoomCommand(target, "out");
+    applyMainWindowZoomCommand(target, "out");
+    expect(factor).toBe(0.9);
+    applyMainWindowZoomCommand(target, "reset");
+    expect(factor).toBe(MAIN_WINDOW_DEFAULT_ZOOM_FACTOR);
+  });
+
   test.each(["darwin", "win32", "linux"] as const)(
     "routes embedded-view keys to the shell on %s",
     (platform) => {
@@ -212,13 +230,15 @@ describe("main window zoom shortcuts", () => {
       setZoomFactor,
     } as unknown as Pick<WebContents, "getZoomFactor" | "on" | "setZoomFactor">;
 
-    bindMainWindowZoomShortcuts(webContents, "win32");
+    bindMainWindowZoomShortcuts(webContents, "win32", {
+      initialZoomFactor: 1.5,
+    });
 
     // A test or user zoom change on the current route is observed before the
     // same-document navigation starts.
     zoomFactor = 1.5;
     const didStartNavigation = listeners.get("did-start-navigation");
-    expect(didStartNavigation).toBeTypeOf("function");
+    expect(didStartNavigation).toBeUndefined();
     didStartNavigation?.({
       isMainFrame: true,
       isSameDocument: true,
@@ -271,6 +291,12 @@ describe("main window zoom shortcuts", () => {
         // right before did-finish-load; nothing in the app caused this write.
         zoomFactor = factor;
       },
+      startMainNavigation() {
+        listeners.get("did-start-navigation")?.({
+          isMainFrame: true,
+          isSameDocument: false,
+        });
+      },
       finishLoad() {
         listeners.get("did-finish-load")?.();
       },
@@ -285,6 +311,41 @@ describe("main window zoom shortcuts", () => {
       zoomFactor: () => zoomFactor,
     };
   }
+
+  test("keeps restored zoom and menu changes through a full reload", () => {
+    const harness = createLoadLifecycleHarness();
+    bindMainWindowZoomShortcuts(harness.webContents, "win32", {
+      initialZoomFactor: 1.44,
+    });
+    expect(harness.zoomFactor()).toBe(1.44);
+    applyMainWindowZoomCommand(harness.webContents, "in");
+    harness.startMainNavigation();
+    harness.applyCommitTimeHostZoom(1);
+    harness.finishLoad();
+    expect(harness.zoomFactor()).toBe(1.54);
+  });
+
+  test("reapplies a saved 200% choice after the reopened window starts at 100%", () => {
+    const harness = createLoadLifecycleHarness();
+    bindMainWindowZoomShortcuts(harness.webContents, "win32", {
+      initialZoomFactor: 2,
+    });
+    harness.applyCommitTimeHostZoom(1);
+    harness.startMainNavigation();
+    harness.finishLoad();
+    expect(harness.zoomFactor()).toBe(2);
+  });
+
+  test("a reset command replaces the remembered value even while Chromium is at 100%", () => {
+    const harness = createLoadLifecycleHarness();
+    bindMainWindowZoomShortcuts(harness.webContents, "win32", {
+      initialZoomFactor: 2,
+    });
+    harness.applyCommitTimeHostZoom(1);
+    applyMainWindowZoomCommand(harness.webContents, "reset");
+    harness.finishLoad();
+    expect(harness.zoomFactor()).toBe(1);
+  });
 
   test("beats persisted Chromium host zoom by re-asserting after every completed load", () => {
     const harness = createLoadLifecycleHarness();

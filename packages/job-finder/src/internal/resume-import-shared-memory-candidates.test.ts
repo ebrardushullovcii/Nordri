@@ -8,7 +8,7 @@ import {
 } from "../workspace-service.resume-analysis.shared";
 
 describe("promoteGroundedSharedMemoryCandidates", () => {
-  test("rejects role-title proof duplicates while preserving experience achievements and richer proofs", () => {
+  test("keeps role achievements and richer proofs available for explicit review", () => {
     const now = "2026-07-31T04:00:00.000Z";
     const achievement =
       "Led a React and TypeScript shipment-tracking redesign used by 18 internal operations teams.";
@@ -124,12 +124,11 @@ describe("promoteGroundedSharedMemoryCandidates", () => {
     );
     expect(promoted[1]).toEqual(
       expect.objectContaining({
-        resolution: "rejected",
-        resolutionReason: "redundant_with_experience_achievement",
+        resolution: "needs_review",
       }),
     );
     expect(promoted[2]).toEqual(
-      expect.objectContaining({ resolution: "auto_applied" }),
+      expect.objectContaining({ resolution: "needs_review" }),
     );
   });
 

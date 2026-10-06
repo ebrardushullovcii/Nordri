@@ -1,3 +1,7 @@
+import {
+  formatDiscoveryAccounting,
+  formatDiscoverySourceAccounting,
+} from "@nordri/contracts";
 import type {
   DiscoveryActivityEvent,
   DiscoveryRunRecord,
@@ -13,7 +17,11 @@ import type {
  * as 100 on Home, 50 on Find jobs and 15 in the plan card.
  */
 export interface DiscoveryRunReportCounts {
+  rejected?: number | null;
+  deferred?: number | null;
+  pagesCovered?: number | null;
   found: number | null;
+  unique?: number | null;
   new: number | null;
   saved: number | null;
   retained: number | null;
@@ -65,7 +73,15 @@ export function readDiscoveryRunReportCounts(
   }
 
   return {
+    ...(report.rejected !== undefined
+      ? {
+          rejected: report.rejected,
+          deferred: report.deferred ?? null,
+          pagesCovered: report.pagesCovered ?? null,
+        }
+      : {}),
     found: readReportCount(report.found),
+    unique: readReportCount(report.unique),
     new: readReportCount(report.new),
     saved: readReportCount(report.saved),
     retained: readReportCount(report.retained),
@@ -99,7 +115,9 @@ export function resolveDiscoveryRunAlreadyHereCount(
   return resolveAlreadyHereCount(counts);
 }
 
-function resolveAlreadyHereCount(counts: DiscoveryRunReportCounts): number | null {
+function resolveAlreadyHereCount(
+  counts: DiscoveryRunReportCounts,
+): number | null {
   // "Already here" means the plan held these listings before the run. The run
   // measures that itself now; the duplicate tally below is only the reading
   // for runs recorded before the two were told apart, and it is why a first
@@ -133,6 +151,9 @@ export function formatDiscoveryRunReportLabel(
     return `Counts ${MISSING_RUN_COUNT_LABEL} for this run`;
   }
 
+  if (counts.unique != null || counts.rejected !== undefined) {
+    return formatDiscoveryAccounting(counts);
+  }
   // "N found · M new"; "kept" only when fewer were kept than found, and
   // "already here" only when there were any. Four numbers where two say
   // everything was the sentence people skipped.
@@ -356,11 +377,9 @@ export function formatDiscoveryResultBandLabel(
     // headline says that instead of leading with a zero that reads as "we
     // found you nothing".
     if (worthOpening === 0) {
-      return `${titleMatches} matched your role, not scored yet · ${alsoFound} also found`;
+      return `${titleMatches} awaiting assessment · ${alsoFound} also found`;
     }
-    return `${worthOpening} worth opening · ${titleMatches} title ${
-      titleMatches === 1 ? "match" : "matches"
-    } · ${alsoFound} also found`;
+    return `${worthOpening} worth opening · ${titleMatches} awaiting assessment · ${alsoFound} also found`;
   }
 
   if (alsoFound > 0) {
@@ -465,4 +484,32 @@ function formatSavedAndKeptCounts(
   return `${savedByRun} new ${
     savedByRun === 1 ? "job" : "jobs"
   } saved on this device · ${keptInPlan} kept in your current search plan (its 'Jobs to retain' limit; raise it in Search plans → Edit to keep more)`;
+}
+
+/** A source's part of the same run report; older runs say what was not recorded. */
+export function getDiscoverySourceRunCountLabel(
+  run: Pick<DiscoveryRunRecord, "summary"> &
+    Partial<Pick<DiscoveryRunRecord, "targetExecutions">>,
+  targetId: string,
+): string {
+  const source = run.summary.report?.sources?.find(
+    (source) => source.targetId === targetId,
+  );
+  if (source) return formatDiscoverySourceAccounting(source);
+  const execution = run.targetExecutions?.find(
+    (source) => source.targetId === targetId,
+  );
+  if (!execution) return "Counts not recorded for this source";
+  return formatDiscoverySourceAccounting({
+    targetId,
+    inspected: execution.jobsInspected ?? null,
+    saved: execution.jobsPersisted + execution.jobsStaged,
+    rejected:
+      execution.jobsInspected !== undefined
+        ? (execution.rejectedListings?.length ?? 0) + execution.invalidSkipped
+        : null,
+    duplicates: execution.duplicatesMerged + execution.jobsSkippedByLedger,
+    deferred: execution.listingsDeferred ?? null,
+    pagesCovered: execution.pagesCovered ?? null,
+  });
 }

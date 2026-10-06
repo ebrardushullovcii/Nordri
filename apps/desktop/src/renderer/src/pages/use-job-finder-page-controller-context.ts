@@ -412,7 +412,7 @@ export function buildJobFinderPageContext(
       const completed = await runAction(
         () => actions.mutateApplicationCrmBulkStage(command),
         () => undefined,
-        "Application tracker updated.",
+        null,
       );
       if (!completed) {
         throw new Error(
@@ -604,7 +604,7 @@ export function buildJobFinderPageContext(
                   "The prepared application page is no longer open.")
             ) {
               throw new Error(
-                "That prepared application page is no longer open. Choose Try again in Applications to prepare it again.",
+                "That prepared application page is no longer open. Choose Prepare again in Applications to rebuild it.",
               );
             }
             // The page is selected in the browser; show it, as a parked
@@ -669,6 +669,7 @@ export function buildJobFinderPageContext(
               hasDiscoveryRunReportCounts(report)
                 ? formatDiscoveryRunReportLabel(report)
                 : null,
+              hasDiscoveryRunReportCounts(report) ? report.new : null,
             ),
           );
         },
@@ -752,17 +753,19 @@ export function buildJobFinderPageContext(
           scope: jobFinderPendingActions.sourceInstructionVerify(instructionId),
         },
       ),
+    onResetBrowser: () =>
+      runAction(actions.resetBrowser, () => undefined, null),
     onResetWorkspace: () => {
       // Stay resolves false: take no action and keep every draft. Leave
       // resolves true after the controller discarded only the named draft
       // state, so the reset — and its success navigation — runs exactly once.
-      void confirmLeaveDirtyResumeWorkspace("reset the workspace").then(
+      return confirmLeaveDirtyResumeWorkspace("reset the workspace").then(
         (mayLeave) => {
           if (!mayLeave) {
             return;
           }
 
-          void runAction(
+          return runAction(
             actions.resetWorkspace,
             (snapshot) => {
               saveCoordinator.clearReceipt();
@@ -773,7 +776,10 @@ export function buildJobFinderPageContext(
               );
             },
             "Workspace reset. Your profile, resume, jobs, and browser session were cleared on this device.",
-            { scope: jobFinderPendingActions.workspaceReset() },
+            {
+              scope: jobFinderPendingActions.workspaceReset(),
+              rethrowError: true,
+            },
           );
         },
       );

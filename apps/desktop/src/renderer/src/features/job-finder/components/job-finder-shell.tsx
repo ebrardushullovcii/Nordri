@@ -278,7 +278,7 @@ export const DESTINATION_COUNT_RAIL_MARKER_LAYOUT_CLASS =
  * 3:1 non-text floor in both themes.
  */
 export const SHELL_HEADER_CLASS =
-  "relative z-50 overflow-visible border-b border-(--surface-panel-shell-border) bg-(--shell-header-bg) backdrop-blur-sm sm:fixed sm:inset-x-0 sm:top-0 min-[1440px]:h-14";
+  "relative z-50 shrink-0 overflow-visible border-b border-(--surface-panel-shell-border) bg-(--shell-header-bg) backdrop-blur-sm sm:fixed sm:inset-x-0 sm:top-0 min-[1440px]:h-14";
 export const SHELL_HEADER_GRID_CLASS =
   "job-finder-shell-grid grid grid-rows-[3.5rem_auto_auto] items-stretch overflow-visible pl-2 pr-2 sm:grid-rows-[3.5rem_3.75rem] sm:pl-3 sm:pr-3 min-[1440px]:!grid-rows-[3.5rem]";
 /**
@@ -347,16 +347,18 @@ export function SidebarDestinationLabel({
     </span>
   );
 }
+export const SHELL_ROOT_CLASS =
+  "flex h-dvh min-h-0 flex-col overflow-hidden text-foreground";
 export const SHELL_CONTENT_CLASS =
-  "flex min-h-screen flex-col sm:h-full sm:min-h-0 sm:pt-[7.25rem] min-[1440px]:!pt-14 min-[1440px]:pl-(--job-finder-side-width)";
+  "flex min-h-0 min-w-0 flex-1 flex-col sm:pt-[7.25rem] min-[1440px]:!pt-14 min-[1440px]:pl-(--job-finder-side-width)";
 export const SHELL_MAIN_SCROLLING_CLASS = cn(
-  "flex-1 overflow-x-hidden outline-none",
+  "min-h-0 min-w-0 flex-1 overflow-x-hidden outline-none",
   "screen-scroll-area overflow-y-auto px-3 min-[1440px]:px-4",
   SHELL_SCROLLING_ROUTE_TOP_GUTTER_CLASS,
   SHELL_SCROLLING_ROUTE_BOTTOM_GUTTER_CLASS,
 );
 export const SHELL_MAIN_LOCKED_CLASS = cn(
-  "flex-1 overflow-x-hidden outline-none",
+  "min-h-0 min-w-0 flex-1 overflow-x-hidden outline-none",
   // Important for the same reason the header reserves above: `sm:px-3` still
   // matches at >=1440px and Tailwind v4 emits it after every arbitrary
   // variant, so a plain `min-[1440px]:px-4` silently lost and the wide layout
@@ -588,6 +590,11 @@ export function JobFinderShell({
   const moreMenuItemRefs = useRef<Array<HTMLElement | null>>([]);
   const moreMenuInitialFocusRef = useRef<"first" | "last">("first");
   const compactRouteScrollRef = useRef<HTMLDivElement | null>(null);
+  const compactMeasureRef = useRef<HTMLDivElement | null>(null);
+  const [compactVisibleCount, setCompactVisibleCount] = useState(5);
+  const [compactPreferredWidth, setCompactPreferredWidth] = useState<
+    number | null
+  >(null);
   const [compactRouteScrollEdges, setCompactRouteScrollEdges] =
     useState<CompactRouteScrollEdges>(NO_ROUTE_SCROLL_EDGES);
   // The palette index used to be rebuilt on every workspace commit even while
@@ -733,11 +740,55 @@ export function JobFinderShell({
   const actionScreen = screenDefinitions.find(
     (screen) => screen.id === "actions",
   );
-  const primaryScreens = screenDefinitions.filter((screen) =>
-    ["home", "profile", "discovery", "review-queue", "applications"].includes(
-      screen.id,
-    ),
+  const primaryScreens = useMemo(
+    () =>
+      screenDefinitions.filter((screen) =>
+        [
+          "home",
+          "profile",
+          "discovery",
+          "review-queue",
+          "applications",
+        ].includes(screen.id),
+      ),
+    [screenDefinitions],
   );
+  const compactPrimaryScreens = primaryScreens.slice(0, compactVisibleCount);
+  const compactHiddenScreens = primaryScreens.slice(compactVisibleCount);
+  useLayoutEffect(() => {
+    const scroll = compactRouteScrollRef.current;
+    const measurement = compactMeasureRef.current;
+    if (!scroll || !measurement) return undefined;
+    const measure = () => {
+      if (scroll.clientWidth <= 0) return;
+      const widths = Array.from(
+        measurement.children,
+        (child) => (child as HTMLElement).getBoundingClientRect().width,
+      );
+      const gap =
+        Number.parseFloat(getComputedStyle(measurement).columnGap) || 4;
+      setCompactPreferredWidth(
+        widths.reduce((sum, width) => sum + width, 0) +
+          gap * Math.max(0, widths.length - 1) +
+          (moreButtonRef.current?.getBoundingClientRect().width ?? 0) +
+          24,
+      );
+      let used = 0;
+      let count = 0;
+      for (const width of widths) {
+        used += width + (count > 0 ? gap : 0);
+        if (used > scroll.clientWidth - 8) break;
+        count += 1;
+      }
+      setCompactVisibleCount(Math.max(1, count));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroll);
+    observer.observe(measurement);
+    return () => observer.disconnect();
+  }, [primaryScreens]);
   // Grouped by what each destination *is*, not by which part of the product
   // introduced it. The person's own files live under Profile › Files now, so
   // the workspace group is Settings alone.
@@ -746,6 +797,9 @@ export function JobFinderShell({
   const selectMenuScreens = (ids: readonly JobFinderScreen[]) =>
     ids.flatMap((id) => screenDefinitions.filter((screen) => screen.id === id));
   const menuGroups = [
+    ...(compactHiddenScreens.length > 0
+      ? [{ label: "Your job search", screens: compactHiddenScreens }]
+      : []),
     {
       label: "Workspace",
       screens: selectMenuScreens(["settings", "safeguards"]),
@@ -1151,10 +1205,7 @@ export function JobFinderShell({
     <div
       data-job-finder-shell
       data-sidebar-collapsed={isSidebarCollapsed ? "true" : "false"}
-      className={cn(
-        "h-screen overflow-x-hidden overflow-y-auto text-foreground sm:overflow-hidden",
-        `platform-${platform}`,
-      )}
+      className={cn(SHELL_ROOT_CLASS, `platform-${platform}`)}
       style={
         {
           "--job-finder-side-width": isSidebarCollapsed ? "4rem" : "17rem",
@@ -1323,8 +1374,36 @@ export function JobFinderShell({
             <div
               className="relative flex w-fit min-w-0 max-w-full flex-nowrap items-center gap-1 overflow-visible rounded-(--radius-panel) border border-(--surface-panel-border) bg-(--surface-panel) p-1 sm:gap-1.5"
               data-job-finder-compact-navigation
+              style={
+                compactPreferredWidth === null
+                  ? undefined
+                  : { width: compactPreferredWidth }
+              }
             >
               <div className="relative min-w-0 flex-1">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none invisible absolute flex w-max gap-1 sm:gap-1.5"
+                  ref={compactMeasureRef}
+                >
+                  {primaryScreens.map((screen) => (
+                    <span
+                      className={cn(COMPACT_NAV_PILL_CLASS, "font-semibold")}
+                      key={screen.id}
+                    >
+                      <span className="shrink-0 whitespace-nowrap leading-tight">
+                        {screen.label}
+                      </span>
+                      {screen.count !== null ? (
+                        <ScreenCountBadge
+                          count={screen.count}
+                          kind={screen.countKind}
+                          noun={screen.countNoun}
+                        />
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
                 <div
                   className="overflow-x-auto overscroll-x-contain px-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   data-job-finder-compact-navigation-scroll
@@ -1339,7 +1418,7 @@ export function JobFinderShell({
                     className="flex min-w-max flex-nowrap items-center gap-1 sm:gap-1.5"
                     data-job-finder-compact-navigation-content
                   >
-                    {primaryScreens.map((screen) => (
+                    {compactPrimaryScreens.map((screen) => (
                       <button
                         aria-current={
                           activeScreen === screen.id ? "page" : undefined
@@ -1708,6 +1787,7 @@ export function JobFinderShell({
             />
             <AssistantToggle platform={platform} />
             <BrowserPeek
+              onRecordSend={() => { void navigate("/job-finder/applications"); }}
               chromeInsetStart={
                 isMac && !windowControlsState.isFullScreen
                   ? MACOS_TRAFFIC_LIGHT_INSET
@@ -1950,7 +2030,9 @@ export function JobFinderShell({
       <div
         className={SHELL_CONTENT_CLASS}
         data-job-finder-shell-content
-        style={{ paddingRight: "var(--assistant-sidebar-reserved, 0px)" }}
+        style={{
+          paddingRight: "var(--assistant-sidebar-reserved, 0px)",
+        }}
       >
         <main
           aria-label={activeScreenLabel}

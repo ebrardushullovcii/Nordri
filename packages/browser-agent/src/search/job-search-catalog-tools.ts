@@ -1,11 +1,16 @@
 import { parseToolArguments, type AgentLoopTool } from "@nordri/agent-runtime";
-import type { JobPosting } from "@nordri/contracts";
+import {
+  JobPostingSchema,
+  ListingRejectionCategorySchema,
+  type JobPosting,
+} from "@nordri/contracts";
 
 /** The model selects existing records; it cannot invent or rewrite feed jobs. */
 export function createSearchCatalogTools(input: {
   jobs: readonly JobPosting[];
   keep: (job: JobPosting) => boolean;
   checkpoint: () => Promise<void>;
+  onInspect?: (job: JobPosting) => void;
 }): AgentLoopTool[] {
   const readIds = new Set<number>();
   const readDetails = new Set<string>();
@@ -47,7 +52,10 @@ export function createSearchCatalogTools(input: {
             : indexed;
         const page = rows.slice(offset, offset + 25);
         const hasUnreadJobs = page.some(({ id }) => !readIds.has(id));
-        page.forEach(({ id }) => readIds.add(id));
+        page.forEach(({ id, job }) => {
+          readIds.add(id);
+          input.onInspect?.(job);
+        });
         return Promise.resolve({
           kind: "ok",
           content: JSON.stringify({
@@ -101,6 +109,7 @@ export function createSearchCatalogTools(input: {
             content: "Unknown catalog id. Read list_catalog_jobs first.",
           });
         readIds.add(id as number);
+        input.onInspect?.(job);
         const offset = offsetOf(args.offset);
         const detailKey = `${String(id)}:${offset}`;
         const hasUnreadDetail =
@@ -133,10 +142,26 @@ export function createSearchCatalogTools(input: {
         function: {
           name: "save_catalog_jobs",
           description:
-            "Save up to 100 catalog ids you have read and judged suitable for this search. Choose by the person's goal and search preferences. Existing saved jobs are not duplicated.",
+            "Save up to 100 catalog ids you have read and judged suitable for this search. Choose by the person's goal and search preferences. Existing saved jobs are not duplicated. Also report rejected ids with a reason category and a plain reason, so each reviewed job has an outcome.",
           parameters: {
             type: "object",
             properties: {
+              rejected: {
+                type: "array",
+                maxItems: 100,
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "integer", minimum: 0 },
+                    category: {
+                      type: "string",
+                      enum: ListingRejectionCategorySchema.options,
+                    },
+                    reason: { type: "string" },
+                  },
+                  required: ["id", "category", "reason"],
+                },
+              },
               ids: {
                 type: "array",
                 items: { type: "integer", minimum: 0 },
@@ -149,7 +174,48 @@ export function createSearchCatalogTools(input: {
       },
       execute: async (raw, context) => {
         context.signal?.throwIfAborted();
-        const ids = parseToolArguments(raw).ids;
+        const args = parseToolArguments(raw);
+        const ids = args.ids;
+        const rejections = Array.isArray(args.rejected) ? args.rejected : [];
+        if (rejections.length > 100)
+          return {
+            kind: "ok",
+            content:
+              "Nothing changed. Review at most 100 rejected catalog ids at a time.",
+          };
+        const rejectedJobs: JobPosting[] = [];
+        for (const rejection of rejections) {
+          if (!rejection || typeof rejection !== "object")
+            return {
+              kind: "ok",
+              content:
+                "Nothing changed. Supply valid rejected catalog ids and reasons.",
+            };
+          const row = rejection as Record<string, unknown>;
+          const job =
+            typeof row.id === "number" &&
+            Number.isSafeInteger(row.id) &&
+            readIds.has(row.id)
+              ? input.jobs[row.id]
+              : undefined;
+          const parsed = job
+            ? JobPostingSchema.safeParse({
+                ...job,
+                searchRejection: { category: row.category, reason: row.reason },
+              })
+            : null;
+          if (
+            !parsed?.success ||
+            !String(row.reason ?? "").trim() ||
+            (Array.isArray(ids) && ids.includes(row.id))
+          )
+            return {
+              kind: "ok",
+              content:
+                "Nothing changed. Supply distinct read catalog ids with valid categories and reasons.",
+            };
+          rejectedJobs.push(parsed.data);
+        }
         const validIds = Array.isArray(ids)
           ? ids.filter(
               (id: unknown): id is number =>
@@ -175,11 +241,13 @@ export function createSearchCatalogTools(input: {
           const job = input.jobs[id];
           if (job && input.keep(job)) added += 1;
         }
-        if (added) await input.checkpoint();
+        let rejected = 0;
+        for (const job of rejectedJobs) if (input.keep(job)) rejected += 1;
+        if (added || rejected) await input.checkpoint();
         return {
           kind: "ok",
-          content: `Saved ${added} new catalog jobs.`,
-          progress: added > 0,
+          content: `Saved ${added} new catalog jobs; rejected ${rejected}.`,
+          progress: added + rejected > 0,
         };
       },
     },

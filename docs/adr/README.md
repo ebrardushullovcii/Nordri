@@ -28,7 +28,7 @@ ADRs capture durable decisions and rejected alternatives. Use them to avoid reop
 | [0020](0020-streamed-model-requests-with-idle-and-total-budgets.md)  | accepted   | Streamed model requests, idle and total budgets, retries                                        |
 | [0021](0021-apply-agent-runtime.md)                                  | accepted   | Apply agent loop replaces the fixed prepare-only script                                         |
 | [0022](0022-two-apply-modes-one-click.md)                            | accepted   | Two apply modes, one or two clicks; preparation reaches the form                                |
-| [0023](0023-agent-owned-runs.md)                                     | accepted   | The model owns search, source-check, and apply runs; code is safety only                        |
+| [0023](0023-agent-owned-runs.md)                                     | accepted; card scans removed by 0041 | The model owns search, source-check, and apply runs; code is safety only                        |
 | [0024](0024-job-finder-browser-harness-and-three-apply-modes.md)     | accepted; per-batch mode and breadth superseded by 0025 and 0026, setup eligibility by 0029, takeover by 0034, Send-press wording for assistant work by 0039 | Browser harness, broad search requests, and three apply modes |
 | [0025](0025-one-ai-behavior-panel.md)                                | accepted   | One Settings section holds every choice about how the AI behaves                                |
 | [0026](0026-shortlisted-three-steps-per-job.md)                      | accepted   | Shortlisted is three steps per job; one "Lines to confirm" list in the resume                   |
@@ -41,12 +41,17 @@ ADRs capture durable decisions and rejected alternatives. Use them to avoid reop
 | [0033](0033-person-finishes-on-the-kept-page.md)                     | accepted   | The person finishes on the kept page; hand-offs carry on by themselves                          |
 | [0034](0034-stepping-in-hands-over-one-tab.md)                        | accepted; lent tabs for the assistant by 0038 | Stepping into the browser hands over one tab; handing it back carries on                        |
 
-| [0035](0035-selected-resume-batches.md) | accepted | Temporary job selection and two concurrent resume generations per batch |
+| [0035](0035-selected-resume-batches.md) | accepted; ten-job cap removed by 0043; restart recovery added by 0045 | Temporary job selection and two concurrent resume generations per batch |
 | [0036](0036-parallel-application-preparation.md) | accepted | Owned application tabs, bounded parallel preparation, and serialized sending |
 | [0037](0037-one-assistant-in-a-side-chat.md) | accepted | One app-wide assistant in a side chat replaces the Profile and Resume chats |
 | [0038](0038-the-assistant-works-in-the-tab-you-lend-it.md) | accepted | The assistant works only in the browser tab lent to it; a click takes it back |
 | [0039](0039-written-instructions-authorize.md) | accepted | Written sidebar instructions authorize their steps, sending included, through recorded grants |
 | [0040](0040-nordri-rebrand.md) | accepted | UnEmployed becomes Nordri and Interview Helper becomes Live Assistant; existing data moves once |
+| [0041](0041-the-model-reads-the-page.md) | accepted | The model reads the page and returns job details; scripts keep safety and mechanics, not interpretation |
+| [0042](0042-toasts-for-news-boxes-for-action.md) | accepted; action toasts lengthened by 0043; amended by 0044 | Toasts for news; tinted boxes only when the person must act; status in the control that owns it |
+| [0043](0043-bulk-work-queues-the-whole-selection.md) | accepted | Bulk work queues the whole selection or says what remains; toasts with Undo stay about twenty seconds |
+| [0044](0044-page-conditions-on-the-header-status-line.md) | accepted | Page-level conditions owned elsewhere are toned items on a one-row header's status line, not boxes |
+| [0045](0045-resume-batches-continue-after-restart.md) | accepted | Resume batches save their queue; after a restart the person can Continue batch, with a time-left estimate |
 
 ## Policy
 

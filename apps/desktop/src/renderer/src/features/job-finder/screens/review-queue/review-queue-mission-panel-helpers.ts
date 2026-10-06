@@ -439,7 +439,9 @@ export function buildMissionPanelState(input: {
     ? isJobPending(selectedItem.jobId)
     : false;
   const isGenerating =
-    isResumeGenerationInProgress(selectedItem) || isSelectedJobPending;
+    selectedItem?.resumeApplicationMode !== "original_resume" &&
+    !hasGenerationFailure &&
+    (isResumeGenerationInProgress(selectedItem) || isSelectedJobPending);
   const applySupportState = getApplySupportState(selectedJob);
   const resumeReviewStatus = selectedItem?.resumeReview.status ?? "not_started";
   const usesOriginalResume =

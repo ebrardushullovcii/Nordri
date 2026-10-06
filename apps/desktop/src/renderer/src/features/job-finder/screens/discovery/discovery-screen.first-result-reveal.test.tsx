@@ -39,8 +39,10 @@ vi.mock("./discovery-activity-panel", () => ({
   DiscoveryHistoryModal: () => null,
 }));
 vi.mock("./discovery-detail-panel", () => ({
-  DiscoveryDetailPanel: () => (
-    <section aria-label="Job details">Job details</section>
+  DiscoveryDetailPanel: (props: { onBackToResults?: () => void }) => (
+    <section aria-label="Job details">
+      Job details<button onClick={props.onBackToResults}>Return to rows</button>
+    </section>
   ),
 }));
 vi.mock("./discovery-filters-panel", () => ({
@@ -52,10 +54,25 @@ vi.mock("./discovery-results-panel", () => ({
   DiscoveryResultsPanel: (props: {
     latestRunVerdict?: unknown;
     areAlsoFoundShown?: unknown;
+    jobs: readonly SavedJob[];
+    onSelectJob: (jobId: string) => void;
   }) => {
     state.latestRunVerdicts.push(props.latestRunVerdict);
     state.alsoFoundShown.push(props.areAlsoFoundShown);
-    return <section aria-label="Job results">Job results</section>;
+    return (
+      <section aria-label="Job results">
+        Job results
+        {props.jobs.map((job) => (
+          <button
+            key={job.id}
+            data-collection-item-id={job.id}
+            onClick={() => props.onSelectJob(job.id)}
+          >
+            {job.id}
+          </button>
+        ))}
+      </section>
+    );
   },
 }));
 
@@ -116,6 +133,7 @@ function createJob(id: string): SavedJob {
 
 interface ScreenOverrides {
   jobs?: readonly SavedJob[];
+  selectedJob?: SavedJob;
   recentRuns?: readonly DiscoveryRunRecord[];
   searchSelectivity?: "best_matches" | "balanced" | "wide_net";
 }
@@ -149,7 +167,7 @@ function buildScreen(overrides?: ScreenOverrides) {
         {...(overrides?.searchSelectivity
           ? { searchSelectivity: overrides.searchSelectivity }
           : {})}
-        selectedJob={null}
+        selectedJob={overrides?.selectedJob ?? null}
         sourceAccessPrompts={[]}
       />
     </MemoryRouter>
@@ -280,4 +298,40 @@ describe("DiscoveryScreen first-result reveal", () => {
       kind: "interrupted",
     });
   });
+});
+
+it("reveals a selected detail at stacked widths and returns to its row", () => {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => ({ matches: false })),
+  );
+  const scrollIntoView = vi.fn();
+  const originalScroll = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollIntoView",
+  );
+  HTMLElement.prototype.scrollIntoView = scrollIntoView;
+  try {
+    const job = createJob("selected_row");
+    render(buildScreen({ jobs: [job], selectedJob: job }));
+    fireEvent.click(screen.getByRole("button", { name: "selected_row" }));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(scrollIntoView.mock.instances.at(-1)).toBe(
+      screen.getByRole("region", { name: "Job details" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Return to rows" }));
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "center" });
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "selected_row" }),
+    );
+  } finally {
+    if (originalScroll)
+      Object.defineProperty(
+        HTMLElement.prototype,
+        "scrollIntoView",
+        originalScroll,
+      );
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    vi.unstubAllGlobals();
+  }
 });

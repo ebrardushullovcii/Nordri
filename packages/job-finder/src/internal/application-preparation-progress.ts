@@ -12,11 +12,11 @@ export function describeApplicationPreparationProgress(note: string): string {
   if (note === "asking the assistant what to do next") {
     return "Thinking about the next form step";
   }
-  if (note.startsWith("suggest_answer")) return "Checking a form answer";
+  if (note.startsWith("fill_fields")) return "Filling in form fields";
   if (note.startsWith("observe")) return "Reading the application form";
-  if (note.startsWith("fill_text")) return "Filling a text field";
-  if (note.startsWith("choose_option")) return "Choosing a form option";
-  if (note.startsWith("set_toggle")) return "Setting a form choice";
+  if (note.startsWith("type ")) return "Filling a text field";
+  if (note.startsWith("select ")) return "Choosing a form option";
+  if (note.startsWith("set_checkbox")) return "Setting a form choice";
   if (note.startsWith("upload")) return "Attaching an approved document";
   if (note.startsWith("finished")) return "Finishing the review checkpoint";
   if (note.includes("time limit")) return "The assistant response timed out";
@@ -61,7 +61,7 @@ export async function persistApplicationPreparationProgress(input: {
     const next = ApplyJobResultSchema.parse({
       ...current,
       state: "filling",
-      summary: `Filling in application · Step ${input.progress.step}`,
+      summary: "Filling in application",
       detail: describeApplicationPreparationProgress(input.progress.note),
       updatedAt: now,
       completedAt: null,
@@ -106,7 +106,7 @@ export async function persistApplicationWaitingForBrowserTab(input: {
       ...current,
       summary: WAITING_FOR_BROWSER_TAB_SUMMARY,
       detail:
-        "The Job Finder browser has as many tabs open as it allows. This application starts as soon as one frees up: close a tab you no longer need, or send a filled-in application.",
+        "Browser tab limit reached. Close finished tabs to continue. Prepared, unsent forms stay open.",
       updatedAt: new Date().toISOString(),
       completedAt: null,
     }),

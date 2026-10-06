@@ -269,9 +269,15 @@ export const ACTION_INVENTORY: readonly ActionInventoryEntry[] = [
   {
     id: "campaigns.edit",
     screen: "Search plans",
-    action: "Create, edit or delete a plan, its rules and schedule",
+    action: "Create or edit a named plan and its schedule",
+    channels: ["job-finder:save-campaign"],
+    coverage: tools("list_search_plans", "save_search_plan"),
+  },
+  {
+    id: "campaigns.rules",
+    screen: "Search plans",
+    action: "Delete plans or edit their rules and funnel",
     channels: [
-      "job-finder:save-campaign",
       "job-finder:delete-campaign",
       "job-finder:save-campaign-rule",
       "job-finder:delete-campaign-rule",
@@ -279,7 +285,7 @@ export const ACTION_INVENTORY: readonly ActionInventoryEntry[] = [
       "job-finder:project-campaign-rule-funnel",
     ],
     coverage: excluded(
-      "Plan editing (rules, schedule, funnel) is not yet a tool; the assistant logs a gap with report_missing_capability.",
+      "Plan deletion, rules and funnel editing still use Search plans; Undo can remove a plan just created in chat.",
     ),
   },
   {
@@ -770,7 +776,12 @@ export const SERVICE_METHOD_COVERAGE: Record<
   keyof JobFinderWorkspaceService,
   string
 > = {
+  refreshApprovedApplicationLetter: "internal",
+  assessJobListing: "assess_job_listing",
+  saveUserActionAnswerDraft: "internal",
+  withWorkspaceRestore: "internal",
   shutdown: "internal",
+  saveResumeBatchCheckpoint: "internal",
   getWorkspaceSnapshot: "get_workspace_summary",
   getWorkspaceBootstrap: "internal",
   getResumeImportState: "internal",
@@ -881,6 +892,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   cancelApplyRun: "cancel_applications",
   resolveApplyConsentRequest: "internal",
   revokeApplyRunApproval: "cancel_applications",
+  inspectPreparedApplicationPage: "browser_use_application",
   focusPreparedApplicationPage: "continue_application",
   recordApplicationsSentByPerson: "internal",
   submitPreparedApplication: "send_applications",
@@ -897,6 +909,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   applyAssistantResumeRevision: "revise_resume",
   undoAssistantResumeChange: "undo_change",
   extractJobsFromPageText: "collect_page_jobs",
+  addJobFromBrowserPage: "save_page_jobs",
   saveJobsFromPage: "save_page_jobs",
   runResumeRevisionSpecialist: "revise_resume",
 };

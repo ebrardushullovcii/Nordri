@@ -1141,6 +1141,7 @@ function createBenchmarkContext(input: {
     withIntelligenceTransition: (operation) => operation(),
     withCampaignTransition: (operation) => operation(),
     activeResumeVisionRunIds: new Set<string>(),
+    activeResumeEvidenceRunIds: new Set<string>(),
     getWorkspaceSnapshot: () =>
       Promise.reject(
         new Error(

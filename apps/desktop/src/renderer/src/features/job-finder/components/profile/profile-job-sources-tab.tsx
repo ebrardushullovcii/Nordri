@@ -86,6 +86,33 @@ export function parseJobSourceUrls(input: string): {
   for (const rawValue of input.split(/[\n,]+/u)) {
     const value = rawValue.trim();
     if (!value) continue;
+    // Addresses cannot contain literal spaces. A list entered without a
+    // paste event uses the same parser as pasted input.
+    if (/\s/u.test(value)) {
+      const entries = value.split(/\s+/u);
+      let invalidWords: string[] = [];
+      const flushInvalid = () => {
+        if (invalidWords.length) invalid.push(invalidWords.join(" "));
+        invalidWords = [];
+      };
+      for (const entry of entries) {
+        const address =
+          /^https?:\/\//iu.test(entry) || entry.includes(".")
+            ? canonicalSourceUrl(entry)
+            : null;
+        if (!address) {
+          invalidWords.push(entry);
+          continue;
+        }
+        flushInvalid();
+        if (!seen.has(address)) {
+          seen.add(address);
+          urls.push(address);
+        }
+      }
+      flushInvalid();
+      continue;
+    }
     const url = canonicalSourceUrl(value);
     if (!url) {
       invalid.push(value);
@@ -569,8 +596,10 @@ export function ProfileJobSourcesTab(props: ProfileJobSourcesTabProps) {
         </div>
 
         {discoveryTargets.length === 0 ? (
-          <div className="rounded-(--radius-field) border border-(--info-border) bg-(--info-surface) px-4 py-3 text-[0.9rem] leading-6 text-(--info-text)">
-            <p className="font-medium">Add your first public job source</p>
+          <div className="rounded-(--radius-field) border border-dashed border-(--surface-panel-border) px-4 py-3 text-[0.9rem] leading-6 text-foreground-soft">
+            <p className="font-medium text-foreground">
+              Add your first public job source
+            </p>
             <p className="mt-1">
               Add the careers page or job board you would normally browse. It is
               saved and turned on for searches straight away.

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  JobFinderDismissDiscoveryJobInputSchema,
   SavedJobSchema,
   type JobSearchCampaign,
   type SaveJobSearchCampaignInput,
@@ -49,6 +50,31 @@ function deferred() {
 }
 
 describe("not-interested discovery feedback", () => {
+  it("hides and restores one job with no feedback reasons", async () => {
+    const { repository, workspaceService } = createWorkspaceServiceHarness();
+    const job = (await repository.listSavedJobs())[0]!;
+    const hidden = await workspaceService.dismissDiscoveryJob(
+      JobFinderDismissDiscoveryJobInputSchema.parse({
+        jobId: job.id,
+        reasons: [],
+        action: "hide_job",
+      }),
+    );
+    expect(hidden.discoveryJobs.some((entry) => entry.id === job.id)).toBe(
+      false,
+    );
+    expect(
+      hidden.dismissedDiscoveryJobs.find((entry) => entry.id === job.id)
+        ?.discoveryFeedback?.reasons,
+    ).toEqual([]);
+    const restored = await workspaceService.restoreDismissedDiscoveryJob(
+      job.id,
+    );
+    expect(restored.discoveryJobs.some((entry) => entry.id === job.id)).toBe(
+      true,
+    );
+  });
+
   it("atomically hides and excludes only the previewed exact company name", async () => {
     const seed = createSeed();
     seed.searchPreferences = {

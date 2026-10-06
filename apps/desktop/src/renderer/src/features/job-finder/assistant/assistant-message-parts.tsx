@@ -35,6 +35,7 @@ const TARGET_LABELS: Record<string, string> = {
   search_preferences: "Preferences",
   settings: "Settings",
   resume_draft: "Resume",
+  search_plan: "Search plan",
 };
 
 const RECORD_CHANGE_PATTERN = /^(?:Added|Removed) /u;
@@ -192,14 +193,11 @@ function ProposalPart(props: {
         Suggested: {part.summary}
       </span>
       <ul className="grid gap-1 text-[12px] text-muted-foreground">
-        {part.items.slice(0, 8).map((item) => (
-          <li className="line-clamp-2" key={item.id}>
-            {item.label}
+        {part.items.map((item) => (
+          <li className="whitespace-pre-wrap" key={item.id}>
+            {item.detail ? `${item.label}\n${item.detail}` : item.label}
           </li>
         ))}
-        {part.items.length > 8 ? (
-          <li>and {part.items.length - 8} more</li>
-        ) : null}
       </ul>
       {part.status === "pending" ? (
         <div className="flex gap-2">
@@ -231,16 +229,26 @@ function ProposalPart(props: {
   );
 }
 
+function recordsHeading(
+  part: Extract<AssistantMessagePart, { type: "records" }>,
+): string | null {
+  // Saved messages may predate truthful per-row sending receipts.
+  return part.kind === "applications" && part.title === "Sent"
+    ? "Sending results"
+    : part.title;
+}
+
 function RecordsPart(props: {
   part: Extract<AssistantMessagePart, { type: "records" }>;
   actions: AssistantPartActions;
 }) {
   const { part } = props;
+  const heading = recordsHeading(part);
   return (
     <div className="grid gap-1" data-assistant-records={part.kind}>
-      {part.title ? (
+      {heading ? (
         <span className="text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
-          {part.title}
+          {heading}
         </span>
       ) : null}
       <ul className="grid overflow-hidden rounded-(--radius-field) border border-(--control-border)">
@@ -398,6 +406,46 @@ function PlanPart(props: {
   );
 }
 
+/** Repeated reads of the same jobs share one list; the latest read supplies fit. */
+export function consolidateJobLists(
+  parts: readonly AssistantMessagePart[],
+): AssistantMessagePart[] {
+  const result: AssistantMessagePart[] = [];
+  for (const part of parts) {
+    if (part.type !== "records" || part.kind !== "jobs") {
+      result.push(part);
+      continue;
+    }
+    const ids = new Set(part.rows.map((row) => row.id));
+    const previousIndex = result.findIndex(
+      (candidate) =>
+        candidate.type === "records" &&
+        candidate.kind === "jobs" &&
+        (candidate.rows.every((row) => ids.has(row.id)) ||
+          part.rows.every((row) =>
+            candidate.rows.some((saved) => saved.id === row.id),
+          )),
+    );
+    const previous = result[previousIndex];
+    if (previous?.type !== "records") {
+      result.push({
+        ...part,
+        rows: [...new Map(part.rows.map((row) => [row.id, row])).values()],
+      });
+      continue;
+    }
+    const rows = new Map(previous.rows.map((row) => [row.id, row]));
+    for (const row of part.rows) rows.set(row.id, row);
+    const larger = part.rows.length >= previous.rows.length ? part : previous;
+    result[previousIndex] = {
+      ...larger,
+      title: part.title ?? previous.title,
+      rows: [...rows.values()],
+    };
+  }
+  return result;
+}
+
 export function AssistantMessageParts(props: {
   message: AssistantMessage;
   actions: AssistantPartActions;
@@ -405,7 +453,7 @@ export function AssistantMessageParts(props: {
   const { message } = props;
   return (
     <div className="grid gap-2">
-      {message.parts.map((part, index) => {
+      {consolidateJobLists(message.parts).map((part, index) => {
         const key = `${message.id}_${index}`;
         switch (part.type) {
           case "text":

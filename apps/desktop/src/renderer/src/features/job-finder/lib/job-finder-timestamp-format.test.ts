@@ -58,3 +58,16 @@ describe("job finder timestamp clocks", () => {
     });
   });
 });
+
+it("prefers an explicit profile zone over inferred city and falls back for invalid zones", () => {
+  expect(
+    inferProfileTimeZone({
+      timeZone: "America/Los_Angeles",
+      currentLocation: "Denver",
+    }),
+  ).toEqual({ timeZone: "America/Los_Angeles", source: "profile" });
+  expect(
+    inferProfileTimeZone({ timeZone: "Not/A_Zone", currentLocation: "Denver" })
+      .timeZone,
+  ).toBe("America/Denver");
+});

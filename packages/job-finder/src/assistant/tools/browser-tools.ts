@@ -135,9 +135,8 @@ function refuseFinalSend(
   if (
     name === "press_key" &&
     typeof args.key === "string" &&
-    /^enter$/iu.test(args.key) &&
-    observation.actions.some((entry) => entry.kind === "final") &&
-    observation.controls.length > 0
+    args.key.split("+").some((key) => key.toLowerCase() === "enter") &&
+    observation.actions.some((entry) => entry.kind === "final")
   ) {
     return "Pressing Enter in this form could send the application. Sending goes through apply_here and send_applications.";
   }
@@ -164,6 +163,24 @@ function forwardedTool(name: string): AssistantToolDefinition | null {
     async execute(input, context) {
       const lease = await leaseFor(context);
       const tools = pageToolsFor(lease);
+      if (
+        (name === "navigate" ||
+          name === "go_back" ||
+          name === "follow_link" ||
+          name === "click" ||
+          name === "press_key" ||
+          name === "type" ||
+          name === "select" ||
+          name === "set_checkbox") &&
+        (await lease.isApplicationBound()) === true &&
+        (!lease.applicationResultId ||
+          ["navigate", "go_back", "follow_link"].includes(name))
+      ) {
+        throw new AssistantToolError(
+          "refused",
+          "This tab holds a prepared application. Use retry_application with openPage:true to edit its exact form. Use browser_open for unrelated pages.",
+        );
+      }
       if (name !== "observe" && !tools.state.observation) {
         await tools.observe();
       }
@@ -213,7 +230,7 @@ export const browserOpenTool = defineTool({
   name: "browser_open",
   group: "browser",
   description:
-    "Opens an address in the browser for this task: in the lent tab when there is one, otherwise in a new tab the task owns.",
+    "Opens an address in a new task-owned tab, preserving every existing form and attachment. To inspect an existing prepared form, use browser_use_application; never open a blank copy.",
   parameters: json.object({ url: json.string() }, ["url"]),
   input: z.object({ url: z.string().trim().url() }),
   label: () => "Opening a page",
@@ -225,15 +242,62 @@ export const browserOpenTool = defineTool({
         "The browser is not available here.",
       );
     }
-    const lease = await context.session.browserLease({ openUrl: input.url });
+    const lease = await context.session.browserLease({
+      openUrl: input.url,
+      newTab: true,
+    });
     context.session.assertCurrent();
-    const result = await lease.hands.navigate(input.url);
-    if (!result.ok) {
-      throw new AssistantToolError("transient", result.error);
+    await context.ports.browser.show?.();
+    const observation = await pageToolsFor(lease).observe();
+    return {
+      summary: `The new tab shows ${observation.url}. Inspect its fields and files before claiming any form was recovered.`,
+      data: observation,
+    };
+  },
+});
+
+export const browserUseApplicationTool = defineTool({
+  name: "browser_use_application",
+  group: "browser",
+  description:
+    "Inspects the exact retained tab for a saved application, preserving fields and attachments. Never opens or reloads a copy. Use before discussing or editing a prepared form. If its tab cannot be identified, say so; do not claim recovery.",
+  parameters: json.object({ jobId: json.string() }, ["jobId"]),
+  input: z.object({ jobId: Id }),
+  label: () => "Checking the prepared application",
+  effect: "read",
+  async execute(input, context) {
+    const snapshot = await context.service.getWorkspaceSnapshot();
+    const latest = snapshot.applyJobResults
+      .filter((result) => result.jobId === input.jobId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    if (
+      !latest?.applicationRecordId ||
+      !["awaiting_review", "paused", "blocked"].includes(latest.state)
+    ) {
+      throw new AssistantToolError(
+        "refused",
+        "I cannot identify this application's retained tab. Nothing was opened or restored.",
+      );
     }
-    const tools = pageToolsFor(lease);
-    await tools.observe();
-    return { summary: `Opened ${result.url}.` };
+    context.session.assertCurrent();
+    const raw = await context.service.inspectPreparedApplicationPage({
+      jobId: input.jobId,
+      runId: latest.runId,
+      resultId: latest.id,
+      applicationRecordId: latest.applicationRecordId,
+    });
+    context.session.assertCurrent();
+    const observation = await createPageTools(
+      createApplyPageHands({
+        ...TEMPLATE_HANDS,
+        readPage: () => Promise.resolve(raw),
+      }),
+      {},
+    ).observe();
+    return {
+      summary: `Inspected the retained application tab at ${observation.url} with submit windows closed. This inspection is read-only and did not show the page to the person or select it for later browser tools. Use retry_application with openPage:true to show and safely edit this exact form. Report recovery only if its fields and attachment are present.`,
+      data: observation,
+    };
   },
 });
 
@@ -617,6 +681,7 @@ function sameOrigin(left: string, right: string): boolean {
 export const browserTools: AssistantToolDefinition[] = [
   ...FORWARDED,
   browserOpenTool,
+  browserUseApplicationTool,
   browserFindTool,
   browserUploadTool,
   collectPageJobsTool,

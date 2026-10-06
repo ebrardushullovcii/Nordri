@@ -1,17 +1,35 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ToastProvider } from "@renderer/components/ui/toast";
 import { ProfileReadyBanner } from "./profile-ready-banner";
 
-function renderReadyBanner(completionIdentity: string) {
-  return render(
-    <MemoryRouter>
-      <ProfileReadyBanner completionIdentity={completionIdentity} />
-    </MemoryRouter>,
+function readyBanner(completionIdentity: string) {
+  return (
+    <ToastProvider>
+      <MemoryRouter initialEntries={["/job-finder/profile"]}>
+        <Routes>
+          <Route
+            element={
+              <ProfileReadyBanner completionIdentity={completionIdentity} />
+            }
+            path="/job-finder/profile"
+          />
+          <Route
+            element={<p>Find jobs screen</p>}
+            path="/job-finder/discovery"
+          />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
   );
+}
+
+function toastText(): string | null {
+  return document.querySelector("[data-toast]")?.textContent ?? null;
 }
 
 afterEach(() => {
@@ -20,57 +38,40 @@ afterEach(() => {
 });
 
 describe("ProfileReadyBanner", () => {
-  it("scopes completion copy to core setup instead of implying full-profile readiness", () => {
-    renderReadyBanner("candidate_1:completion_1");
+  it("announces core setup as a toast instead of implying full-profile readiness", () => {
+    render(readyBanner("candidate_1:completion_1"));
 
-    expect(screen.getByText("Optional details can stay empty.")).toBeTruthy();
-    expect(
-      screen.queryByText(
-        "Your profile setup is ready for job search. Continue to Find jobs to review matches from your configured sources.",
-      ),
-    ).toBeNull();
-    expect(screen.getByText("Core setup is ready.")).toBeTruthy();
+    expect(toastText()).toContain("Core setup is ready");
+    expect(toastText()).toContain("Optional details can stay empty.");
+    expect(toastText()).not.toContain("ready for job search");
   });
 
-  it("keeps the Find jobs continuation as a router-owned link", () => {
-    renderReadyBanner("candidate_1:completion_1");
-
-    expect(
-      screen
-        .getByRole("link", { name: "Continue to Find jobs" })
-        .getAttribute("href"),
-    ).toBe("/job-finder/discovery");
-  });
-
-  it("dismisses the ready message persistently", () => {
-    const view = renderReadyBanner("candidate_1:completion_1");
+  it("offers Find jobs as the toast's one action", () => {
+    render(readyBanner("candidate_1:completion_1"));
 
     fireEvent.click(
-      screen.getByRole("button", {
-        name: "Dismiss core setup ready message",
-      }),
+      screen.getByRole("button", { name: "Continue to Find jobs" }),
     );
-    expect(screen.queryByText("Core setup is ready.")).toBeNull();
+
+    expect(screen.getByText("Find jobs screen")).toBeTruthy();
+  });
+
+  it("announces a completion only once", () => {
+    const view = render(readyBanner("candidate_1:completion_1"));
+    expect(toastText()).toContain("Core setup is ready");
 
     view.unmount();
-    renderReadyBanner("candidate_1:completion_1");
-    expect(screen.queryByText("Core setup is ready.")).toBeNull();
+    render(readyBanner("candidate_1:completion_1"));
+    expect(toastText()).toBeNull();
   });
 
-  it("shows the continuation again for a different profile completion", () => {
-    const view = renderReadyBanner("candidate_1:completion_1");
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Dismiss core setup ready message",
-      }),
-    );
+  it("announces a different profile completion again", () => {
+    const view = render(readyBanner("candidate_1:completion_1"));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(toastText()).toBeNull();
 
-    view.rerender(
-      <MemoryRouter>
-        <ProfileReadyBanner completionIdentity="candidate_2:completion_2" />
-      </MemoryRouter>,
-    );
+    view.rerender(readyBanner("candidate_2:completion_2"));
 
-    expect(screen.getByText("Core setup is ready.")).toBeTruthy();
+    expect(toastText()).toContain("Core setup is ready");
   });
 });

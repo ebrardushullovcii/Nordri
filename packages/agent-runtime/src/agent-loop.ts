@@ -13,6 +13,8 @@
  *   run needs, so a broken site cannot hold it forever
  * - it trims a long conversation so a run that takes hundreds of steps keeps
  *   fitting, and says what it trimmed
+ * - it shortens old tool answers (mostly page views the model has since moved
+ *   past), so each turn sends the current page rather than every page so far
  *
  * Deciding where to go, what to press, when the goal is met, and what to tell
  * the person is the model's. See ADR 0023.
@@ -64,7 +66,11 @@ export interface AgentLoopModel {
   chatWithTools: (
     messages: AgentLoopMessage[],
     tools: AgentLoopToolDefinition[],
-    options?: { signal?: AbortSignal; maxOutputTokens?: number },
+    options?: {
+      signal?: AbortSignal;
+      maxOutputTokens?: number;
+      parallelToolCalls?: boolean;
+    },
   ) => Promise<{
     content?: string;
     toolCalls?: AgentLoopToolCall[];
@@ -90,6 +96,8 @@ export type AgentLoopToolOutcome =
        * failed attempt still hands its words back to the model.
        */
       status?: "done" | "failed" | "refused";
+      /** Remaining calls were proposed against a page or decision that is no longer current. */
+      stopBatch?: boolean;
     }
   /** The model finished. */
   | { kind: "finish"; finish: AgentLoopFinish }
@@ -157,8 +165,20 @@ export interface AgentLoopOptions {
   describeStall?: () => string | null;
   /** Rough size at which older turns are trimmed. */
   compactionMaxChars?: number;
+  /**
+   * Tool answers older than the most recent few are cut to this many
+   * characters. A page view is out of date once the model has acted again;
+   * it can always look at the page anew. Null keeps every answer whole.
+   */
+  staleToolResultChars?: number | null;
   /** Output cap for one model turn. Omit to use the provider default. */
   modelMaxOutputTokens?: number;
+  parallelToolCalls?: boolean;
+  /** Host supplies a fresh observation after a response batch, if needed. */
+  afterToolBatch?: () => Promise<string | null>;
+  onHistoryCompacted?: () => string | null;
+  /** Called for every attempted tool, including failures. */
+  onToolTiming?: (step: { toolName: string; durationMs: number }) => void;
   signal?: AbortSignal;
   now?: () => Date;
 }
@@ -199,6 +219,16 @@ const DEFAULT_MODEL_TURN_TIMEOUT_MS = 240_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000;
 const DEFAULT_COMPACTION_MAX_CHARS = 360_000;
 const COMPACTION_KEEP_RECENT = 14;
+const DEFAULT_STALE_TOOL_RESULT_CHARS = 700;
+/** Tool answers kept whole, counted from the newest. */
+const STALE_TOOL_RESULT_KEEP_RECENT = 4;
+/**
+ * Old answers are shortened a few at a time, so the conversation's start
+ * stays the same for several turns and the provider's prompt cache holds.
+ */
+const STALE_TOOL_RESULT_BATCH = 4;
+const STALE_TOOL_RESULT_NOTE =
+  "[Older answer shortened to save room. Look again for the page as it is now.]";
 
 const RETRYABLE_MODEL_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
@@ -283,6 +313,47 @@ function compactMessages(
   ];
 }
 
+/**
+ * Cuts tool answers older than the most recent few down to their opening
+ * lines, which say what the step did and where it landed. Answers already
+ * short enough, and the opening messages, stay as they are.
+ */
+function shortenStaleToolResults(
+  messages: AgentLoopMessage[],
+  openingCount: number,
+  maxChars: number,
+): AgentLoopMessage[] {
+  const stale: number[] = [];
+  let seen = 0;
+  for (let index = messages.length - 1; index >= openingCount; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "tool") continue;
+    seen += 1;
+    if (
+      seen > STALE_TOOL_RESULT_KEEP_RECENT &&
+      message.content.length > maxChars + STALE_TOOL_RESULT_NOTE.length + 2
+    ) {
+      stale.push(index);
+    }
+  }
+  if (stale.length < STALE_TOOL_RESULT_BATCH) {
+    return messages;
+  }
+  const next = [...messages];
+  for (const index of stale) {
+    const message = next[index];
+    if (message?.role !== "tool") continue;
+    const head = message.content.slice(0, maxChars);
+    const lineEnd = head.lastIndexOf("\n");
+    const cut = lineEnd > maxChars / 2 ? head.slice(0, lineEnd) : head;
+    next[index] = {
+      ...message,
+      content: `${cut.trimEnd()}\n${STALE_TOOL_RESULT_NOTE}`,
+    };
+  }
+  return next;
+}
+
 export async function runAgentLoop(
   options: AgentLoopOptions,
 ): Promise<AgentLoopResult> {
@@ -315,6 +386,10 @@ export async function runAgentLoop(
   );
   const compactionMaxChars =
     options.compactionMaxChars ?? DEFAULT_COMPACTION_MAX_CHARS;
+  const staleToolResultChars =
+    options.staleToolResultChars === undefined
+      ? DEFAULT_STALE_TOOL_RESULT_CHARS
+      : options.staleToolResultChars;
 
   let messages: AgentLoopMessage[] = [...options.messages];
   const openingCount = messages.length;
@@ -428,6 +503,9 @@ export async function runAgentLoop(
         response = await Promise.race([
           options.model.chatWithTools(messages, definitions, {
             signal: turnSignal,
+            ...(options.parallelToolCalls === undefined
+              ? {}
+              : { parallelToolCalls: options.parallelToolCalls }),
             ...(options.modelMaxOutputTokens
               ? { maxOutputTokens: options.modelMaxOutputTokens }
               : {}),
@@ -510,12 +588,15 @@ export async function runAgentLoop(
     });
 
     let ended: AgentLoopResult | null = null;
+    let batchStopped = false;
     for (const toolCall of toolCalls) {
-      if (ended) {
+      if (ended || batchStopped) {
         messages.push({
           role: "tool",
           toolCallId: toolCall.id,
-          content: "The run ended before this step was reached.",
+          content: ended
+            ? "The run ended before this step was reached."
+            : "This batch stopped before this call. Decide again from the fresh page observation.",
         });
         continue;
       }
@@ -546,6 +627,7 @@ export async function runAgentLoop(
       }
       const tool = toolsByName.get(toolCall.function.name);
       if (!tool) {
+        batchStopped = options.afterToolBatch !== undefined;
         messages.push({
           role: "tool",
           toolCallId: toolCall.id,
@@ -570,6 +652,7 @@ export async function runAgentLoop(
           consecutiveBrowserFailures = 0;
         }
       } catch (error) {
+        batchStopped = options.afterToolBatch !== undefined;
         if (
           (error instanceof DOMException && error.name === "AbortError") ||
           options.signal?.aborted
@@ -647,11 +730,20 @@ export async function runAgentLoop(
         });
         continue;
       } finally {
-        toolMs += now().getTime() - toolStartedAt;
+        const durationMs = Math.max(0, now().getTime() - toolStartedAt);
+        toolMs += durationMs;
+        options.onToolTiming?.({
+          toolName: toolCall.function.name,
+          durationMs,
+        });
       }
 
       switch (outcome.kind) {
         case "ok": {
+          batchStopped =
+            outcome.stopBatch === true ||
+            outcome.status === "refused" ||
+            outcome.status === "failed";
           if (outcome.progress) {
             markProgress();
           }
@@ -705,12 +797,48 @@ export async function runAgentLoop(
     if (ended) {
       return ended;
     }
+    let observation: string | null = null;
+    if (options.afterToolBatch) {
+      const start = now().getTime();
+      try {
+        observation = await withToolDeadline(
+          options.afterToolBatch(),
+          toolTimeoutMs,
+          options.signal,
+        );
+      } catch {
+        if (options.signal?.aborted)
+          return result(
+            "aborted",
+            `Job Finder stopped work on ${options.subjectLabel} before it was finished.`,
+          );
+        observation =
+          "The page could not be read after the batch. Observe again before any write.";
+      } finally {
+        const durationMs = Math.max(0, now().getTime() - start);
+        toolMs += durationMs;
+        options.onToolTiming?.({ toolName: "observe_after_batch", durationMs });
+      }
+    }
+    if (observation) messages.push({ role: "user", content: observation });
+    if (staleToolResultChars !== null) {
+      messages = shortenStaleToolResults(
+        messages,
+        openingCount,
+        staleToolResultChars,
+      );
+    }
+    const beforeCompaction = messages;
     messages = compactMessages(
       messages,
       openingCount,
       turnNotes,
       compactionMaxChars,
     );
+    if (messages !== beforeCompaction) {
+      const context = options.onHistoryCompacted?.();
+      if (context) messages.push({ role: "user", content: context });
+    }
   }
 
   return result(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ResumeBatchCheckpointSchema } from "./resume";
 
 import {
   IsoDateTimeSchema,
@@ -1283,6 +1284,22 @@ export const SimultaneousApplicationConflictSchema = z
     id: NonEmptyStringSchema,
     applicationRecordId: NonEmptyStringSchema,
     conflictingApplicationRecordId: NonEmptyStringSchema,
+    companyKey: NonEmptyStringSchema.optional(),
+    companyName: NonEmptyStringSchema.optional(),
+    jobIds: z.array(NonEmptyStringSchema).min(2).optional(),
+    allowedPairs: z
+      .array(
+        z
+          .object({
+            jobIds: z
+              .tuple([NonEmptyStringSchema, NonEmptyStringSchema])
+              .refine((ids) => ids[0] !== ids[1]),
+            decidedAt: IsoDateTimeSchema,
+            revokedAt: IsoDateTimeSchema.nullable(),
+          })
+          .strict(),
+      )
+      .optional(),
     status: SimultaneousApplicationConflictStatusSchema.default("detected"),
     explanation: NonEmptyStringSchema,
     recoveryGuidance: NonEmptyStringSchema,
@@ -1655,6 +1672,16 @@ export const SafeguardMutationInputSchema = z
   .discriminatedUnion("type", [
     z
       .object({
+        type: z.literal("decide_same_company_send_pair"),
+        conflictId: NonEmptyStringSchema,
+        jobIds: z
+          .tuple([NonEmptyStringSchema, NonEmptyStringSchema])
+          .refine((ids) => ids[0] !== ids[1]),
+        allow: z.boolean(),
+      })
+      .strict(),
+    z
+      .object({
         type: z.literal("apply_company_application_evidence"),
         evidence: z.array(companyCapEvidenceSchema).max(2_000),
         config: CompanyCapConfigSchema,
@@ -1878,6 +1905,8 @@ export const JobFinderIntelligenceStateSchema = z
     outcomeEvents: z.array(OutcomeEventSchema).max(100_000).default([]),
     outcomeAnalytics: OutcomeAnalyticsOverviewSchema.nullable().default(null),
     resumeStrategies: z.array(ResumeStrategySchema).max(200).default([]),
+    resumeBatchCheckpoint: ResumeBatchCheckpointSchema.nullable().optional(),
+    resumeBatchCheckpoints: z.array(ResumeBatchCheckpointSchema).optional(),
     resumeStrategySelections: z
       .array(ResumeStrategySelectionSchema)
       .max(10_000)

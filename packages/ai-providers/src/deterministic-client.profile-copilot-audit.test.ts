@@ -13,7 +13,7 @@ describe('deterministic ai client profile copilot audit flows', () => {
         githubUrl: null,
         linkedinUrl: null,
         timeZone: null,
-        links: [{ id: 'link_github', label: 'GitHub', url: 'https://github.com/ebrardushullovcii', kind: 'github', isDraft: false }],
+        links: [{ id: 'link_github', label: 'GitHub', url: 'https://github.com/elian-morava-example', kind: 'github', isDraft: false }],
         workEligibility: { ...createProfile().workEligibility, requiresVisaSponsorship: null, remoteEligible: null },
       },
       searchPreferences: { ...createPreferences(), workModes: [], targetSalaryUsd: null },
@@ -25,7 +25,7 @@ describe('deterministic ai client profile copilot audit flows', () => {
     expect(reply.patchGroups[0]).toEqual(expect.objectContaining({ summary: 'Fill safe inferred profile details', applyMode: 'applied' }))
     expect(reply.patchGroups[0]?.operations[0]).toEqual({
       operation: 'replace_identity_fields',
-      value: { timeZone: 'Europe/Belgrade', githubUrl: 'https://github.com/ebrardushullovcii' },
+      value: { timeZone: 'Europe/Belgrade', githubUrl: 'https://github.com/elian-morava-example' },
     })
     expect(reply.content).toContain('Top missing or still-unclear fields')
     expect(reply.content).toContain('visa sponsorship preference')
@@ -40,11 +40,11 @@ describe('deterministic ai client profile copilot audit flows', () => {
       searchPreferences: createPreferences(),
       context: { surface: 'profile', section: 'preferences' },
       relevantReviewItems: [],
-      request: 'https://github.com/ebrardushullovcii',
+      request: 'https://github.com/elian-morava-example',
     })
 
     expect(reply.patchGroups[0]).toEqual(expect.objectContaining({ summary: 'Update GitHub URL', applyMode: 'applied' }))
-    expect(reply.patchGroups[0]?.operations[0]).toEqual({ operation: 'replace_identity_fields', value: { githubUrl: 'https://github.com/ebrardushullovcii' } })
+    expect(reply.patchGroups[0]?.operations[0]).toEqual({ operation: 'replace_identity_fields', value: { githubUrl: 'https://github.com/elian-morava-example' } })
   })
 
   test('can save an explicitly labeled website url', async () => {
@@ -55,11 +55,11 @@ describe('deterministic ai client profile copilot audit flows', () => {
       searchPreferences: createPreferences(),
       context: { surface: 'profile', section: 'preferences' },
       relevantReviewItems: [],
-      request: 'set my website to https://ebrar.dev',
+      request: 'set my website to https://elian-morava.example',
     })
 
     expect(reply.patchGroups[0]).toEqual(expect.objectContaining({ summary: 'Update personal website', applyMode: 'applied' }))
-    expect(reply.patchGroups[0]?.operations[0]).toEqual({ operation: 'replace_identity_fields', value: { personalWebsiteUrl: 'https://ebrar.dev' } })
+    expect(reply.patchGroups[0]?.operations[0]).toEqual({ operation: 'replace_identity_fields', value: { personalWebsiteUrl: 'https://elian-morava.example' } })
   })
 
   test('does not auto-apply an unlabeled non-profile url', async () => {

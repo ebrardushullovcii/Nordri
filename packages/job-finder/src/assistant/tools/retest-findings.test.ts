@@ -22,6 +22,7 @@ import { resolveNeedsYouTool } from "./workspace-tools";
 
 const session = {
   assertCurrent: () => undefined,
+  assertPersonAnswerAuthority: () => Promise.resolve(),
   createId: () => "id_1",
   watchRun: () => Promise.resolve(),
   grants: { list: () => Promise.resolve([]) },
@@ -175,6 +176,7 @@ describe("answers the person gives through Needs you (R7)", () => {
         service: {
           getWorkspaceSnapshot: () => Promise.resolve(snapshot),
           performUserAction,
+          getApplyRunDetails: () => Promise.resolve({ questionRecords: [] }),
         } as never,
         session,
         ports: {} as AssistantHostPorts,

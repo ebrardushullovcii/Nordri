@@ -4,7 +4,10 @@ import {
 } from "@nordri/contracts";
 import { describe, expect, test, vi } from "vitest";
 
-import { createApplicationLetterProvider } from "./application-letter-provider";
+import {
+  ApplicationLetterGroundingError,
+  createApplicationLetterProvider,
+} from "./application-letter-provider";
 
 /**
  * One application, one letter.
@@ -265,4 +268,64 @@ describe("the saved letter preference", () => {
       CoverLetterPreferenceSchema.parse(older.coverLetter ?? {}).tone,
     ).toBe("plain_professional");
   });
+});
+
+test("an unsupported letter is handed back with its reason and is never rendered", async () => {
+  const renderLetter = vi.fn();
+  const letterProvider = provider({
+    writeLetter: async () => {
+      throw new ApplicationLetterGroundingError(
+        "The claimed result is not in your profile or resume.",
+        "Draft needing review",
+      );
+    },
+    renderLetter,
+  });
+  expect(
+    await letterProvider.provide({
+      ...REQUEST,
+      delivery: "file",
+      fileType: "pdf",
+    }),
+  ).toEqual({
+    ok: false,
+    reason:
+      "The letter needs your review: The claimed result is not in your profile or resume.",
+    draftText: "Draft needing review",
+  });
+  expect(renderLetter).not.toHaveBeenCalled();
+});
+
+test("renders the person's approved letter word for word without writing or checking it again", async () => {
+  const writeLetter = vi
+    .fn()
+    .mockRejectedValue(new Error("Must not rewrite approved text"));
+  const renderLetter = vi.fn(({ text }: { text: string }) =>
+    Promise.resolve({
+      ok: true as const,
+      fileName: "letter.pdf",
+      mimeType: "application/pdf",
+      loadBytes: () => Promise.resolve(new TextEncoder().encode(text)),
+    }),
+  );
+  const letters = provider({ writeLetter, renderLetter });
+  const approvedText =
+    "I enjoy building dependable platforms.\nI can work 20 hours a week from Manchester.\n";
+  const result = await letters.provide({
+    ...REQUEST,
+    approvedText,
+    delivery: "file",
+    fileType: "pdf",
+  });
+  expect(writeLetter).not.toHaveBeenCalled();
+  expect(renderLetter).toHaveBeenCalledWith(
+    expect.objectContaining({ text: approvedText, fileType: "pdf" }),
+  );
+  if (!result.ok || !result.document)
+    throw new Error("Expected approved letter file");
+  expect(new TextDecoder().decode(await result.document.loadBytes())).toBe(
+    approvedText,
+  );
+  // Named as the person's letter, not "v1" of this run.
+  expect(result.document.label).toBe("Cover letter you approved");
 });

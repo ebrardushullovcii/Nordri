@@ -1,0 +1,603 @@
+import { app } from "electron";
+import { describe, expect, test, vi } from "vitest";
+import { EmbeddedBrowser } from "./embedded-browser";
+
+vi.mock("electron", () => ({
+  app: {
+    getAppMetrics: vi.fn(() => [{ pid: 100, memory: { workingSetSize: 0 } }]),
+  },
+  BrowserWindow: class {},
+  dialog: {},
+  screen: {},
+  session: {},
+  WebContentsView: class {},
+}));
+
+function makeBrowser() {
+  const browser = new EmbeddedBrowser();
+  const state = browser as unknown as {
+    pageMap: Map<
+      string,
+      { id: string; contents: ReturnType<typeof makeContents> }
+    >;
+    activeTabId: string | null;
+    parkedTabs: Map<string, null>;
+    heldTabs: Map<string, string[]>;
+    personTabs: Set<string>;
+    ownedTabs: Map<string, Set<string>>;
+    closeReleasedOwnedTabs(): void;
+    operations: Map<AbortController, string>;
+    operationClaims: Map<
+      AbortController,
+      { id: string; owner: null; tabs: Set<string> }
+    >;
+  };
+  const ids = [
+    "failed",
+    "search",
+    "prepared",
+    "parked",
+    "held",
+    "person",
+    "working",
+  ];
+  const pages = new Map(ids.map((id) => [id, makeContents(id)]));
+  for (const [id, contents] of pages) state.pageMap.set(id, { id, contents });
+  state.activeTabId = "failed";
+  return { browser, state, pages };
+}
+
+function makeContents(id: string) {
+  let closed = false;
+  return {
+    isDestroyed: () => closed,
+    getOSProcessId: () => 100,
+    debugger: {
+      isAttached: () => true,
+      sendCommand: vi.fn(() => Promise.resolve()),
+    },
+    getTitle: () => id,
+    getURL: () => `https://jobs.example/${id}`,
+    isLoading: () => false,
+    setBackgroundThrottling: vi.fn(),
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+    mainFrame: {
+      framesInSubtree: [{ executeJavaScript: vi.fn(() => Promise.resolve()) }],
+    },
+    executeJavaScript: vi.fn(() =>
+      Promise.resolve({ title: id, bodyText: "Application received" }),
+    ),
+    close: vi.fn(() => {
+      closed = true;
+    }),
+  };
+}
+
+describe("embedded browser tab state", () => {
+  test("releasing a finished owner closes its own tabs, never one the person has", () => {
+    const { browser, state, pages } = makeBrowser();
+    state.ownedTabs.set("sent_result", new Set(["failed", "held", "parked"]));
+    state.ownedTabs.set("waiting_result", new Set(["prepared"]));
+    state.heldTabs.set("held", ["sent_result"]);
+    state.parkedTabs.set("parked", null);
+    browser.releaseOwnedTabs("sent_result");
+    expect(pages.get("failed")?.close).toHaveBeenCalledOnce();
+    expect(pages.get("held")?.close).not.toHaveBeenCalled();
+    expect(pages.get("parked")?.close).not.toHaveBeenCalled();
+    expect(pages.get("prepared")?.close).not.toHaveBeenCalled();
+    expect(state.ownedTabs.has("sent_result")).toBe(false);
+  });
+
+  test("a form the person opened to finish becomes their tab when it is sent", () => {
+    const { browser, state, pages } = makeBrowser();
+    state.ownedTabs.set("sent_result", new Set(["prepared"]));
+    browser.releaseOwnedTabs("sent_result", { keepForPerson: true });
+    expect(pages.get("prepared")?.close).not.toHaveBeenCalled();
+    expect(state.personTabs.has("prepared")).toBe(true);
+    expect(state.ownedTabs.has("sent_result")).toBe(false);
+  });
+
+  test("an owner release waits until the operation using its tab ends", () => {
+    const { browser, state, pages } = makeBrowser();
+    const controller = new AbortController();
+    state.ownedTabs.set("result", new Set(["working"]));
+    state.operationClaims.set(controller, {
+      id: "active",
+      owner: null,
+      tabs: new Set(["working"]),
+    });
+    browser.releaseOwnedTabs("result");
+    expect(pages.get("working")?.close).not.toHaveBeenCalled();
+    state.operationClaims.delete(controller);
+    state.closeReleasedOwnedTabs();
+    expect(pages.get("working")?.close).toHaveBeenCalledOnce();
+  });
+
+  test("a retry transfers ownership so releasing the old result cannot close the form", () => {
+    const { browser, state, pages } = makeBrowser();
+    state.ownedTabs.set("previous_result", new Set(["prepared"]));
+    browser.transferOwnedTabs("previous_result", "retry_result");
+    browser.releaseOwnedTabs("previous_result");
+    expect(pages.get("prepared")?.close).not.toHaveBeenCalled();
+    browser.releaseOwnedTabs("retry_result");
+    expect(pages.get("prepared")?.close).toHaveBeenCalledOnce();
+  });
+
+  test("a retry reclaims its held page without reclaiming unrelated tabs", async () => {
+    const { browser, state } = makeBrowser();
+    state.ownedTabs.set("result", new Set(["held"]));
+    state.heldTabs.set("held", ["result"]);
+    state.heldTabs.set("prepared", ["other_result"]);
+    state.personTabs.add("held");
+    vi.spyOn(browser, "getOpenBrowser").mockResolvedValue(null);
+    await browser.reclaimOwnedTabs("result");
+    expect(state.heldTabs.has("held")).toBe(false);
+    expect(state.personTabs.has("held")).toBe(false);
+    expect(state.heldTabs.has("prepared")).toBe(true);
+  });
+
+  test("sign-in attention follows its tab instead of the active public listing", async () => {
+    const { browser } = makeBrowser();
+    browser.requestAttention(
+      {
+        kind: "sign_in",
+        title: "Sign in to continue: Example Jobs",
+        detail: "Sign in here.",
+      },
+      "failed",
+    );
+    expect(browser.getState().attention?.title).toContain("Example Jobs");
+    await browser.command({ type: "select_tab", tabId: "person" });
+    expect(browser.getState().attention).toBeNull();
+    await browser.command({ type: "select_tab", tabId: "failed" });
+    expect(browser.getState().attention?.kind).toBe("sign_in");
+  });
+
+  test("cleanup closes only finished tabs and preserves unsent forms and occupied tabs", async () => {
+    const { browser, state, pages } = makeBrowser();
+    state.parkedTabs.set("parked", null);
+    state.heldTabs.set("held", []);
+    state.personTabs.add("person");
+    state.operationClaims.set(new AbortController(), {
+      id: "active",
+      owner: null,
+      tabs: new Set(["working"]),
+    });
+    browser.markFinishedTabs([
+      "failed",
+      "search",
+      "parked",
+      "held",
+      "person",
+      "working",
+    ]);
+    await browser.command({ type: "close_finished_tabs" });
+    expect(pages.get("failed")?.close).toHaveBeenCalledOnce();
+    expect(pages.get("search")?.close).toHaveBeenCalledOnce();
+    for (const id of ["prepared", "parked", "held", "person", "working"])
+      expect(pages.get(id)?.close).not.toHaveBeenCalled();
+  });
+});
+
+test("waiting forms release working capacity but a resumed form counts again", () => {
+  const { browser, state } = makeBrowser();
+  state.ownedTabs.set("prepared_result", new Set(["prepared"]));
+  state.parkedTabs.set("parked", null);
+  expect(browser.openTabCount()).toBe(7);
+  expect(browser.workingTabCount()).toBe(5);
+  state.operationClaims.set(new AbortController(), {
+    id: "resuming",
+    owner: null,
+    tabs: new Set(["prepared"]),
+  });
+  expect(browser.workingTabCount()).toBe(6);
+});
+
+test("opening a new reading tab leaves the active application's operation running", async () => {
+  const { browser, state } = makeBrowser();
+  const controller = new AbortController();
+  state.activeTabId = "working";
+  state.operations.set(controller, "Preparing application");
+  state.operationClaims.set(controller, {
+    id: "application",
+    owner: null,
+    tabs: new Set(["working"]),
+  });
+  const open = vi
+    .spyOn(
+      browser as unknown as { openPersonTab(url: string): void },
+      "openPersonTab",
+    )
+    .mockImplementation(() => undefined);
+  await browser.command({ type: "new_tab" });
+  expect(open).toHaveBeenCalledWith("about:blank");
+  expect(controller.signal.aborted).toBe(false);
+  expect(state.heldTabs.has("working")).toBe(false);
+});
+
+test("eight working and eight waiting tabs reach the total cap", () => {
+  const { browser, state } = makeBrowser();
+  state.pageMap.clear();
+  for (let i = 0; i < 16; i++) {
+    const id = `tab_${i}`;
+    state.pageMap.set(id, { id, contents: makeContents(id) });
+    if (i < 8) state.ownedTabs.set(`waiting_${i}`, new Set([id]));
+  }
+  expect(browser.workingTabCount()).toBe(8);
+  expect(
+    (browser as unknown as { hasTabCapacity(): boolean }).hasTabCapacity(),
+  ).toBe(false);
+  state.pageMap.delete("tab_15");
+  expect(browser.workingTabCount()).toBe(7);
+  expect(
+    (browser as unknown as { hasTabCapacity(): boolean }).hasTabCapacity(),
+  ).toBe(true);
+});
+
+test.each(["pointer", "key"] as const)(
+  "a person's own %s input unlocks an idle waiting form and its receipt read",
+  async (kind) => {
+    const { browser, state, pages } = makeBrowser();
+    const native = browser as unknown as {
+      handleUserInput(
+        id: string,
+        kind: "pointer" | "key",
+        key?: { code: string; key: string },
+      ): void;
+      isPointerOverPage(): boolean;
+    };
+    vi.spyOn(native, "isPointerOverPage").mockReturnValue(true);
+    state.ownedTabs.set("waiting_result", new Set(["prepared"]));
+    native.handleUserInput("prepared", kind, { code: "Enter", key: "Enter" });
+    expect(
+      pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
+    ).toHaveBeenCalledWith(
+      expect.stringContaining("finalActionAllowed = true"),
+    );
+    expect(
+      await browser.readApplicationPageWithPerson("waiting_result"),
+    ).toMatchObject({ bodyText: "Application received" });
+    expect(
+      await browser.readApplicationPageWithPerson("other_result"),
+    ).toBeNull();
+  },
+);
+
+test.each(["pointer", "key"] as const)(
+  "automation %s input cannot unlock the person's send guard",
+  async (kind) => {
+    const { browser, state, pages } = makeBrowser();
+    const native = browser as unknown as {
+      handleUserInput(
+        id: string,
+        kind: "pointer" | "key",
+        key?: { code: string; key: string },
+      ): void;
+      agentPresses: {
+        notePress(id: string): void;
+        noteKey(id: string, key: { code: string; key: string }): void;
+      };
+    };
+    state.ownedTabs.set("waiting_result", new Set(["prepared"]));
+    if (kind === "pointer") native.agentPresses.notePress("prepared");
+    else
+      native.agentPresses.noteKey("prepared", { code: "Enter", key: "Enter" });
+    native.handleUserInput("prepared", kind, { code: "Enter", key: "Enter" });
+    expect(
+      pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
+    ).not.toHaveBeenCalled();
+    expect(
+      await browser.readApplicationPageWithPerson("waiting_result"),
+    ).toBeNull();
+  },
+);
+
+test("close finished tabs explains when there is nothing eligible", async () => {
+  const { browser } = makeBrowser();
+  await browser.command({ type: "close_finished_tabs" });
+  expect(browser.getState().attention?.title).toBe("No finished tabs to close");
+  expect(browser.getState().attention?.detail).toContain("Close a tab");
+});
+
+test("handing a native-owned form back closes its person guard before automation can use it", async () => {
+  const { browser, state, pages } = makeBrowser();
+  state.ownedTabs.set("result", new Set(["prepared"]));
+  const native = browser as unknown as {
+    handleUserInput(
+      id: string,
+      kind: "key",
+      key: { code: string; key: string },
+    ): void;
+  };
+  native.handleUserInput("prepared", "key", { code: "Enter", key: "Enter" });
+  vi.spyOn(browser, "getOpenBrowser").mockResolvedValue(null);
+  await browser.reclaimOwnedTabs("result");
+  expect(
+    pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
+  ).toHaveBeenLastCalledWith(
+    expect.stringContaining("finalActionAllowed = false"),
+  );
+  expect(await browser.readApplicationPageWithPerson("result")).toBeNull();
+});
+
+test("prepared tabs identify the job even when the site gives them identical titles", () => {
+  const { browser, pages } = makeBrowser();
+  browser.setApplicationTabLabel(
+    "prepared",
+    "Senior Learning Coordinator",
+    "Clientnest Cobalt",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("Senior Learning Coordinator · Clientnest Cobalt");
+  pages.get("prepared")!.getURL = () => "https://example.test/another-page";
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("prepared");
+});
+
+test.each(["record", "top_bar", "tab_picker"] as const)(
+  "showing a prepared form through %s leaves it bound to its application until the person acts",
+  async (entry) => {
+    // Handing the page over on sight released it from its application, which
+    // recorded the prepared form as closed ("Could not apply") and lost the
+    // person's own send. The page is handed over on their first input instead.
+    const { browser, state, pages } = makeBrowser();
+    state.ownedTabs.set("ready_result", new Set(["prepared"]));
+    state.activeTabId = "prepared";
+    if (entry === "record") browser.showTab("prepared");
+    else if (entry === "top_bar") await browser.command({ type: "open" });
+    else {
+      await browser.command({ type: "open" });
+      await browser.command({ type: "select_tab", tabId: "prepared" });
+    }
+    expect(state.heldTabs.has("prepared")).toBe(false);
+    expect(state.ownedTabs.get("ready_result")?.has("prepared")).toBe(true);
+    expect(
+      pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
+    ).not.toHaveBeenCalledWith(
+      expect.stringContaining("finalActionAllowed = true"),
+    );
+  },
+);
+
+test("opening the browser to watch a working application does not open its Send guard", async () => {
+  const { browser, state, pages } = makeBrowser();
+  state.ownedTabs.set("ready_result", new Set(["prepared"]));
+  state.activeTabId = "prepared";
+  const controller = new AbortController();
+  state.operations.set(controller, "Preparing application");
+  state.operationClaims.set(controller, {
+    id: "prepare",
+    owner: null,
+    tabs: new Set(["prepared"]),
+  });
+  await browser.command({ type: "open" });
+  expect(
+    pages.get("prepared")?.mainFrame.framesInSubtree[0]?.executeJavaScript,
+  ).not.toHaveBeenCalled();
+  expect(controller.signal.aborted).toBe(false);
+});
+
+test("a prepared tab is ready without Resume when another tab was handed over", async () => {
+  const { browser, state } = makeBrowser();
+  state.heldTabs.set("held", ["old_result"]);
+  state.ownedTabs.set("ready_result", new Set(["prepared"]));
+  state.activeTabId = "prepared";
+  await browser.command({ type: "open" });
+  expect(browser.getState()).toMatchObject({
+    phase: "ready",
+    automationPaused: false,
+    activeTabId: "prepared",
+  });
+  await browser.command({ type: "select_tab", tabId: "held" });
+  expect(browser.getState()).toMatchObject({
+    phase: "paused",
+    automationPaused: true,
+    activeTabId: "held",
+  });
+  state.heldTabs.set("held", []); // The person finished a prepared page; no task is interrupted.
+  expect(browser.getState()).toMatchObject({
+    phase: "ready",
+    automationPaused: false,
+  });
+});
+
+test("a background application does not label the selected prepared tab as working", async () => {
+  const { browser, state } = makeBrowser();
+  state.activeTabId = "prepared";
+  const controller = new AbortController();
+  state.operations.set(controller, "Preparing another application");
+  state.operationClaims.set(controller, {
+    id: "another",
+    owner: null,
+    tabs: new Set(["working"]),
+  });
+  await browser.command({ type: "open" });
+  expect(browser.getState()).toMatchObject({ phase: "ready", activity: null });
+  await browser.command({ type: "select_tab", tabId: "working" });
+  expect(browser.getState()).toMatchObject({
+    phase: "working",
+    activity: "Preparing another application",
+  });
+});
+
+test("same-title tabs include place and distinguish the same place by reference", () => {
+  const { browser } = makeBrowser();
+  browser.setApplicationTabLabel(
+    "prepared",
+    "Engineer",
+    "Synthetic",
+    "London",
+    "abc123",
+  );
+  browser.setApplicationTabLabel(
+    "failed",
+    "Engineer",
+    "Synthetic",
+    "Manchester",
+    "def456",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("London · Engineer · Synthetic");
+  browser.setApplicationTabLabel(
+    "failed",
+    "Engineer",
+    "Synthetic",
+    "London",
+    "def456",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("abc123 · London · Engineer · Synthetic");
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "failed")?.title,
+  ).toBe("def456 · London · Engineer · Synthetic");
+  browser.setApplicationTabLabel(
+    "failed",
+    "Engineer",
+    "Synthetic",
+    "London",
+    "abc123",
+  );
+  const titles = browser
+    .getState()
+    .tabs.filter((tab) => ["prepared", "failed"].includes(tab.id))
+    .map((tab) => tab.title);
+  expect(new Set(titles).size).toBe(2);
+});
+
+test("a general-browser send prompt requires recent person input and never claims a send", () => {
+  const { browser, state: browserState } = makeBrowser();
+  browserState.ownedTabs.set("result", new Set(["prepared"]));
+  browser.setApplicationTabLabel("prepared", "Engineer", "Synthetic", "London");
+  const state = browser as unknown as {
+    personInputAt: Map<string, number>;
+    noteUnboundSend(id: string): void;
+  };
+  state.noteUnboundSend("person");
+  expect(browser.getState().unboundSendNotice).toBeNull();
+  state.personInputAt.set("person", Date.now());
+  state.noteUnboundSend("person");
+  expect(browser.getState().unboundSendNotice?.tabId).toBe("person");
+  const previous = browser.getState().unboundSendNotice?.id;
+  state.personInputAt.set("prepared", Date.now());
+  state.noteUnboundSend("prepared");
+  expect(browser.getState().unboundSendNotice?.id).toBe(previous);
+  browserState.ownedTabs.set("search", new Set(["person"]));
+  state.personInputAt.set("person", Date.now());
+  state.noteUnboundSend("person");
+  expect(browser.getState().unboundSendNotice?.id).not.toBe(previous);
+});
+
+test("ending an application loan returns the person's own send control", async () => {
+  const { browser, pages, state } = makeBrowser();
+  state.personTabs.add("prepared");
+  const execute =
+    pages.get("prepared")!.mainFrame.framesInSubtree[0]!.executeJavaScript;
+  await browser.lendTab("prepared");
+  expect(execute).toHaveBeenLastCalledWith(
+    expect.stringContaining("state.finalActionAllowed = false"),
+  );
+  browser.endLoan("prepared");
+  expect(browser.isTabLent("prepared")).toBe(false);
+  expect(execute).toHaveBeenLastCalledWith(
+    expect.stringContaining("state.finalActionAllowed = true"),
+  );
+});
+
+test("waiting forms are throttled while an unrelated search works and unthrottled only when claimed", () => {
+  const { browser, state } = makeBrowser();
+  state.ownedTabs.set("result", new Set(["prepared"]));
+  const controller = new AbortController();
+  state.operations.set(controller, "search");
+  state.operationClaims.set(controller, {
+    id: "search",
+    owner: null,
+    tabs: new Set(["search"]),
+  });
+  const policy = browser as unknown as {
+    shouldThrottleTab(id: string): boolean;
+  };
+  expect(policy.shouldThrottleTab("prepared")).toBe(true);
+  expect(policy.shouldThrottleTab("search")).toBe(false);
+  state.operationClaims.get(controller)!.tabs.add("prepared");
+  expect(policy.shouldThrottleTab("prepared")).toBe(false);
+});
+
+test("memory pressure collects garbage without closing forms and admits work when memory falls", async () => {
+  const { browser, state, pages } = makeBrowser();
+  state.ownedTabs.set("result", new Set(["prepared"]));
+  const metrics = vi.spyOn(app, "getAppMetrics");
+  metrics.mockReturnValue([
+    { pid: 100, memory: { workingSetSize: 800 * 1024 } },
+  ] as ReturnType<typeof app.getAppMetrics>);
+  expect(browser.hasAutomationTabCapacity()).toBe(false);
+  const before = await browser.reduceWaitingFormMemory();
+  expect(before.overBudget).toBe(true);
+  expect(pages.get("prepared")!.debugger.sendCommand).toHaveBeenCalledWith(
+    "HeapProfiler.collectGarbage",
+  );
+  expect(pages.get("prepared")!.close).not.toHaveBeenCalled();
+  expect(pages.get("prepared")!.setBackgroundThrottling).toHaveBeenCalledWith(
+    true,
+  );
+  metrics.mockReturnValue([
+    { pid: 100, memory: { workingSetSize: 50 * 1024 } },
+  ] as ReturnType<typeof app.getAppMetrics>);
+  expect(browser.hasAutomationTabCapacity()).toBe(true);
+  expect(browser.getWaitingFormMemory().totalBytes).toBe(50 * 1024 * 1024);
+  metrics.mockReturnValue([
+    { pid: 100, memory: { workingSetSize: 0 } },
+  ] as ReturnType<typeof app.getAppMetrics>);
+});
+
+test("different places distinguish prepared tabs before a long job and employer name", () => {
+  const { browser } = makeBrowser();
+  browser.setApplicationTabLabel(
+    "prepared",
+    "Senior Accountant",
+    "Synthetic Workshop",
+    "London",
+  );
+  browser.setApplicationTabLabel(
+    "failed",
+    "Senior Accountant",
+    "Synthetic Workshop",
+    "Denver",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("London · Senior Accountant · Synthetic Workshop");
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "failed")?.title,
+  ).toBe("Denver · Senior Accountant · Synthetic Workshop");
+});
+
+test("tabs without a place stay plain and add the short reference only when they match", () => {
+  const { browser } = makeBrowser();
+  browser.setApplicationTabLabel(
+    "prepared",
+    "Engineer",
+    "Synthetic",
+    "",
+    "abc123",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("Engineer · Synthetic");
+  browser.setApplicationTabLabel(
+    "failed",
+    "Engineer",
+    "Synthetic",
+    "",
+    "def456",
+  );
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "prepared")?.title,
+  ).toBe("abc123 · Engineer · Synthetic");
+  expect(
+    browser.getState().tabs.find((tab) => tab.id === "failed")?.title,
+  ).toBe("def456 · Engineer · Synthetic");
+});

@@ -189,8 +189,12 @@ Preferred location: Remote worldwide or Berlin, Germany`;
     const { repository, workspaceService } = createWorkspaceServiceHarness({
       seed: {
         ...seed,
+        // The resume below is this person's own (Jamie Rivers).
         profile: {
           ...seed.profile,
+          fullName: "Jamie Rivers",
+          firstName: "Jamie",
+          lastName: "Rivers",
           experiences: [],
         },
       },
@@ -1310,13 +1314,15 @@ Preferred location: Remote worldwide or Berlin, Germany`;
           warnings: [],
         },
       }),
-    ).rejects.toThrow("text branch exploded");
+    ).rejects.toThrow("The AI connection failed");
 
     const run = await repository.getLatestResumeImportRun();
 
     expect(run?.status).toBe("failed");
     expect(run?.modelRoles?.text.status).toBe("failed");
-    expect(run?.modelRoles?.text.errorMessage).toBe("text branch exploded");
+    expect(run?.modelRoles?.text.errorMessage).toContain(
+      "The AI connection failed",
+    );
     expect(run?.modelRoles?.vision.status).toBe("timed_out");
     expect(run?.modelRoles?.vision.errorMessage).toContain(
       "timed out after 20ms",
@@ -1632,7 +1638,7 @@ Preferred location: Remote worldwide or Berlin, Germany`;
       [],
       [
         {
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           companyUrl: null,
           title: "Chief Experience Officer",
           employmentType: null,
@@ -1649,7 +1655,7 @@ Preferred location: Remote worldwide or Berlin, Germany`;
           ownershipScope: null,
         },
         {
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           companyUrl: null,
           title: "Chief Experience Officer",
           employmentType: null,
@@ -1670,7 +1676,7 @@ Preferred location: Remote worldwide or Berlin, Germany`;
 
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({
-      companyName: "AUTOMATEDPROS",
+      companyName: "NORTHLANE",
       title: "Chief Experience Officer",
       startDate: "13/11/2021",
       endDate: "30/06/2023",
@@ -1933,14 +1939,14 @@ Preferred location: Remote worldwide or Berlin, Germany`;
       baseResume: {
         ...seed.profile.baseResume,
         id: "resume_placeholder_replace",
-        fileName: "Ryan Holstien Resume.pdf",
+        fileName: "Noah Brenner Resume.pdf",
         textContent: [
-          "Ryan Holstien",
-          "+1 650-353-7911",
+          "Noah Brenner",
+          "+1 555-010-7911",
           "Cedar Park, TX 78613",
-          "linkedin.com/in/ryan-holstien-7954b665",
+          "linkedin.com/in/noah-brenner-example",
           "Senior Software Engineer",
-          "ryanholstien993@outlook.com",
+          "noah.brenner@example.test",
           "Senior Software Engineer with 10+ years of experience building secure, scalable healthcare and SaaS platforms with C#,.NET, ASP.NET Core, REST APIs, MongoDB, SQL Server, and cloud-native services on Azure and AWS. Proven record",
           "delivering microservices, third-party integrations, CI/CD automation, observability, and production support in Agile teams.",
           "PROFESSIONAL EXPERIENCE",
@@ -1952,12 +1958,12 @@ Preferred location: Remote worldwide or Berlin, Germany`;
         primaryParserKind: "local_pdf_layout",
         parserKinds: ["local_pdf_layout"],
         fullText: [
-          "Ryan Holstien",
-          "+1 650-353-7911",
+          "Noah Brenner",
+          "+1 555-010-7911",
           "Cedar Park, TX 78613",
-          "linkedin.com/in/ryan-holstien-7954b665",
+          "linkedin.com/in/noah-brenner-example",
           "Senior Software Engineer",
-          "ryanholstien993@outlook.com",
+          "noah.brenner@example.test",
           "Senior Software Engineer with 10+ years of experience building secure, scalable healthcare and SaaS platforms with C#,.NET, ASP.NET Core, REST APIs, MongoDB, SQL Server, and cloud-native services on Azure and AWS. Proven record",
           "delivering microservices, third-party integrations, CI/CD automation, observability, and production support in Agile teams.",
           "PROFESSIONAL EXPERIENCE",
@@ -1967,7 +1973,7 @@ Preferred location: Remote worldwide or Berlin, Germany`;
       }),
     });
 
-    expect(snapshot.profile.fullName).toBe("Ryan Holstien");
+    expect(snapshot.profile.fullName).toBe("Noah Brenner");
     expect(snapshot.profile.headline).toBe("Senior Software Engineer");
     expect(snapshot.profile.summary).toContain(
       "10+ years of experience building secure, scalable healthcare and SaaS platforms",
@@ -2041,10 +2047,10 @@ Preferred location: Remote worldwide or Berlin, Germany`;
     });
 
     const text = [
-      "Aaron Murphy",
+      "Owen Mercer",
       "Tampa, FL",
-      "+1 615-378-5538",
-      "murphyaron12@gmail.com",
+      "+1 555-010-5538",
+      "owen.mercer@example.test",
       "Senior Software Engineer",
       "PROFESSIONAL SUMMARY",
       "Experienced Staff Engineer with a focus on leading complex, high-impact initiatives across full-stack systems.",
@@ -2063,7 +2069,7 @@ Preferred location: Remote worldwide or Berlin, Germany`;
       baseResume: {
         ...seed.profile.baseResume,
         id: "resume_date_derived_years_experience",
-        fileName: "Aaron Murphy Resume.pdf",
+        fileName: "Owen Mercer Resume.pdf",
         textContent: text,
       },
       documentBundle: createTestBundle({

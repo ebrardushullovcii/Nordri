@@ -1,5 +1,24 @@
 import {
+  getPausedQuestionText,
+  applyResultPausedOnQuestion,
+  applyResultHasQuestionForPerson,
+  applyResultNeedsSecurityCheck,
+  looksLikeAccountWall,
+  looksLikeSignInWall,
+} from "@nordri/job-finder/assistant-attention";
+export {
+  getPausedQuestionText,
+  formatQuestionPrompt,
+  applyResultPausedOnQuestion,
+  applyResultHasQuestionForPerson,
+  applyResultNeedsSecurityCheck,
+  looksLikeAccountWall,
+  looksLikeSignInWall,
+} from "@nordri/job-finder/assistant-attention";
+import {
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  PREPARED_PAGE_CLOSED_SUMMARY,
+  WITHDRAWAL_UNDONE_SUMMARY,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import {
@@ -44,6 +63,7 @@ export type ApplicationRecoveryState =
  * anyway is what made the screen a loop of clicks that changed nothing.
  */
 export type ApplicationRecoveryPrimaryAction =
+  | "close_finished_tabs"
   | "none"
   | "open_browser"
   | "open_safeguards"
@@ -65,20 +85,6 @@ export type ApplicationRecoveryPresentation = {
   primaryAction: ApplicationRecoveryPrimaryAction;
   primaryActionLabel: string | null;
 };
-
-/**
- * The question a run paused on, exactly as the site asks it. The runtime
- * writes it into the stop sentence in quotes; the panel shows the question
- * rather than a paragraph about the pause.
- */
-export function getPausedQuestionText(result: ApplyResult): string | null {
-  const corpus = result
-    ? `${result.blockerSummary ?? ""} ${result.detail ?? ""} ${result.summary ?? ""}`
-    : "";
-  const quoted = corpus.match(/["“‘']([^"”’']{6,300})["”’']/);
-  const question = quoted?.[1]?.trim();
-  return question ? formatQuestionPrompt(question) : null;
-}
 
 /**
  * The site writes every keystroke back to its own server as you type, and
@@ -136,56 +142,6 @@ export function getApplicationHostLabel(
 }
 
 /**
- * The question as a person should read it. The runtime stores a field's label
- * and its description joined by an em dash, and a field whose description is
- * just its label again came out as "Phone — Phone".
- */
-export function formatQuestionPrompt(prompt: string): string {
-  const halves = prompt.split(/\s+[—–-]\s+/);
-  const kept: string[] = [];
-  for (const half of halves) {
-    const text = half.trim();
-    if (!text) {
-      continue;
-    }
-    if (kept.some((seen) => seen.toLowerCase() === text.toLowerCase())) {
-      continue;
-    }
-    kept.push(text);
-  }
-
-  return kept.join(" — ") || prompt.trim();
-}
-
-/** True when the run stopped because the form asked something it cannot answer. */
-export function applyResultPausedOnQuestion(result: ApplyResult): boolean {
-  return (
-    result?.blockerReason === "question_grounding_failed" ||
-    result?.blockerReason === "required_human_input" ||
-    result?.blockerReason === "field_interpretation_failed"
-  );
-}
-
-/**
- * True when the run actually handed back something to answer. A run that got
- * stuck, or lost its model, carries the same blocker reason with no question
- * behind it, and that is a run to try again, not a question to answer.
- */
-export function applyResultHasQuestionForPerson(
-  result: ApplyResult,
-  pendingQuestionCount: number | null | undefined,
-  pausedQuestion?: string | null,
-): boolean {
-  if (!applyResultPausedOnQuestion(result)) return false;
-  return (
-    (pendingQuestionCount ?? 0) > 0 ||
-    (result?.latestQuestionCount ?? 0) > 0 ||
-    Boolean(pausedQuestion?.trim()) ||
-    getPausedQuestionText(result) !== null
-  );
-}
-
-/**
  * States the run record itself reports while it is still working. A local
  * pending flag times out after a minute or so; a seven-minute run does not,
  * and the screen used to offer "Try again" beside a run that was still
@@ -206,6 +162,7 @@ const RUNNING_RESULT_STATES = new Set([
  */
 export interface ApplyRunContext {
   state: ApplyRunState;
+  detail?: string | null;
   /** The person paused new work ("Pause new work"). */
   activityPaused: boolean;
   /** Any job in the run has been started. */
@@ -217,7 +174,11 @@ type ApplyRunState = NonNullable<
 >[number]["state"];
 
 /** Where a planned (not yet started) application stands. */
-export type PlannedApplyStanding = "waiting_turn" | "paused" | "not_started";
+export type PlannedApplyStanding =
+  | "waiting_turn"
+  | "paused"
+  | "not_started"
+  | "waiting_tab";
 
 export function buildApplyRunContextReader(workspace: {
   applyRuns?: JobFinderWorkspaceSnapshot["applyRuns"] | null;
@@ -245,6 +206,7 @@ export function buildApplyRunContextReader(workspace: {
     if (!run) return null;
     return {
       state: run.state,
+      detail: run.detail,
       activityPaused,
       started: startedRunIds.has(run.id),
     };
@@ -256,7 +218,7 @@ export function resolvePlannedApplyStanding(
   run: ApplyRunContext | null | undefined,
 ): PlannedApplyStanding | null {
   if (result?.state !== "planned") return null;
-  if (result.applicationPreparationStartedAt != null) return null;
+  if (result.summary === WAITING_FOR_BROWSER_TAB_SUMMARY) return "waiting_tab";
   if (!run) return "waiting_turn";
   switch (run.state) {
     case "draft":
@@ -268,7 +230,7 @@ export function resolvePlannedApplyStanding(
     case "paused_for_user_review":
       // A batch reusing an approval is written paused and started a moment
       // later; until any job in it starts, it is a batch about to run.
-      return run.started ? "not_started" : "waiting_turn";
+      return "not_started";
     default:
       return "not_started";
   }
@@ -279,21 +241,18 @@ export function describeNotStartedApplication(
   run: ApplyRunContext | null | undefined,
 ): string {
   return run?.state === "paused_for_user_review"
-    ? "A safety limit stopped the batch before Job Finder got to this one. Nothing was filled in or sent."
+    ? `${run.detail?.trim() || "A safety limit stopped the batch before Job Finder got to this one."} Nothing was filled in or sent.`
     : "The batch stopped before Job Finder got to this one. Nothing was filled in or sent.";
 }
 
 export const PAUSED_BEFORE_APPLICATION_SENTENCE =
   "You paused new work before Job Finder got to this one. It carries on when you resume.";
 
-export function applyResultIsStillRunning(
-  result: ApplyResult,
-  run?: ApplyRunContext | null,
-): boolean {
+export function applyResultIsStillRunning(result: ApplyResult): boolean {
   if (result === null || !RUNNING_RESULT_STATES.has(result.state)) {
     return false;
   }
-  return resolvePlannedApplyStanding(result, run) !== "not_started";
+  return result.state !== "planned";
 }
 
 /** "2 min" from a start timestamp, for a wait the person is watching. */
@@ -350,19 +309,6 @@ function readReasonCorpus(result: ApplyResult): string {
   return `${result.detail ?? ""} ${result.blockerSummary ?? ""} ${result.summary ?? ""}`;
 }
 
-/** Older CAPTCHA handoffs used the generic human-input code, without a question. */
-export function applyResultNeedsSecurityCheck(result: ApplyResult): boolean {
-  if (result?.state !== "awaiting_review" && result?.state !== "blocked")
-    return false;
-  return (
-    result.blockerReason === "site_protection" ||
-    (result.blockerReason === "required_human_input" &&
-      /\b(?:captcha|verify (?:that )?you are human|security check)\b/i.test(
-        readReasonCorpus(result),
-      ))
-  );
-}
-
 /**
  * How the runtime introduces its own stuck sentence. The words after the colon
  * are the reason; the prefix is bookkeeping and reads as a second, vaguer
@@ -379,77 +325,6 @@ const STUCK_PREFIX_PATTERN =
  */
 const GENERIC_SUMMARY_PATTERN =
   /^\s*(?:job finder\s+)?(?:could not finish|did not finish|failed to finish|could not complete)\b[^.]*\.?\s*$|^\s*attempt (?:failed|finished)\.?\s*$|^\s*preparation (?:failed|stopped)\.?\s*$/i;
-
-/**
- * True when the site is asking for an account rather than a sign-in. Same
- * shape of answer — the person does it themselves in the browser — but the
- * sentence and the row label say "account" rather than "sign in".
- */
-export function looksLikeAccountWall(input: {
-  blockerCode?: string | null;
-  text?: string | null;
-}): boolean {
-  const { blockerCode, text } = input;
-
-  if (
-    blockerCode === "account_required" ||
-    blockerCode === "site_account_required" ||
-    blockerCode === "signup_consent_required"
-  ) {
-    return true;
-  }
-
-  return Boolean(text && ACCOUNT_WALL_PATTERN.test(text));
-}
-
-/** Words a page uses when it wants an account created before it shows a form. */
-const ACCOUNT_WALL_PATTERN =
-  /\b(?:wants an account|requires? (?:you to )?(?:create|register)|create an account|sign ?up (?:is )?required|register(?:ed)? before applying|account before you can apply)\b/i;
-
-/** Words a page uses when it is asking for a sign-in before it will show a form. */
-const LOGIN_WALL_PATTERN =
-  /\b(?:sign[- ]?in wall|log[- ]?in wall|paywall of a login|sign[- ]?in (?:is )?required|log ?in (?:is )?required|requires? (?:a )?(?:login|sign[- ]?in|account)|must (?:log|sign) ?in|need(?:s|ing)? to (?:log|sign) ?in|(?:login|sign[- ]?in) before applying|create an account before applying)\b/i;
-
-/** A URL the run finished on that is plainly a sign-in page rather than a form. */
-const LOGIN_URL_PATTERN =
-  /(?:^|[/.])(?:login|log-in|signin|sign-in|sign_in|auth|oauth|sso|account\/login)(?:[/?#]|$)/i;
-
-/**
- * True when this stop is a site asking the person to sign in, whether the run
- * recorded that as a blocker code, said it in its own sentence, or simply ended
- * on the site's login page.
- */
-export function looksLikeSignInWall(input: {
-  blockerCode?: string | null;
-  destinationUrl?: string | null;
-  text?: string | null;
-}): boolean {
-  const { blockerCode, destinationUrl, text } = input;
-
-  if (
-    blockerCode === "site_login_required" ||
-    blockerCode === "auth_required" ||
-    blockerCode === "account_required" ||
-    blockerCode === "site_account_required" ||
-    blockerCode === "signup_consent_required"
-  ) {
-    return true;
-  }
-
-  if (text && LOGIN_WALL_PATTERN.test(text)) {
-    return true;
-  }
-
-  if (!destinationUrl) {
-    return false;
-  }
-
-  try {
-    return LOGIN_URL_PATTERN.test(new URL(destinationUrl).pathname);
-  } catch {
-    return LOGIN_URL_PATTERN.test(destinationUrl);
-  }
-}
 
 /** The one sentence a sign-in wall earns, wherever it is said. */
 export const SIGN_IN_WALL_REASON = `This site asks you to sign in before applying. Sign in in ${JOB_FINDER_BROWSER_NAME} and Job Finder can pick the application back up.`;
@@ -486,7 +361,7 @@ export function getApplicationStopReasonSentence(
     const text = getCustomerFacingApplyText(candidate, result.privacyReceipt);
     const stripped = text?.replace(STUCK_PREFIX_PATTERN, "").trim();
     if (stripped && !GENERIC_SUMMARY_PATTERN.test(stripped)) {
-      return stripped;
+      return [...new Set(stripped.split(/(?<=[.!?])\s+/u))].join(" ");
     }
   }
 
@@ -561,6 +436,7 @@ export function resolveApplicationRecoveryPresentation(input: {
    * outside Job Finder, so it is never filled in again.
    */
   recordTrackedAsApplied?: boolean;
+  personSendReceiptSummary?: string | null;
   /** What the result's run is doing; a planned job means nothing without it. */
   run?: ApplyRunContext | null;
   visibleApplyResult: ApplyResult;
@@ -603,36 +479,40 @@ export function resolveApplicationRecoveryPresentation(input: {
     visibleApplyResult?.privacyReceipt?.submissionOutcome?.outcome ===
       "outcome_uncertain";
 
-  // A sent application is terminal. Job Finder's own send carries an
-  // outcome receipt; a send the person made on the kept page is recorded as
-  // submitted with the site's confirmation (older records have no receipt
-  // outcome). Only a receipt that says otherwise keeps it from reading sent:
-  // Try again here would prepare an application that was already sent.
   if (
-    visibleApplyResult?.state === "submitted" &&
-    (visibleApplyResult.privacyReceipt?.submissionOutcome?.outcome ??
-      "submitted") === "submitted"
+    input.personSendReceiptSummary ||
+    (visibleApplyResult?.state === "submitted" &&
+      visibleApplyResult.privacyReceipt?.finalSubmitOccurred === true &&
+      (visibleApplyResult.privacyReceipt.submissionOutcome?.outcome ??
+        "submitted") === "submitted")
   ) {
     return {
       state: "submitted",
       statusLine: "Application submitted",
       reasonSentence:
+        input.personSendReceiptSummary ??
         reasonSentence ??
-        "The employer site confirmed that it received the application.",
+        "The employer site confirmed receipt.",
       primaryAction: "none",
       primaryActionLabel: null,
     };
   }
-
-  if (
-    input.recordTrackedAsApplied &&
-    visibleApplyResult?.state !== "submitted"
-  ) {
+  if (input.recordTrackedAsApplied) {
     return {
       state: "submitted",
-      statusLine: "You recorded this as applied",
+      statusLine: "Marked sent by you",
       reasonSentence:
-        "Your tracker says this application was sent, so Job Finder will not fill it in again.",
+        "You recorded this send. Job Finder has no site receipt for it.",
+      primaryAction: "none",
+      primaryActionLabel: null,
+    };
+  }
+  if (visibleApplyResult?.state === "submitted") {
+    return {
+      state: "verify_outcome",
+      statusLine: "Not confirmed",
+      reasonSentence:
+        "No saved receipt confirms this send. Check the site and record the outcome before trying again.",
       primaryAction: "none",
       primaryActionLabel: null,
     };
@@ -647,6 +527,51 @@ export function resolveApplicationRecoveryPresentation(input: {
         "The last action finished without the employer site confirming one way or the other.",
       primaryAction: "none",
       primaryActionLabel: null,
+    };
+  }
+
+  // A site rejection is a known unsent outcome, even if preparation was ready.
+  const rejectedOutcome = visibleApplyResult?.privacyReceipt?.submissionOutcome;
+  if (
+    rejectedOutcome?.outcome === "not_submitted" &&
+    rejectedOutcome.browserAction?.reason === "form_validation_failed"
+  ) {
+    return {
+      state: "finish_in_browser",
+      statusLine: "Not sent",
+      reasonSentence:
+        rejectedOutcome.browserAction?.detail ??
+        visibleApplyResult?.detail ??
+        reasonSentence,
+      primaryAction: "open_browser",
+      primaryActionLabel: "Correct the fields in the browser",
+    };
+  }
+
+  if (
+    visibleApplyResult?.state === "failed" &&
+    visibleApplyResult.summary === PREPARED_PAGE_CLOSED_SUMMARY
+  ) {
+    return {
+      state: "retry",
+      statusLine: "Prepare again",
+      reasonSentence:
+        "The prepared form is no longer open. Prepare it again using your saved answers and files.",
+      primaryAction: "try_again",
+      primaryActionLabel: "Prepare again",
+    };
+  }
+
+  if (
+    visibleApplyResult?.state === "skipped" &&
+    visibleApplyResult.summary === WITHDRAWAL_UNDONE_SUMMARY
+  ) {
+    return {
+      state: "retry",
+      statusLine: "Prepare again",
+      reasonSentence: visibleApplyResult.detail,
+      primaryAction: "try_again",
+      primaryActionLabel: "Prepare again",
     };
   }
 
@@ -834,7 +759,16 @@ export function resolveApplicationRecoveryPresentation(input: {
     visibleApplyResult,
     input.run,
   );
-  if (plannedStanding === "not_started" && !isApplyPending) {
+  if (plannedStanding === "waiting_tab") {
+    return {
+      state: "preparing",
+      statusLine: "Waiting for a browser tab",
+      reasonSentence: visibleApplyResult?.detail ?? null,
+      primaryAction: "close_finished_tabs",
+      primaryActionLabel: "Close finished tabs",
+    };
+  }
+  if (plannedStanding === "not_started") {
     return {
       state: "retry",
       statusLine: "Job Finder did not get to this application",
@@ -843,7 +777,7 @@ export function resolveApplicationRecoveryPresentation(input: {
       primaryActionLabel: TRY_AGAIN_ACTION,
     };
   }
-  if (plannedStanding === "paused" && !isApplyPending) {
+  if (plannedStanding === "paused") {
     return {
       state: "preparing",
       statusLine: "Paused before this application",
@@ -852,10 +786,10 @@ export function resolveApplicationRecoveryPresentation(input: {
       primaryActionLabel: null,
     };
   }
-  if (plannedStanding === "waiting_turn" && !isApplyPending) {
+  if (plannedStanding === "waiting_turn") {
     return {
       state: "preparing",
-      statusLine: "Waiting its turn in this batch",
+      statusLine: "Waiting its turn",
       reasonSentence: null,
       primaryAction: "none",
       primaryActionLabel: null,
@@ -866,21 +800,21 @@ export function resolveApplicationRecoveryPresentation(input: {
   // flag for ninety seconds and then offered "Try again" beside itself.
   if (
     visibleApplyResult?.summary === WAITING_FOR_BROWSER_TAB_SUMMARY &&
-    applyResultIsStillRunning(visibleApplyResult, input.run)
+    applyResultIsStillRunning(visibleApplyResult)
   ) {
     return {
       state: "preparing",
       statusLine: WAITING_FOR_BROWSER_TAB_SUMMARY,
       reasonSentence: visibleApplyResult.detail ?? null,
-      primaryAction: "none",
-      primaryActionLabel: null,
+      primaryAction: "close_finished_tabs",
+      primaryActionLabel: "Close finished tabs",
     };
   }
   if (
-    isApplyPending ||
-    applyResultIsStillRunning(visibleApplyResult, input.run)
+    (!visibleApplyResult && isApplyPending) ||
+    applyResultIsStillRunning(visibleApplyResult)
   ) {
-    const elapsed = applyResultIsStillRunning(visibleApplyResult, input.run)
+    const elapsed = applyResultIsStillRunning(visibleApplyResult)
       ? formatElapsedMinutes(visibleApplyResult?.startedAt, now)
       : null;
     return {
@@ -915,6 +849,20 @@ export function resolveApplicationRecoveryPresentation(input: {
         "This listing has no application Job Finder can fill in.",
       primaryAction: "open_listing",
       primaryActionLabel: OPEN_LISTING_ACTION,
+    };
+  }
+
+  if (
+    visibleApplyResult?.state === "awaiting_review" &&
+    visibleApplyResult.automaticSendPending === true &&
+    !visibleApplyResult.privacyReceipt?.submissionOutcome
+  ) {
+    return {
+      state: "preparing",
+      statusLine: "Waiting for automatic send",
+      reasonSentence: visibleApplyResult.detail,
+      primaryAction: "none",
+      primaryActionLabel: null,
     };
   }
 

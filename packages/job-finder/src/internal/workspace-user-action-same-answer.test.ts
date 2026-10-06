@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type {
-  CandidateProfile,
-  UserActionRequest,
+import {
+  ApplicationAuthorityEnvelopeSchema,
+  type CandidateProfile,
+  type UserActionRequest,
 } from "@nordri/contracts";
 import { onlySavedAnswersWereAdded } from "./workspace-application-methods";
 import { findManualAnswerStepsCoveredBy } from "./workspace-user-action-methods";
@@ -31,12 +32,20 @@ function fakeRepository(input: {
   requests: UserActionRequest[];
   questions: Record<
     string,
-    { id: string; prompt: string; isRequired?: boolean; status?: string }[]
+    {
+      id: string;
+      prompt: string;
+      isRequired?: boolean;
+      status?: string;
+      note?: string;
+    }[]
   >;
   userAnswered?: Record<string, string[]>;
 }) {
   return {
     listUserActionRequests: () => Promise.resolve(input.requests),
+    listSavedJobs: () => Promise.resolve([]),
+    listApplyJobResults: () => Promise.resolve([]),
     listApplicationQuestionRecords: (scope: { resultId: string }) =>
       Promise.resolve(
         (input.questions[scope.resultId] ?? []).map((question) => ({
@@ -173,3 +182,179 @@ describe("an answer saved while a batch runs", () => {
     ).toBe(false);
   });
 });
+
+it.each([false, true])(
+  "a background-check answer crosses applications only when deliberately saved (%s)",
+  async (savedForFuture) => {
+    const answered = request("a", "run_1", "r_a");
+    const other = request("b", "run_1", "r_b");
+    const prompt = "I consent to a background check";
+    const repository = fakeRepository({
+      requests: [answered, other],
+      questions: { r_b: [{ id: "q_b", prompt }] },
+    });
+    const covered = await findManualAnswerStepsCoveredBy({
+      ctx: { repository } as never,
+      answered: [{ prompt, answer: "Yes" }],
+      request: answered,
+      savedForFuture,
+    });
+    expect(covered).toHaveLength(savedForFuture ? 1 : 0);
+  },
+);
+
+it("a one-use answer to an unnamed-country question stays on its application", async () => {
+  const answered = request("a", "run_1", "r_a");
+  const other = request("b", "run_1", "r_b");
+  const prompt = "Are you authorized to work in this country?";
+  const repository = fakeRepository({
+    requests: [answered, other],
+    questions: {
+      r_b: [
+        {
+          id: "q_b",
+          prompt,
+          note: "Neither the question nor the posting names the country.",
+        },
+      ],
+    },
+  });
+  expect(
+    await findManualAnswerStepsCoveredBy({
+      ctx: { repository } as never,
+      answered: [{ prompt, answer: "No" }],
+      request: answered,
+      savedForFuture: false,
+    }),
+  ).toEqual([]);
+});
+
+it.each([
+  "Expected salary",
+  "Current pay",
+  "Past pay",
+  "Pay history",
+  "Salary currency",
+  "Currency",
+])(
+  "keeps %s on its application when pay disclosure is off, including library answers",
+  async (prompt) => {
+    const answered = request("a", "run_1", "r_a");
+    const other = request("b", "run_1", "r_b");
+    const repository = fakeRepository({
+      requests: [answered, other],
+      questions: { r_b: [{ id: "q_b", prompt }] },
+    });
+    for (const savedForFuture of [false, true]) {
+      for (const source of [answered, null]) {
+        expect(
+          await findManualAnswerStepsCoveredBy({
+            ctx: { repository } as never,
+            answered: [{ prompt, answer: "42000 EUR" }],
+            request: source,
+            savedForFuture,
+          }),
+        ).toEqual([]);
+      }
+    }
+  },
+);
+
+it.each(["pause_for_user", "answer_from_profile"] as const)(
+  "pay fan-out follows the person's pay setting, carried over from an older permission (%s)",
+  async (salaryDisclosure) => {
+    const answered = request("a", "run_1", "r_a");
+    const other = request("b", "run_1", "r_b");
+    const sha256 = "a".repeat(64);
+    const envelope = ApplicationAuthorityEnvelopeSchema.parse({
+      id: "pay_permission",
+      mode: "confirm_before_submit",
+      status: "active",
+      revision: 1,
+      scope: { campaignId: null, jobIds: ["job_r_b"] },
+      maxApplicationsPerRun: 2,
+      maxApplicationsPerLocalDay: 2,
+      intermediateMutationsAuthorized: false,
+      accountCreationAuthorized: false,
+      allowedResumeSha256: [sha256],
+      allowedOrigins: ["https://replica.test"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      revokedAt: null,
+      decisionPolicy: {
+        version: 1,
+        revision: 1,
+        digest: "b".repeat(64),
+        answerPolicy: {
+          approvedAnswerSnapshot: { revision: 1, digest: "c".repeat(64) },
+          unknownRequiredQuestion: "pause_for_user",
+          unknownEligibility: "pause_for_user",
+          unknownLegalRequirement: "pause_for_user",
+          preApprovedAttestationKinds: [],
+          salaryDisclosure,
+        },
+        stopConditions: {
+          unavailableCredentials: "pause_for_user",
+          loginRequired: "pause_for_user",
+          mfaRequired: "pause_for_user",
+          captcha: "pause_for_user",
+          antiBot: "pause_for_user",
+          accountCreation: "pause_for_user",
+          staleObservation: "pause_for_user",
+          ambiguousFinalControl: "pause_for_user",
+          originDrift: "pause_for_user",
+          outcomeUncertain: "stop_no_retry",
+        },
+      },
+    });
+    const repository = {
+      ...fakeRepository({
+        requests: [answered, other],
+        questions: {
+          r_b: [
+            { id: "q_pay", prompt: "Expected salary" },
+            { id: "q_currency", prompt: "Currency" },
+          ],
+        },
+      }),
+      listSavedJobs: () =>
+        Promise.resolve([
+          {
+            id: "job_r_b",
+            canonicalUrl: "https://replica.test/job",
+            applicationUrl: "https://replica.test/apply",
+          },
+        ]),
+      listApplyJobResults: () =>
+        Promise.resolve([
+          { id: "r_b", privacyReceipt: { resume: { sha256 } } },
+        ]),
+      listApplicationAuthorityEnvelopes: () => Promise.resolve([envelope]),
+      // No pay choice saved yet: the older permission's choice is carried over.
+      getSettings: () => Promise.resolve(settings),
+      commitSettingsUpdate: (update: (current: object) => object) => {
+        settings = update(settings);
+        return Promise.resolve(settings);
+      },
+    };
+    let settings: object = {};
+    const covered = await findManualAnswerStepsCoveredBy({
+      ctx: { repository } as never,
+      answered: [
+        { prompt: "Expected salary", answer: "42000" },
+        { prompt: "Currency", answer: "EUR" },
+      ],
+      request: answered,
+      savedForFuture: true,
+    });
+    expect(covered).toHaveLength(
+      salaryDisclosure === "answer_from_profile" ? 1 : 0,
+    );
+    if (salaryDisclosure === "answer_from_profile")
+      expect(covered[0]?.answers).toEqual([
+        { questionId: "q_pay", answer: "42000" },
+        { questionId: "q_currency", answer: "EUR" },
+      ]);
+    expect(settings).toEqual({ salaryDisclosure });
+  },
+);

@@ -70,3 +70,14 @@ describe("focusProfileSetupStepHeading", () => {
     expect(focusProfileSetupStepHeading()).toBe(false);
   });
 });
+
+it("moves from Save and continue to the next step heading and scrolls it into view", () => {
+  document.body.innerHTML = `<button>Save and continue</button><h2 id="${PROFILE_SETUP_STEP_HEADING_ID}" tabindex="-1">Job targets</h2>`;
+  document.querySelector("button")!.focus();
+  const heading = document.querySelector("h2")!;
+  const scrollIntoView = vi.fn();
+  heading.scrollIntoView = scrollIntoView;
+  expect(focusProfileSetupStepHeading(document, true)).toBe(true);
+  expect(document.activeElement).toBe(heading);
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+});

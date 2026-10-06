@@ -1,3 +1,9 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { ApplicationLetterGroundingError } from "@nordri/job-finder";
+import { createResumeWorkspaceDemoState } from "../adapters/job-finder-demo-state";
+import { CandidateAssetLibrary } from "../services/job-finder/candidate-asset-library";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import {
   ApplicationDocumentRevisionSchema,
@@ -5,10 +11,11 @@ import {
   ApplyJobResultSchema,
   ApplyRunDetailsSchema,
   ApplyRunSchema,
+  type ApplicationDocumentRevision,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import { describe, expect, it, vi } from "vitest";
-import type { ApplicationDocumentLibrary } from "../services/job-finder/application-document-library";
+import { ApplicationDocumentLibrary } from "../services/job-finder/application-document-library";
 
 vi.mock("electron", () => ({
   BrowserWindow: { fromWebContents: vi.fn(() => null) },
@@ -114,7 +121,14 @@ function createDetails(
   });
 }
 
-function register(details: ReturnType<typeof createDetails>) {
+function register(
+  details: ReturnType<typeof createDetails>,
+  writeDocumentText?: () => Promise<string | null>,
+  realLibrary?: ApplicationDocumentLibrary,
+  refreshApprovedLetter?: (
+    document: ApplicationDocumentRevision,
+  ) => Promise<void>,
+) {
   const handlers = new Map<string, RouteHandler>();
   const propose = vi
     .fn<ApplicationDocumentLibrary["propose"]>()
@@ -126,22 +140,47 @@ function register(details: ReturnType<typeof createDetails>) {
     }),
   } as unknown as IpcMain;
   const snapshot = {
-    profile: {},
-    discoveryJobs: [job],
+    profile: createResumeWorkspaceDemoState().profile,
+    applyJobResults: details.result ? [details.result] : [],
+    discoveryJobs: [
+      { ...createResumeWorkspaceDemoState().savedJobs[0], ...job },
+    ],
     applicationRecords: [applicationA, applicationB],
   } as unknown as JobFinderWorkspaceSnapshot;
 
+  const getWorkspaceSnapshot = vi.fn(() => Promise.resolve(snapshot));
   registerApplicationDocumentRouteHandlers(ipcMain, {
-    library: { propose } as unknown as ApplicationDocumentLibrary,
-    getWorkspaceSnapshot: () => Promise.resolve(snapshot),
+    library:
+      realLibrary ??
+      ({
+        propose,
+        approve: vi.fn(() =>
+          Promise.resolve(
+            ApplicationDocumentRevisionSchema.parse({
+              ...revision,
+              status: "approved",
+              approvedAt: now,
+            }),
+          ),
+        ),
+        list: vi.fn(() =>
+          Promise.resolve({ documents: [], approvedRevisions: [] }),
+        ),
+      } as unknown as ApplicationDocumentLibrary),
+    getWorkspaceSnapshot,
     getApplyRunDetails,
     selectExportPath: () => Promise.resolve(null),
+    ...(writeDocumentText ? { writeDocumentText } : {}),
+    ...(refreshApprovedLetter ? { refreshApprovedLetter } : {}),
   });
 
   return {
     handler: handlers.get("job-finder:propose-application-document")!,
+    listHandler: handlers.get("job-finder:list-application-documents")!,
+    approveHandler: handlers.get("job-finder:approve-application-document")!,
     propose,
     getApplyRunDetails,
+    getWorkspaceSnapshot,
   };
 }
 
@@ -213,4 +252,224 @@ describe("application document proposal lineage", () => {
     ).rejects.toThrow(/stale|another application/iu);
     expect(propose).not.toHaveBeenCalled();
   });
+});
+
+it("records the exact attached letter as an editable application-scoped draft during a handoff", async () => {
+  const details = createDetails();
+  details.result!.reviewCard = {
+    siteLabel: "Synthetic",
+    pageUrl: null,
+    preparedAt: now,
+    answers: [],
+    attachments: [
+      {
+        label: "Cover letter v1",
+        fileName: "letter.pdf",
+        field: "Cover letter",
+      },
+    ],
+    letter: {
+      text: "Exact attached letter text.",
+      groundedIn: ["your profile"],
+    },
+    waitingOnYou: ["Sponsorship"],
+  };
+  const { listHandler, propose } = register(details);
+  await listHandler({ sender: {} } as IpcMainInvokeEvent, {
+    jobId: job.id,
+    applicationRecordId: applicationB.id,
+  });
+  expect(propose).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "cover_letter",
+      writtenContent: "Exact attached letter text.",
+    }),
+  );
+  const firstId = propose.mock.calls[0]![0].createDocumentId;
+  expect(firstId?.startsWith(`attached_letter_${resultB.id}_`)).toBe(true);
+  expect(propose.mock.calls[0]![0].grounding.applicationRecord).toEqual(
+    applicationB,
+  );
+  details.result!.reviewCard.letter!.text = "Revised attached letter text.";
+  await listHandler({ sender: {} } as IpcMainInvokeEvent, {
+    jobId: job.id,
+    applicationRecordId: applicationB.id,
+  });
+  expect(propose.mock.calls[1]![0].createDocumentId).not.toBe(firstId);
+  expect(propose.mock.calls[1]![0].writtenContent).toBe(
+    "Revised attached letter text.",
+  );
+});
+
+it("does not keep an evidence fallback after checked document writing fails", async () => {
+  const { handler, propose } = register(createDetails(), () =>
+    Promise.resolve(null),
+  );
+  await expect(
+    handler({ sender: {} } as IpcMainInvokeEvent, payload),
+  ).rejects.toThrow("could not write and check this document");
+  expect(propose).not.toHaveBeenCalled();
+});
+
+it("lists attached letters through the real library and preserves edits on repeated reads", async () => {
+  const temporaryDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "nordri-letter-route-"),
+  );
+  try {
+    const library = new ApplicationDocumentLibrary(
+      path.join(temporaryDirectory, "documents"),
+      new CandidateAssetLibrary(path.join(temporaryDirectory, "assets")),
+    );
+    const details = createDetails();
+    details.result!.reviewCard = {
+      siteLabel: "Synthetic",
+      pageUrl: null,
+      preparedAt: now,
+      answers: [],
+      attachments: [],
+      letter: {
+        text: "Exact attached letter text.",
+        groundedIn: ["your profile"],
+      },
+      waitingOnYou: ["Authorization"],
+    };
+    const { listHandler, getWorkspaceSnapshot } = register(
+      details,
+      undefined,
+      library,
+    );
+    const input = { jobId: job.id, applicationRecordId: applicationB.id };
+    const event = { sender: {} } as IpcMainInvokeEvent;
+    await listHandler(event, input);
+    const first = (await library.list(input)).documents[0]!;
+    expect(first.content).toBe("Exact attached letter text.");
+    expect(first.status).toBe("proposed");
+    await library.edit(first.id, first.revision, "Person's corrected letter.");
+    await listHandler(event, input);
+    const second = (await library.list(input)).documents;
+    expect(second).toHaveLength(1);
+    expect(second[0]!.content).toBe("Person's corrected letter.");
+    expect(second[0]!.revision).toBe(2);
+    getWorkspaceSnapshot.mockRejectedValueOnce(
+      new Error("Snapshot is unavailable"),
+    );
+    await expect(listHandler(event, input)).resolves.toMatchObject({
+      documents: [{ content: "Person's corrected letter." }],
+    });
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+it("does not keep another copy of a letter it already holds when a later run attaches it", async () => {
+  const temporaryDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "nordri-letter-copies-"),
+  );
+  try {
+    const library = new ApplicationDocumentLibrary(
+      path.join(temporaryDirectory, "documents"),
+      new CandidateAssetLibrary(path.join(temporaryDirectory, "assets")),
+    );
+    const details = createDetails();
+    details.result!.reviewCard = {
+      siteLabel: "Synthetic",
+      pageUrl: null,
+      preparedAt: now,
+      answers: [],
+      attachments: [],
+      letter: {
+        text: "Exact attached letter text.",
+        groundedIn: ["your profile"],
+      },
+      waitingOnYou: [],
+    };
+    const { listHandler } = register(details, undefined, library);
+    const input = { jobId: job.id, applicationRecordId: applicationB.id };
+    const event = { sender: {} } as IpcMainInvokeEvent;
+    await listHandler(event, input);
+    const first = (await library.list(input)).documents[0]!;
+    const approved = await library.approve(first.id, first.revision);
+    await library.propose({
+      kind: "cover_letter",
+      grounding: {
+        profile: createResumeWorkspaceDemoState().profile,
+        job: { ...createResumeWorkspaceDemoState().savedJobs[0]!, ...job },
+        applicationRecord: {
+          ...createResumeWorkspaceDemoState().applicationRecords[0]!,
+          ...applicationB,
+        },
+        question: null,
+      },
+      documentId: approved.id,
+      expectedRevision: approved.revision,
+      writtenContent: "A new draft of this letter.",
+    });
+    // The approved letter goes on the form again in a later run.
+    details.result!.id = "result-c";
+    await listHandler(event, input);
+    const documents = (await library.list(input)).documents;
+    expect(documents).toHaveLength(1);
+    expect(documents[0]!.status).toBe("proposed");
+    expect((await library.list(input)).approvedRevisions).toEqual([approved]);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+it("keeps an unchecked letter draft and its reason through the real library", async () => {
+  const temporaryDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "nordri-unchecked-letter-"),
+  );
+  try {
+    const library = new ApplicationDocumentLibrary(
+      path.join(temporaryDirectory, "documents"),
+      new CandidateAssetLibrary(path.join(temporaryDirectory, "assets")),
+    );
+    const { handler } = register(
+      createDetails(),
+      () =>
+        Promise.reject(
+          new ApplicationLetterGroundingError(
+            "Review the location conflict.",
+            "Draft with proposed accommodation.",
+          ),
+        ),
+      library,
+    );
+    await handler({ sender: {} } as IpcMainInvokeEvent, payload);
+    const draft = (
+      await library.list({
+        jobId: job.id,
+        applicationRecordId: applicationB.id,
+      })
+    ).documents[0]!;
+    expect(draft.content).toBe("Draft with proposed accommodation.");
+    expect(draft.requiresGroundingReview).toBe(true);
+    expect(draft.reviewReason).toContain("Review the location conflict");
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+it("approval refreshes the prepared letter and notifies the mounted workspace", async () => {
+  const refreshApprovedLetter = vi.fn(() => Promise.resolve());
+  const { approveHandler } = register(
+    createDetails(),
+    undefined,
+    undefined,
+    refreshApprovedLetter,
+  );
+  const send = vi.fn();
+  await approveHandler({ sender: { send } } as unknown as IpcMainInvokeEvent, {
+    documentId: revision.id,
+    expectedRevision: revision.revision,
+  });
+  expect(refreshApprovedLetter).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: revision.id,
+      status: "approved",
+      content: revision.content,
+    }),
+  );
+  expect(send).toHaveBeenCalledWith("job-finder:workspace-updated");
 });

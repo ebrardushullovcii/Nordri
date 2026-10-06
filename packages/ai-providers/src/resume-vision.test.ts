@@ -508,7 +508,7 @@ describe("resume vision provider", () => {
     const bundle = createResumeImportFixtureBundle({
       id: "role_headline_vision_fallback_bundle",
       pageTexts: [
-        "Senior Software Engineer\nTampa, FL\nmurphyaron12@gmail.com",
+        "Senior Software Engineer\nTampa, FL\nowen.mercer@example.test",
       ],
       blocks: [
         {
@@ -526,7 +526,7 @@ describe("resume vision provider", () => {
           id: "block_2",
           pageNumber: 1,
           readingOrder: 1,
-          text: "murphyaron12@gmail.com",
+          text: "owen.mercer@example.test",
           kind: "contact",
           sectionHint: "contact",
           bbox: null,
@@ -583,7 +583,7 @@ describe("resume vision provider", () => {
         (candidate) =>
           candidate.target.section === "contact" &&
           candidate.target.key === "email" &&
-          candidate.value === "murphyaron12@gmail.com",
+          candidate.value === "owen.mercer@example.test",
       ),
     ).toBe(true);
   });

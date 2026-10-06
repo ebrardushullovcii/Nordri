@@ -132,3 +132,140 @@ describe("application answers in prepare-only execution", () => {
     expect(merged.answerBank.customAnswers[0]?.answer).toBe("Old");
   });
 });
+
+it("keeps the person's pay answers scoped to this application's execution profile", () => {
+  const profile = createSeed().profile;
+  const before = structuredClone(profile);
+  const salary = {
+    ...question("salary", "salary_answer"),
+    prompt: "Expected salary",
+    kind: "salary_expectation" as const,
+  };
+  const currency = {
+    ...question("currency", "currency_answer"),
+    prompt: "Salary currency",
+  };
+  const merged = mergeApplicationAnswersIntoExecutionProfile({
+    profile,
+    questionRecords: [salary, currency],
+    answerRecords: [
+      answer({
+        id: "salary_answer",
+        questionId: "salary",
+        text: "90000",
+        revision: 1,
+      }),
+      answer({
+        id: "currency_answer",
+        questionId: "currency",
+        text: "EUR",
+        revision: 1,
+      }),
+    ],
+    idPrefix: "application_request_pay",
+  });
+  expect(merged.answerBank.customAnswers.slice(0, 2)).toEqual([
+    expect.objectContaining({
+      question: "Expected salary",
+      answer: "90000",
+    }),
+    expect.objectContaining({
+      question: "Salary currency",
+      answer: "EUR",
+    }),
+  ]);
+  for (const entry of merged.answerBank.customAnswers.slice(0, 2)) {
+    expect(entry.id).toMatch(/^application_request_pay_/);
+  }
+  expect(profile).toEqual(before);
+});
+
+it("an application's own currency survives a newer library-seeded suggestion", () => {
+  const profile = createSeed().profile;
+  const own = answer({
+    id: "own_currency",
+    questionId: "currency",
+    text: "GBP",
+    revision: 1,
+  });
+  const library = {
+    ...answer({
+      id: "seeded_currency",
+      questionId: "currency",
+      text: "EUR",
+      revision: 2,
+    }),
+    sourceId: "answerLibrary.other_job_currency",
+  };
+  const merged = mergeApplicationAnswersIntoExecutionProfile({
+    profile,
+    questionRecords: [
+      { ...question("currency", library.id), prompt: "Currency" },
+    ],
+    answerRecords: [own, library],
+    idPrefix: "application_this",
+  });
+  expect(merged.answerBank.customAnswers[0]).toMatchObject({
+    question: "Currency",
+    answer: "GBP",
+  });
+});
+
+it("Prepare again keeps one-use eligibility on the same application even after a newer agent suggestion", () => {
+  const profile = createSeed().profile;
+  const before = structuredClone(profile);
+  const own = {
+    ...answer({
+      id: "own",
+      questionId: "eligibility",
+      text: "Yes",
+      revision: 1,
+    }),
+    applicationRecordId: "application_a",
+    hiringCountry: "Germany",
+    saveScope: "application_once" as const,
+  };
+  const proposed = {
+    ...own,
+    id: "agent",
+    sourceKind: "profile" as const,
+    text: "No",
+    revision: 2,
+  };
+  const currentQuestion = {
+    ...question("eligibility", proposed.id),
+    kind: "work_authorization" as const,
+    applicationRecordId: "application_a",
+    resultId: "prepare_again",
+    prompt: "Are you authorized to work in Germany?",
+  };
+  const merged = mergeApplicationAnswersIntoExecutionProfile({
+    profile,
+    questionRecords: [currentQuestion],
+    answerRecords: [own, proposed],
+    idPrefix: "application_a",
+    applicationRecordId: "application_a",
+    jobLocation: "Hamburg, Germany",
+  });
+  expect(merged.answerBank.customAnswers[0]).toMatchObject({
+    question: currentQuestion.prompt,
+    answer: "Yes",
+    applicationScope: {
+      resultId: "prepare_again",
+      applicationRecordId: "application_a",
+      location: "Hamburg, Germany",
+      hiringCountry: "Germany",
+    },
+  });
+  expect(profile).toEqual(before);
+  expect(
+    mergeApplicationAnswersIntoExecutionProfile({
+      profile,
+      questionRecords: [currentQuestion],
+      answerRecords: [own, proposed],
+      idPrefix: "application_b",
+      applicationRecordId: "application_b",
+      jobLocation: "Hamburg, Germany",
+    }),
+  ).toBe(profile);
+});

@@ -513,3 +513,64 @@ describe("ProfilePreferencesEligibilitySection expected salary answer scroll mar
     ).toBeTruthy();
   });
 });
+
+describe("preference usability controls", () => {
+  afterEach(cleanup);
+
+  it("R3-065 lets a person add and remove a limited permit beside unrestricted countries", () => {
+    render(<EligibilityHarness />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add limited permission" }),
+    );
+    fireEvent.change(screen.getByLabelText("Permit country"), {
+      target: { value: "Germany" },
+    });
+    fireEvent.change(screen.getByLabelText("Permit limits"), {
+      target: { value: "Student work only, 20 hours during term" },
+    });
+    fireEvent.change(
+      screen.getByLabelText(
+        "Will you need sponsorship for future work in this country?",
+      ),
+      { target: { value: "yes" } },
+    );
+    expect(screen.getByLabelText("Permit country")).toHaveProperty(
+      "value",
+      "Germany",
+    );
+    expect(
+      screen.getByText(/Reusable answers do not override these limits/),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove permit" }));
+    expect(screen.queryByLabelText("Permit country")).toBeNull();
+  });
+
+  it("R3-105 and R3-138 expose shift, weekly hours and base/OTE choices", () => {
+    render(<TargetingHarness />);
+    fireEvent.change(screen.getByLabelText("Shifts"), {
+      target: { value: "day" },
+    });
+    fireEvent.change(screen.getByLabelText("Minimum weekly hours"), {
+      target: { value: "20" },
+    });
+    fireEvent.change(screen.getByLabelText("Maximum weekly hours"), {
+      target: { value: "30" },
+    });
+    fireEvent.change(screen.getByLabelText("Minimum pay counts as"), {
+      target: { value: "total_ote" },
+    });
+    expect(screen.getByLabelText("Shifts")).toHaveProperty("value", "day");
+    expect(screen.getByLabelText("Minimum weekly hours")).toHaveProperty(
+      "value",
+      "20",
+    );
+    expect(screen.getByLabelText("Maximum weekly hours")).toHaveProperty(
+      "value",
+      "30",
+    );
+    expect(screen.getByLabelText("Minimum pay counts as")).toHaveProperty(
+      "value",
+      "total_ote",
+    );
+  });
+});

@@ -527,6 +527,7 @@ describe("runAgentLoop", () => {
       tools: [chatty, finishTool],
       subjectLabel: "the site",
       compactionMaxChars: 60_000,
+      staleToolResultChars: null,
     });
     expect(result.ending).toBe("finished");
     expect(result.messages[0]).toEqual(opening[0]);
@@ -538,6 +539,40 @@ describe("runAgentLoop", () => {
     );
     expect(trimmed).toBeDefined();
     expect(result.messages.length).toBeLessThan(40);
+  });
+
+  test("old tool answers are cut to their opening lines and the recent ones stay whole", async () => {
+    let looks = 0;
+    const look = tool("look", () => {
+      looks += 1;
+      return Promise.resolve({
+        kind: "ok",
+        content: `Page ${looks}\n${"x".repeat(3_000)}`,
+        progress: true,
+      });
+    });
+    const turns: AgentLoopToolCall[][] = Array.from({ length: 8 }, () => [
+      call("look"),
+    ]);
+    turns.push([call("finish", { reason: "Done" })]);
+    const result = await runAgentLoop({
+      messages: opening,
+      model: scripted(turns),
+      tools: [look, finishTool],
+      subjectLabel: "the site",
+    });
+    const answers = result.messages.filter(
+      (message) =>
+        message.role === "tool" && message.content.startsWith("Page"),
+    );
+    expect(answers).toHaveLength(8);
+    const [oldest] = answers;
+    expect(oldest?.content.startsWith("Page 1")).toBe(true);
+    expect(oldest?.content).toContain("Older answer shortened");
+    expect(oldest?.content.length).toBeLessThan(900);
+    for (const recent of answers.slice(-4)) {
+      expect(recent.content.length).toBeGreaterThan(3_000);
+    }
   });
 
   test("a tool that hangs is given up after its deadline and the run carries on", async () => {
@@ -624,4 +659,123 @@ describe("runAgentLoop", () => {
     expect(result.ending).toBe("finished");
     expect(result.steps).toBe(2);
   });
+});
+
+test("a batch barrier skips later calls, pairs every result and observes once", async () => {
+  const writes: string[] = [];
+  const model = scripted([
+    [call("write"), call("refuse"), call("write")],
+    [call("finish")],
+  ]);
+  let observations = 0;
+  const result = await runAgentLoop({
+    messages: [{ role: "user", content: "Prepare the synthetic form." }],
+    model,
+    tools: [
+      tool("write", () => {
+        writes.push("write");
+        return Promise.resolve({
+          kind: "ok",
+          content: "Written.",
+          progress: true,
+        });
+      }),
+      tool("refuse", () =>
+        Promise.resolve({
+          kind: "ok",
+          content: "Not allowed.",
+          status: "refused",
+        }),
+      ),
+      finishTool,
+    ],
+    subjectLabel: "the synthetic form",
+    afterToolBatch: () => {
+      observations += 1;
+      return Promise.resolve("Fresh page.");
+    },
+  });
+  expect(writes).toEqual(["write"]);
+  expect(observations).toBe(1);
+  const toolResults = result.messages.filter(
+    (message) => message.role === "tool",
+  );
+  expect(toolResults).toHaveLength(4);
+  expect(toolResults[2]?.content).toContain("batch stopped");
+  expect(model.calls).toBe(2);
+});
+
+test("stopBatch separates a page move from calls proposed for the previous step", async () => {
+  let laterCalls = 0;
+  const result = await runAgentLoop({
+    messages: [{ role: "user", content: "Prepare." }],
+    model: scripted([[call("move"), call("later")], [call("finish")]]),
+    tools: [
+      tool("move", () =>
+        Promise.resolve({
+          kind: "ok",
+          content: "New step.",
+          progress: true,
+          stopBatch: true,
+        }),
+      ),
+      tool("later", () => {
+        laterCalls += 1;
+        return Promise.resolve({ kind: "ok", content: "Unexpected." });
+      }),
+      finishTool,
+    ],
+    subjectLabel: "form",
+  });
+  expect(result.ending).toBe("finished");
+  expect(laterCalls).toBe(0);
+});
+
+test("compaction lets a delta-observation host restore the complete current page", async () => {
+  let restored = 0;
+  const model = scripted([
+    ...Array.from({ length: 12 }, () => [call("read")]),
+    [call("finish")],
+  ]);
+  const result = await runAgentLoop({
+    messages: opening,
+    model,
+    tools: [
+      tool("read", () =>
+        Promise.resolve({
+          kind: "ok",
+          content: "Synthetic page " + "x".repeat(1000),
+        }),
+      ),
+      finishTool,
+    ],
+    subjectLabel: "the synthetic page",
+    compactionMaxChars: 2000,
+    staleToolResultChars: null,
+    afterToolBatch: () => Promise.resolve("Page update."),
+    onHistoryCompacted: () => {
+      restored += 1;
+      return "Complete current page with unchanged fields.";
+    },
+  });
+  expect(restored).toBeGreaterThan(0);
+  expect(
+    result.messages.some(
+      (message) =>
+        message.content === "Complete current page with unchanged fields.",
+    ),
+  ).toBe(true);
+  const calls = result.messages
+    .filter((message) => message.role === "assistant")
+    .flatMap((message) =>
+      message.role === "assistant"
+        ? (message.toolCalls?.map((call) => call.id) ?? [])
+        : [],
+    );
+  const results = result.messages
+    .filter((message) => message.role === "tool")
+    .flatMap((message) =>
+      message.role === "tool" ? [message.toolCallId] : [],
+    );
+  expect(results).toEqual(calls);
 });

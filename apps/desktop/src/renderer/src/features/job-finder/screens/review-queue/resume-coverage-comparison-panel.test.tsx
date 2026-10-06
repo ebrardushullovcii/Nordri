@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResumeCoverageComparison } from "@nordri/contracts";
+import { buildResumeCoverageComparisonRows } from "./resume-coverage-comparison-rows";
 import { ResumeCoverageComparisonPanel } from "./resume-coverage-comparison-panel";
 
 const baseComparison: ResumeCoverageComparison = {
@@ -274,4 +275,55 @@ describe("lines the tailored resume moved to another role", () => {
     expect(screen.queryByText("1 line removed")).toBeNull();
     expect(screen.queryByText(`− ${movedLine}`)).toBeNull();
   });
+});
+
+it("pairs a translated or bilingual achievement by source identity without word overlap", () => {
+  const result = buildResumeCoverageComparisonRows({
+    addedClaims: [
+      {
+        field: "bullet",
+        text: "Kommissionierfehler um 38 % reduziert.",
+        restorable: false,
+        sourceAchievementIds: ["achievement:0"],
+      },
+    ],
+    removedClaims: [
+      {
+        field: "bullet",
+        text: "Reduced picking errors 38%.",
+        restorable: true,
+        sourceAchievementIds: ["achievement:0"],
+      },
+    ],
+  });
+  expect(result).toMatchObject({
+    removedLineCount: 0,
+    addedLineCount: 0,
+    rewordedLineCount: 1,
+  });
+  expect(result.rows[0]?.kind).toBe("reworded");
+});
+
+it("pairs translated lines by source even when their wording has no overlap", () => {
+  const rows = buildResumeCoverageComparisonRows({
+    removedClaims: [
+      {
+        field: "bullet",
+        text: "Managed customer orders",
+        restorable: true,
+        sourceAchievementIds: ["experience:role:achievement:0"],
+      },
+    ],
+    addedClaims: [
+      {
+        field: "bullet",
+        text: "Bearbeitung von Kundenaufträgen",
+        restorable: false,
+        sourceAchievementIds: ["experience:role:achievement:0"],
+      },
+    ],
+  });
+  expect(rows.removedLineCount).toBe(0);
+  expect(rows.addedLineCount).toBe(0);
+  expect(rows.rows[0]?.kind).toBe("reworded");
 });

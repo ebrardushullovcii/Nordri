@@ -130,6 +130,7 @@ vi.mock("electron", () => ({
   },
   BrowserWindow: {
     fromWebContents: mockBrowserWindowFromWebContents,
+    getAllWindows: () => [],
   },
   dialog: {
     showOpenDialog: mockShowOpenDialog,
@@ -157,10 +158,14 @@ vi.mock("../services/job-finder", () => ({
   setJobFinderWorkspaceServiceTestEnv: vi.fn(),
 }));
 
-import { JOB_FINDER_WORKSPACE_UPDATED_CHANNEL } from "../services/job-finder/workspace-updates";
+import {
+  JOB_FINDER_WORKSPACE_UPDATED_CHANNEL,
+  onJobFinderWorkspaceUpdate,
+} from "../services/job-finder/workspace-updates";
 import {
   RETIRED_CHAT_MESSAGE,
   registerJobFinderRouteHandlers,
+  syncApplicationAuthorityForSavedMode,
 } from "./job-finder";
 
 const packet = ApplicationPacketSchema.parse({
@@ -745,6 +750,45 @@ describe("job-finder resume import picker route", () => {
     expect(mockImportResumeFromSourcePath).toHaveBeenCalledOnce();
   });
 
+  it("R3-163 cancels only the active processing import request", async () => {
+    const snapshot = createEmptyWorkspace("2026-08-30T10:02:00.000Z");
+    const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
+    const captured: { signal: AbortSignal | undefined } = {
+      signal: undefined,
+    };
+    mockShowOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ["/tmp/synthetic-resume.md"],
+    });
+    mockImportResumeFromSourcePath.mockImplementation(
+      (_path: string, options: { signal?: AbortSignal }) => {
+        captured.signal = options.signal;
+        return new Promise((resolve) => {
+          captured.signal?.addEventListener("abort", () => resolve(snapshot), {
+            once: true,
+          });
+        });
+      },
+    );
+    const result = registerAndFindHandler()(
+      { sender },
+      { requestId: "processing_import" },
+    );
+    await vi.waitFor(() =>
+      expect(mockImportResumeFromSourcePath).toHaveBeenCalled(),
+    );
+    cancelImportResume?.({ sender }, { requestId: "other_import" });
+    expect(captured.signal?.aborted).toBe(false);
+    cancelImportResume?.({ sender }, { requestId: "processing_import" });
+    expect(captured.signal?.aborted).toBe(false);
+    cancelImportResume?.(
+      { sender },
+      { requestId: "processing_import", stopProcessing: true },
+    );
+    expect(captured.signal?.aborted).toBe(true);
+    await expect(result).resolves.toEqual(snapshot);
+  });
+
   it("discards a late file choice after the renderer cancels the picker", async () => {
     const snapshot = createEmptyWorkspace("2026-08-30T10:02:00.000Z");
     const sender = {
@@ -894,6 +938,103 @@ describe("job-finder apply entry-point resume approval and authority", () => {
   afterEach(() => {
     mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(null);
     mockGetJobFinderApplicationAuthorityService.mockReset();
+  });
+
+  it.each(["prepare_only", "confirm_before_submit"] as const)(
+    "preserves pay privacy when starting Fill-in only from %s",
+    async (priorMode) => {
+      const repository = {
+        getSettings: vi.fn(() =>
+          Promise.resolve({
+            applicationAutomationMode: "prepare_only",
+          }),
+        ),
+      };
+      const active = {
+        id: "existing_authority",
+        revision: 1,
+        mode: priorMode,
+        maxApplicationsPerRun: 10,
+        maxApplicationsPerLocalDay: 20,
+        decisionPolicy: {
+          answerPolicy: { salaryDisclosure: "answer_from_profile" },
+        },
+      };
+      const authorityService = {
+        list: vi.fn(() => Promise.resolve([active])),
+        replaceUsed: vi.fn(() => Promise.resolve({ status: "applied" })),
+        revoke: vi.fn(() => Promise.resolve({ status: "applied" })),
+      };
+      mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(
+        repository as never,
+      );
+      mockGetJobFinderApplicationAuthorityService.mockReturnValue(
+        authorityService,
+      );
+      await syncApplicationAuthorityForSavedMode({} as never, ["job"]);
+      expect(authorityService.replaceUsed).not.toHaveBeenCalled();
+      if (priorMode === "prepare_only") {
+        expect(authorityService.revoke).not.toHaveBeenCalled();
+      } else {
+        expect(authorityService.revoke).toHaveBeenCalledWith({
+          id: active.id,
+          expectedRevision: active.revision,
+        });
+      }
+    },
+  );
+
+  it("keeps the pay choice when changing to Ask before sending without carrying over old job scope", async () => {
+    const job = {
+      id: "new_job",
+      title: "Synthetic Analyst",
+      resumeApplicationMode: "original_resume",
+      applicationUrl: "https://jobs.example.test/new_job",
+    };
+    const repository = {
+      getSettings: vi.fn(() =>
+        Promise.resolve({
+          applicationAutomationMode: "confirm_before_submit",
+        }),
+      ),
+      getProfileWithRevision: vi.fn(() =>
+        Promise.resolve({
+          revision: 1,
+          profile: { baseResume: { sha256: "a".repeat(64) } },
+        }),
+      ),
+      listSavedJobs: vi.fn(() => Promise.resolve([job])),
+    };
+    const active = {
+      id: "existing_authority",
+      revision: 1,
+      mode: "prepare_only",
+      scope: { campaignId: null, jobIds: ["old_job"] },
+      decisionPolicy: {
+        answerPolicy: { salaryDisclosure: "answer_from_profile" },
+      },
+    };
+    const authorityService = {
+      list: vi.fn(() => Promise.resolve([active])),
+      approveCurrentAnswers: vi.fn(() =>
+        Promise.resolve({ status: "created" }),
+      ),
+      update: vi.fn(() => Promise.resolve({ status: "applied" })),
+    };
+    mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue(
+      repository as never,
+    );
+    mockGetJobFinderApplicationAuthorityService.mockReturnValue(
+      authorityService,
+    );
+    await syncApplicationAuthorityForSavedMode({} as never, [job.id]);
+    expect(authorityService.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        salaryDisclosure: "answer_from_profile",
+        mode: "confirm_before_submit",
+        scope: { campaignId: null, jobIds: [job.id] },
+      }),
+    );
   });
 
   it.each(
@@ -3734,4 +3875,98 @@ describe("job-finder synthetic save failure route", () => {
     ).resolves.toEqual(snapshot);
     expect(saveProfile).toHaveBeenCalledTimes(1);
   });
+});
+
+it("Fill-in only retries a changed permission revision and revokes the broader permission", async () => {
+  const first = {
+    id: "authority",
+    revision: 1,
+    mode: "confirm_before_submit",
+    status: "active",
+  };
+  const latest = { ...first, revision: 2 };
+  const authorityService = {
+    list: vi
+      .fn()
+      .mockResolvedValueOnce([first])
+      .mockResolvedValueOnce([latest]),
+    revoke: vi
+      .fn()
+      .mockResolvedValueOnce({ status: "stale", current: latest })
+      .mockResolvedValueOnce({ status: "applied" }),
+    replaceUsed: vi.fn(),
+  };
+  mockGetJobFinderRepositoryForWorkspaceService.mockReturnValue({
+    getSettings: () =>
+      Promise.resolve({ applicationAutomationMode: "prepare_only" }),
+  } as never);
+  mockGetJobFinderApplicationAuthorityService.mockReturnValue(authorityService);
+  await syncApplicationAuthorityForSavedMode({} as never, ["job"]);
+  expect(authorityService.revoke).toHaveBeenNthCalledWith(2, {
+    id: "authority",
+    expectedRevision: 2,
+  });
+  expect(authorityService.replaceUsed).not.toHaveBeenCalled();
+});
+
+it("publishes one workspace refresh after a burst of answer draft saves", async () => {
+  vi.useFakeTimers();
+  const saveUserActionAnswerDraft = vi.fn().mockResolvedValue(undefined);
+  mockGetJobFinderWorkspaceService.mockResolvedValue({
+    saveUserActionAnswerDraft,
+  });
+  const handlers = new Map<string, RegisteredHandler>();
+  registerJobFinderRouteHandlers({
+    handle: (channel: string, handler: RegisteredHandler) =>
+      handlers.set(channel, handler),
+  } as unknown as IpcMain);
+  const handler = handlers.get("job-finder:save-user-action-answer-draft")!;
+  const listener = vi.fn();
+  const stop = onJobFinderWorkspaceUpdate(listener);
+  try {
+    await handler(
+      { sender: {} },
+      {
+        requestId: "request",
+        expectedRevision: 1,
+        editedAt: 1,
+        draft: { answers: { Start: "Monday" } },
+      },
+    );
+    await vi.advanceTimersByTimeAsync(100);
+    await handler(
+      { sender: {} },
+      {
+        requestId: "request",
+        expectedRevision: 1,
+        editedAt: 2,
+        draft: { answers: { Start: "Friday" } },
+      },
+    );
+    expect(saveUserActionAnswerDraft).toHaveBeenCalledTimes(2);
+    expect(listener).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(listener).toHaveBeenCalledTimes(1);
+  } finally {
+    stop();
+    vi.useRealTimers();
+  }
+});
+
+it("publishes a browser-bar shortlist immediately while listing checks run", async () => {
+  const snapshot = createEmptyWorkspace("2026-10-05T10:00:00.000Z");
+  const queueJobForReview = vi.fn().mockResolvedValue(snapshot);
+  mockGetJobFinderWorkspaceService.mockResolvedValue({ queueJobForReview });
+  const handlers = new Map<string, RegisteredHandler>();
+  registerJobFinderRouteHandlers({
+    handle: (channel: string, handler: RegisteredHandler) =>
+      handlers.set(channel, handler),
+  } as unknown as IpcMain);
+  const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
+  await handlers.get("job-finder:queue-job-for-review")!(
+    { sender },
+    { jobId: "synthetic_job" },
+  );
+  expect(queueJobForReview).toHaveBeenCalledWith("synthetic_job");
+  expect(sender.send).toHaveBeenCalled();
 });

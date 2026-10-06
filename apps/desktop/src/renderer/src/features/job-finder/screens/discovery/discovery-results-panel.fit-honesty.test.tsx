@@ -105,6 +105,12 @@ function checkedJob(): SavedJob {
     discoveryMethod: "browser_agent",
     matchAssessment: {
       score: 78,
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-10-02T10:00:00.000Z",
+        score: 78,
+        recommendation: "review_before_applying",
+      },
       ...boundFingerprints,
       dimensions: {
         roleSuitability: { state: "exact" },
@@ -172,9 +178,7 @@ describe("Find jobs fit honesty", () => {
     // The claim now lives on the divider that heads this band, once, instead
     // of on every row underneath it.
     const heading = screen.getByTestId("discovery-results-group-unchecked");
-    expect(heading.textContent).toContain(
-      "Matches your role, not yet scored (1)",
-    );
+    expect(heading.textContent).toContain("Not yet assessed (1)");
     expect(screen.queryByTestId(`discovery-result-fit-${job.id}`)).toBeNull();
     expect(
       screen.queryByTestId(`discovery-result-fit-reason-${job.id}`),
@@ -185,12 +189,12 @@ describe("Find jobs fit honesty", () => {
     const srOnly = screen.getByTestId(`discovery-result-fit-sr-${job.id}`);
     expect(srOnly.className).toContain("sr-only");
     expect(srOnly.textContent).toBe(
-      "Overall fit: title-only estimate. Fit is based on the title alone. Review the listing details before applying.",
+      "Overall fit: not judged yet. The AI judges each job against your profile and goals after a search. Choose Read and assess listing to judge this one now.",
     );
     // …and it is the row's only carrier of that reason.
-    expect(screen.getAllByText(/Fit is based on the title alone/)).toEqual([
-      srOnly,
-    ]);
+    expect(
+      screen.getAllByText(/The AI judges each job against your profile/),
+    ).toEqual([srOnly]);
   });
 
   it("prints 'Fit not assessed' with no number for an unbound assessment", () => {
@@ -210,4 +214,12 @@ describe("Find jobs fit honesty", () => {
       screen.getByTestId(`discovery-result-fit-${job.id}`).textContent,
     ).toBe("78% fit");
   });
+});
+
+it("does not show a strong recommendation beside an unjudged fit", () => {
+  const job = unboundJob();
+  job.matchAssessment.recommendation = "strong_fit";
+  renderResults([job], job);
+  expect(screen.getAllByText("Fit not assessed").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Strong fit")).toBeNull();
 });

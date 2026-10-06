@@ -51,6 +51,12 @@ function createJobs(count = JOB_COUNT): SavedJob[] {
       status: "discovered",
       matchAssessment: {
         score: 70 + (index % 30),
+        judgment: {
+          source: "batch",
+          judgedAt: "2026-10-02T10:00:00.000Z",
+          score: 70 + (index % 30),
+          recommendation: "review_before_applying",
+        },
         reasons: ["Relevant product design experience"],
         gaps: [],
       },
@@ -123,6 +129,10 @@ describe("DiscoveryResultsPanel workspace scale", () => {
       />,
     );
 
+    // Bulk actions show once a row is ticked.
+    fireEvent.click(
+      screen.getAllByRole("checkbox", { name: /^Select / })[0] as HTMLElement,
+    );
     fireEvent.click(
       screen.getByRole("button", {
         name: `Shortlist all ${DISCOVERY_RESULTS_PAGE_SIZE} shown`,
@@ -236,7 +246,7 @@ describe("DiscoveryResultsPanel workspace scale", () => {
     // above it — not a chip and a caption on every row — says what is missing
     // instead of asserting a confidence it has not earned.
     expect(row.textContent).not.toContain("54%");
-    expect(screen.queryByText("Title-only estimate")).toBeNull();
+    expect(screen.queryByText("Not judged yet")).toBeNull();
     // The reason is not painted on the row any more; it survives only in the
     // row's sr-only verdict line.
     expect(
@@ -245,17 +255,13 @@ describe("DiscoveryResultsPanel workspace scale", () => {
     expect(
       row.querySelector('[data-testid^="discovery-result-fit-sr-"]')
         ?.textContent,
-    ).toContain("Fit is based on the title alone");
+    ).toContain("The AI judges each job against your profile");
     const heading = screen.getByTestId("discovery-results-group-unchecked");
-    expect(heading.textContent).toContain(
-      "Matches your role, not yet scored (1)",
+    expect(heading.textContent).toContain("Not yet assessed (1)");
+    expect(heading.textContent).not.toContain(
+      "The full requirements have not been assessed. Check the role and level before applying.",
     );
-    expect(heading.textContent).toContain(
-      "Matched on the title alone; the full requirements have not been assessed.",
-    );
-    expect(row.textContent).toContain(
-      "Overall fit: title-only estimate",
-    );
+    expect(row.textContent).toContain("Overall fit: not judged yet");
   });
 
   it("wraps unbroken result labels and exposes their full names", () => {
@@ -432,7 +438,7 @@ describe("DiscoveryResultsPanel workspace scale", () => {
     expect(screen.getByText("51–100 of 1000")).toBeTruthy();
   });
 
-  it("keeps pagination outside the scrolling result region", () => {
+  it("keeps pagination sticky within the shared results and filters scroller", () => {
     const jobs = createJobs();
     const { container } = renderResults(jobs, null);
     const scrollRegion = container.querySelector(
@@ -442,16 +448,18 @@ describe("DiscoveryResultsPanel workspace scale", () => {
     const pagination = container.querySelector("[data-job-results-pagination]");
 
     expect(resultStack).toBeTruthy();
-    expect(resultStack?.className).toContain("overflow-hidden");
+    expect(resultStack?.className).not.toContain("overflow-hidden");
     expect(scrollRegion).toBeTruthy();
     expect(scrollRegion).toBe(
       screen.getByRole("region", { name: "Job results list" }),
     );
     expect(scrollRegion?.getAttribute("tabindex")).toBe("0");
-    expect(scrollRegion?.className).toContain("pb-8");
+    expect(scrollRegion?.className).toContain("min-h-[360px]");
+    expect(scrollRegion?.className).toContain("overflow-y-auto");
     expect(pagination).toBeTruthy();
-    expect(scrollRegion?.contains(pagination)).toBe(false);
-    expect(pagination?.className).not.toContain("sticky");
+    expect(scrollRegion?.contains(pagination)).toBe(true);
+    expect(pagination?.className).toContain("sticky");
+    expect(pagination?.className).toContain("bottom-0");
     expect(pagination?.className).toContain("shrink-0");
     expect(pagination?.className).toContain("bg-(--surface-panel)");
   });
@@ -587,4 +595,14 @@ describe("DiscoveryResultsPanel workspace scale", () => {
 
     expect(onShowAlsoFound).toHaveBeenCalledTimes(1);
   });
+});
+
+it("lets a short result list take its content height below the split-pane width", () => {
+  renderResults(createJobs(2), null);
+  const scroller = document.querySelector("[data-job-results-scroll-region]")!;
+  expect(scroller.className).not.toMatch(/(?:^|\s)min-h-\[/u);
+  const stack = document.querySelector("[data-job-results-stack]")!;
+  expect(stack.querySelector("ul")?.parentElement?.className).not.toMatch(
+    /(?:^|\s)min-h-\[/u,
+  );
 });

@@ -13,8 +13,12 @@ import {
 } from "./workspace-service.test-support";
 
 const CANDIDATE_COUNT = 100;
-const REPEATED_SOURCE_CPU_BUDGET_MS = 2_000;
-const REPEATED_SOURCE_WALL_BUDGET_MS = 2_000;
+// The ledger counts below prove the repeated source skips every review; the
+// time budgets only catch a pathological slowdown. Alone the repeated run
+// takes about 0.4 s, so these leave room for a machine busy with the full
+// suite.
+const REPEATED_SOURCE_CPU_BUDGET_MS = 6_000;
+const REPEATED_SOURCE_WALL_BUDGET_MS = 10_000;
 
 function elapsedCpuMs(startedAt: NodeJS.CpuUsage): number {
   const elapsed = process.cpuUsage(startedAt);

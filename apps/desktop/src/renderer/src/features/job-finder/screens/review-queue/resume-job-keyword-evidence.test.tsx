@@ -104,6 +104,7 @@ function createJob(
     keySkills: ["React", "TypeScript"],
     keywordSignals: [],
     minimumQualifications: [],
+    benefits: [],
     ...overrides,
   };
 }
@@ -127,7 +128,7 @@ function renderedMissingKeywords(): HTMLElement {
 }
 
 describe("ResumeJobKeywordEvidencePanel", () => {
-  it("marks explicit job terms supported only when candidate source evidence matches", () => {
+  it("leaves requirements unchecked without semantic checks, even for exact phrase matches", () => {
     const draft = createDraft({
       sections: [
         createSection({
@@ -140,43 +141,21 @@ describe("ResumeJobKeywordEvidencePanel", () => {
         }),
       ],
     });
-
-    const items = buildResumeJobKeywordEvidence({
-      draft,
-      job: createJob(),
-    });
-
-    expect(items).toEqual([
-      expect.objectContaining({
-        evidence: "Built React and TypeScript interfaces for workflow teams.",
-        sourceLabel: "Saved profile",
-        status: "supported",
-        term: "React",
-      }),
-      expect.objectContaining({
-        status: "supported",
-        term: "TypeScript",
-      }),
+    const items = buildResumeJobKeywordEvidence({ draft, job: createJob() });
+    expect(items.map((item) => [item.term, item.status])).toEqual([
+      ["React", "unchecked"],
+      ["TypeScript", "unchecked"],
     ]);
-
-    const rendered = render(
-      <ResumeJobKeywordEvidencePanel draft={draft} job={createJob()} />,
+    render(<ResumeJobKeywordEvidencePanel draft={draft} job={createJob()} />);
+    expect(screen.getByText("2 not checked")).toBeTruthy();
+    expect(screen.getByText("0 supported")).toBeTruthy();
+    expect(renderedMissingKeywords().textContent).toContain("React");
+    expect(renderedSupportedKeywords().textContent).not.toContain(
+      "Saved profile:",
     );
-
-    const supported = rendered.container.querySelector(
-      "[data-resume-supported-keywords]",
-    );
-    if (!(supported instanceof HTMLElement)) {
-      throw new Error("Expected the supported-keywords panel to render.");
-    }
-    expect(within(supported).getByText("React")).toBeTruthy();
-    expect(within(supported).getByText("TypeScript")).toBeTruthy();
-    expect(screen.getByText("2 supported")).toBeTruthy();
-    expect(screen.getByText("0 not evidenced")).toBeTruthy();
-    expect(supported.textContent).toContain("Saved profile:");
   });
 
-  it("uses visible content from a profile-backed structured entry without resume text", () => {
+  it("leaves evidence unchecked without a model verdict, regardless of draft phrase overlap (R3-074)", () => {
     const draft = createDraft({
       sections: [
         createSection({
@@ -193,28 +172,83 @@ describe("ResumeJobKeywordEvidencePanel", () => {
         }),
       ],
     });
-
-    expect(buildResumeJobKeywordEvidence({ draft, job: createJob() })).toEqual([
-      expect.objectContaining({
-        evidence:
-          "React Engineer — Acme Labs — Built TypeScript interfaces for workflow teams.",
-        sourceLabel: "Saved profile",
-        status: "supported",
-        term: "React",
-      }),
-      expect.objectContaining({
-        status: "supported",
-        term: "TypeScript",
-      }),
-    ]);
-
+    const before = buildResumeJobKeywordEvidence({ draft, job: createJob() });
+    expect(before.every((item) => item.status === "unchecked")).toBe(true);
     render(<ResumeJobKeywordEvidencePanel draft={draft} job={createJob()} />);
+    expect(renderedMissingKeywords().textContent).not.toContain(
+      "Draft wording:",
+    );
+    expect(renderedMissingKeywords().textContent).not.toContain(
+      "Saved profile:",
+    );
+    const edited = { ...draft, sections: [] };
+    expect(
+      buildResumeJobKeywordEvidence({ draft: edited, job: createJob() }).map(
+        (item) => item.status,
+      ),
+    ).toEqual(before.map((item) => item.status));
+  });
 
-    const supported = renderedSupportedKeywords();
-    expect(within(supported).getByText("React")).toBeTruthy();
-    expect(within(supported).getByText("TypeScript")).toBeTruthy();
-    expect(supported.textContent).toContain("Saved profile:");
-    expect(screen.getByText("2 supported")).toBeTruthy();
+  it("uses semantic saved checks for capabilities and compound requirements (R3-074)", () => {
+    const job = {
+      ...createJob(),
+      matchAssessment: {
+        requirementsSource: "model" as const,
+        requirements: [
+          {
+            id: "lead",
+            category: "experience" as const,
+            importance: "required" as const,
+            label: "Leadership and budgeting",
+            status: "partial" as const,
+            jobEvidence: "Lead a team and manage budgets",
+            resumeEvidence: [
+              {
+                sourceKind: "experience" as const,
+                sourceId: "role",
+                label: "Saved role",
+                detail: "Led a logistics team of four",
+              },
+            ],
+            explanation: "Leadership supported; budgeting is not evidenced.",
+          },
+          {
+            id: "pipeline",
+            category: "skill" as const,
+            importance: "required" as const,
+            label: "Data pipelines",
+            status: "supported" as const,
+            jobEvidence: "Maintain ETL",
+            resumeEvidence: [
+              {
+                sourceKind: "project" as const,
+                sourceId: "project",
+                label: "Saved project",
+                detail: "Built ETL workflows",
+              },
+            ],
+            explanation: "ETL supports pipeline experience.",
+          },
+        ],
+      },
+    };
+    const draft = createDraft();
+    const items = buildResumeJobKeywordEvidence({ draft, job });
+    expect(items.map((item) => [item.term, item.status])).toEqual([
+      ["Leadership and budgeting", "partial"],
+      ["Data pipelines", "supported"],
+    ]);
+    expect(items.some((item) => item.term === "Training offered")).toBe(false);
+    render(<ResumeJobKeywordEvidencePanel draft={draft} job={job} />);
+    expect(screen.getByText("Partial support")).toBeTruthy();
+    expect(screen.getByText("1 supported")).toBeTruthy();
+    expect(screen.getByText("1 partial")).toBeTruthy();
+    expect(renderedSupportedKeywords().textContent).toContain(
+      "budgeting is not evidenced",
+    );
+    expect(
+      buildResumeJobKeywordEvidence({ draft: { ...draft, sections: [] }, job }),
+    ).toEqual(items);
   });
 
   it("does not treat a profile record locator without visible content as evidence", () => {
@@ -235,7 +269,7 @@ describe("ResumeJobKeywordEvidencePanel", () => {
       expect.objectContaining({
         evidence: null,
         sourceLabel: null,
-        status: "not_evidenced",
+        status: "unchecked",
         term: "React",
       }),
     ]);
@@ -245,10 +279,10 @@ describe("ResumeJobKeywordEvidencePanel", () => {
     const missing = renderedMissingKeywords();
     expect(within(missing).getByText("React")).toBeTruthy();
     expect(screen.getByText("0 supported")).toBeTruthy();
-    expect(screen.getByText("1 not evidenced")).toBeTruthy();
+    expect(screen.getByText("1 not checked")).toBeTruthy();
   });
 
-  it("keeps requested terms without candidate evidence in the not-evidenced list", () => {
+  it("leaves requirements unchecked when saved evidence has no semantic check", () => {
     const draft = createDraft({
       sections: [
         createSection({
@@ -270,9 +304,9 @@ describe("ResumeJobKeywordEvidencePanel", () => {
       throw new Error("Expected the missing-keywords panel to render.");
     }
     expect(within(missing).getByText("Kubernetes")).toBeTruthy();
-    expect(within(missing).getByText("Not evidenced")).toBeTruthy();
-    expect(screen.getByText("1 supported")).toBeTruthy();
-    expect(screen.getByText("1 not evidenced")).toBeTruthy();
+    expect(within(missing).getAllByText("Not checked")).toHaveLength(2);
+    expect(screen.getByText("0 supported")).toBeTruthy();
+    expect(screen.getByText("2 not checked")).toBeTruthy();
     expect(
       screen.getByText(
         "Keep these terms out unless you can add truthful support from your own experience.",
@@ -303,7 +337,7 @@ describe("ResumeJobKeywordEvidencePanel", () => {
       expect.objectContaining({
         evidence: null,
         sourceLabel: null,
-        status: "not_evidenced",
+        status: "unchecked",
         term: "Kubernetes",
       }),
     ]);
@@ -426,4 +460,20 @@ describe("ResumeJobKeywordEvidencePanel", () => {
       expect.stringContaining("A missing term is not added to the draft."),
     );
   });
+});
+
+it("does not turn employer benefits into candidate evidence gaps", () => {
+  const job = createJob({
+    keySkills: ["Figma", "Inclusive team"],
+    benefits: ["Inclusive team", "Training offered"],
+    keywordSignals: [
+      { id: "culture", label: "Inclusive team", kind: "benefit", weight: 1 },
+      { id: "training", label: "Training offered", kind: "benefit", weight: 1 },
+      { id: "tool", label: "Figma", kind: "tool", weight: 3 },
+    ],
+  });
+  const evidence = buildResumeJobKeywordEvidence({ job, draft: createDraft() });
+  expect(JSON.stringify(evidence)).not.toContain("Inclusive team");
+  expect(JSON.stringify(evidence)).not.toContain("Training offered");
+  expect(JSON.stringify(evidence)).toContain("Figma");
 });

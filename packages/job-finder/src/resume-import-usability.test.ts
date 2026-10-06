@@ -1015,8 +1015,8 @@ describe("live import education and headline regressions", () => {
       fieldOfStudy: "Supply Chain Management",
       endDate: "2018",
     });
-    // The current title, not the objective's target role.
-    expect(snapshot.profile.headline).toBe("Operations Assistant");
+    // The stated goal takes precedence when there is no header title.
+    expect(snapshot.profile.headline).toBe("Operations Coordinator");
     expect(snapshot.profile.fullName).toBe("Taylor Example");
     expect(snapshot.profile.currentLocation).toBe(
       "Columbus, OH, United States",

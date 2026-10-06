@@ -11,9 +11,11 @@ import {
   CandidateProfileSchema,
   JobSearchPreferencesSchema,
   ResumeImportFieldCandidateSummarySchema,
+  ResumeImportRunSchema,
 } from "@nordri/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
+import { ToastProvider } from "@renderer/components/ui/toast";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfileScreen } from "./profile-screen";
 
@@ -75,6 +77,7 @@ function buildProfileScreenProps(
   overrides: {
     onSaveAll?: ProfileScreenProps["onSaveAll"];
     profile?: CandidateProfile;
+    searchPreferences?: JobSearchPreferences;
   } = {},
 ): ProfileScreenProps {
   const props: ProfileScreenProps = {
@@ -113,7 +116,7 @@ function buildProfileScreenProps(
     profileSetupState,
     recentSourceDebugRuns: [],
     resumeImportProgress: null,
-    searchPreferences,
+    searchPreferences: overrides.searchPreferences ?? searchPreferences,
     sourceAccessPrompts: [],
     sourceInstructionArtifacts: [],
   };
@@ -134,14 +137,17 @@ function renderProfileScreen(
     initialEntry?: string;
     onSaveAll?: ProfileScreenProps["onSaveAll"];
     profile?: CandidateProfile;
+    searchPreferences?: JobSearchPreferences;
   } = {},
 ): ReturnType<typeof render> {
   return render(
-    <MemoryRouter
-      initialEntries={[overrides.initialEntry ?? "/job-finder/profile"]}
-    >
-      <ProfileScreen {...buildProfileScreenProps(overrides)} />
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter
+        initialEntries={[overrides.initialEntry ?? "/job-finder/profile"]}
+      >
+        <ProfileScreen {...buildProfileScreenProps(overrides)} />
+      </MemoryRouter>
+    </ToastProvider>,
   );
 }
 
@@ -154,14 +160,60 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     }
 
     vi.stubGlobal("ResizeObserver", ResizeObserverStub);
-    window.localStorage.removeItem(
-      "nordri.profile-ready-banner-dismissed-v1",
-    );
+    window.localStorage.removeItem("nordri.profile-ready-banner-dismissed-v1");
   });
 
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("R2-050 shows a running import after returning with no local pending action", () => {
+    const props = buildProfileScreenProps();
+    props.latestResumeImportRun = ResumeImportRunSchema.parse({
+      id: "synthetic_import",
+      sourceResumeId: profile.baseResume.id,
+      sourceResumeFileName: "synthetic.txt",
+      trigger: "import",
+      status: "extracting",
+      startedAt: "2026-10-02T10:00:00.000Z",
+    });
+    const view = render(
+      <MemoryRouter>
+        <ProfileScreen {...props} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryAllByText("Importing").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Import interrupted/i)).toBeNull();
+    expect(
+      screen
+        .getAllByRole("button", { name: /Replace resume/i })
+        .every((button) => button.getAttribute("aria-disabled") === "true"),
+    ).toBe(true);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Replace resume/i })[0]!,
+    );
+    expect(props.onImportResume).not.toHaveBeenCalled();
+    view.rerender(
+      <ToastProvider>
+        <MemoryRouter>
+          <ProfileScreen
+            {...props}
+            latestResumeImportRun={{
+              ...props.latestResumeImportRun,
+              status: "applied",
+              completedAt: "2026-10-02T10:01:00.000Z",
+            }}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+    expect(screen.queryAllByText("Importing")).toHaveLength(0);
+    expect(
+      screen
+        .getAllByRole("button", { name: /Replace resume/i })
+        .every((button) => button.getAttribute("aria-disabled") === "true"),
+    ).toBe(false);
   });
 
   it("keeps the full-Profile route state and draft when switching tabs before setup", () => {
@@ -416,8 +468,9 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
   it("renders the compact section panel with a reduced save-bar footprint", () => {
     renderProfileScreen();
 
-    // Ready state keeps the banner path intact.
-    expect(screen.getByText("Core setup is ready.")).toBeTruthy();
+    // Core setup being ready is a one-time toast, not a standing banner
+    // above the sections (ADR 0042).
+    expect(screen.queryByText("Core setup is ready.")).toBeNull();
 
     // Tab panel content padding is tightened at wide breakpoints.
     const panel = document.getElementById("profile-section-panel");
@@ -501,6 +554,79 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
         .getByRole("button", { name: "Save changes" })
         .hasAttribute("disabled"),
     ).toBe(false);
+  });
+
+  it("marks collapsed answers needing confirmation and counts them in Preferences", () => {
+    const saved = CandidateProfileSchema.parse({
+      ...profile,
+      answerBank: {
+        ...profile.answerBank,
+        customAnswers: [
+          {
+            id: "approved",
+            label: "Approved answer",
+            question: "Approved?",
+            answer: "Yes",
+            kind: "other",
+          },
+          {
+            id: "review",
+            label: "Review answer",
+            question: "Hours?",
+            answer: "20 hours",
+            kind: "other",
+            needsConfirmation: true,
+          },
+        ],
+      },
+    });
+    const view = renderProfileScreen({
+      initialEntry: "/job-finder/profile?section=preferences",
+      profile: saved,
+    });
+    expect(
+      screen.getByRole("tab", { name: /Preferences.*1 to confirm/ }),
+    ).toBeTruthy();
+    const row = view.container.querySelector<HTMLDetailsElement>(
+      "#answer-record-review",
+    );
+    expect(row?.open).toBe(false);
+    expect(row?.querySelector("summary")?.textContent).toContain(
+      "Needs your confirmation",
+    );
+    fireEvent.click(row!.querySelector("summary")!);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm this is my answer" }),
+    );
+    expect(row?.querySelector("summary")?.textContent).not.toContain(
+      "Needs your confirmation",
+    );
+    expect(
+      screen.getByRole("tab", { name: /^Preferences/ }).textContent,
+    ).not.toContain("to confirm");
+  });
+
+  it("splits semicolon roles in Profile and wraps chips within their column", () => {
+    renderProfileScreen({
+      initialEntry: "/job-finder/profile?section=preferences",
+    });
+    const field = screen.getByRole("textbox", { name: "Target roles" });
+    fireEvent.change(field, {
+      target: {
+        value:
+          "Junior Data Analyst; Junior Data Scientist; Working Student Data Analytics",
+      },
+    });
+    fireEvent.keyDown(field, { key: "Enter" });
+    for (const role of [
+      "Junior Data Analyst",
+      "Junior Data Scientist",
+      "Working Student Data Analytics",
+    ]) {
+      const chip = screen.getByText(role);
+      expect(chip.className).toContain("whitespace-normal");
+      expect(chip.closest("section")?.className).toContain("min-w-0");
+    }
   });
 
   it("marks the section panel scroller as the single locked pane scroll region", () => {
@@ -664,24 +790,30 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
 
     // A meaningful external canonical update lands while the draft is dirty.
     rerender(
-      <MemoryRouter initialEntries={["/job-finder/profile"]}>
-        <ProfileScreen
-          {...buildProfileScreenProps({
-            onSaveAll,
-            profile: {
-              ...profile,
-              headline: "External canonical headline",
-              currentLocation: "Berlin",
-            },
-          })}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/job-finder/profile"]}>
+          <ProfileScreen
+            {...buildProfileScreenProps({
+              onSaveAll,
+              profile: {
+                ...profile,
+                headline: "External canonical headline",
+                currentLocation: "Berlin",
+              },
+            })}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
 
-    const mergeNotice = screen.getByText(/updated in the background/);
-    expect(mergeNotice.closest('[role="status"]')).toBeTruthy();
-    expect(mergeNotice.textContent).toContain(
-      "Your unsaved edits were kept; review the merged fields before saving.",
+    // A merge that kept the draft needs nothing, so it is a toast (ADR 0042).
+    const mergeToast = document.querySelector("[data-toast]");
+    expect(mergeToast?.getAttribute("role")).toBe("status");
+    expect(mergeToast?.textContent).toContain(
+      "Profile updated in the background",
+    );
+    expect(mergeToast?.textContent).toContain(
+      "Your unsaved edits were kept. Check the merged fields before saving.",
     );
     expect(
       document
@@ -724,18 +856,22 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     // The background removes the very record the user is editing: the merge
     // cannot be safe, so the local draft stays whole under a conflict notice.
     rerender(
-      <MemoryRouter initialEntries={["/job-finder/profile?section=experience"]}>
-        <ProfileScreen
-          {...buildProfileScreenProps({
-            onSaveAll,
-            profile: {
-              ...profile,
-              experiences: [],
-              targetRoles: ["Program Manager"],
-            },
-          })}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter
+          initialEntries={["/job-finder/profile?section=experience"]}
+        >
+          <ProfileScreen
+            {...buildProfileScreenProps({
+              onSaveAll,
+              profile: {
+                ...profile,
+                experiences: [],
+                targetRoles: ["Program Manager"],
+              },
+            })}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
 
     const conflictNotice = screen.getByText(
@@ -773,11 +909,15 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     // The returned snapshot echoes what this save emitted, so the surface
     // rebases clean and the conflict notice clears without another merge.
     rerender(
-      <MemoryRouter initialEntries={["/job-finder/profile?section=experience"]}>
-        <ProfileScreen
-          {...buildProfileScreenProps({ onSaveAll, profile: emittedProfile })}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter
+          initialEntries={["/job-finder/profile?section=experience"]}
+        >
+          <ProfileScreen
+            {...buildProfileScreenProps({ onSaveAll, profile: emittedProfile })}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
 
     expect(
@@ -816,18 +956,22 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
     // The background removes the edited record: the merge aborts and the
     // notice exposes the discard-and-reload recovery action.
     rerender(
-      <MemoryRouter initialEntries={["/job-finder/profile?section=experience"]}>
-        <ProfileScreen
-          {...buildProfileScreenProps({
-            onSaveAll,
-            profile: {
-              ...profile,
-              experiences: [],
-              targetRoles: ["Program Manager"],
-            },
-          })}
-        />
-      </MemoryRouter>,
+      <ToastProvider>
+        <MemoryRouter
+          initialEntries={["/job-finder/profile?section=experience"]}
+        >
+          <ProfileScreen
+            {...buildProfileScreenProps({
+              onSaveAll,
+              profile: {
+                ...profile,
+                experiences: [],
+                targetRoles: ["Program Manager"],
+              },
+            })}
+          />
+        </MemoryRouter>
+      </ToastProvider>,
     );
 
     expect(
@@ -861,5 +1005,36 @@ describe("ProfileScreen ready-state density and save-bar footprint", () => {
       screen.getByRole<HTMLButtonElement>("button", { name: "Save changes" })
         .disabled,
     ).toBe(true);
+  });
+
+  it("carries the Job sources section through its save so the notice names it", () => {
+    const onSaveAll = vi.fn();
+    renderProfileScreen({
+      initialEntry: "/job-finder/profile?section=sources&focus=job-sources",
+      onSaveAll,
+      searchPreferences: JobSearchPreferencesSchema.parse({
+        ...searchPreferences,
+        discovery: {
+          ...searchPreferences.discovery,
+          targets: [
+            {
+              id: "synthetic-source",
+              label: "Example careers",
+              startingUrl: "https://careers.example.com",
+              enabled: true,
+            },
+          ],
+        },
+      }),
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Include .* in searches/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(onSaveAll).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "sources",
+    );
   });
 });

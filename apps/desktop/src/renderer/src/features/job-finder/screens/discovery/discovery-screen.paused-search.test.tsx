@@ -48,7 +48,6 @@ vi.mock("./discovery-results-panel", () => ({
   ),
 }));
 
-import { DISCOVERY_PAUSED_SEARCH_REASON } from "./discovery-search-readiness";
 import { DiscoveryScreen } from "./discovery-screen";
 
 const browserSession = {
@@ -151,14 +150,24 @@ afterEach(() => {
   cleanup();
 });
 
+function pausedItem() {
+  return document.querySelector('[data-page-status-item="activity-paused"]');
+}
+
 describe("DiscoveryScreen paused search availability", () => {
-  it("shows the paused banner with Resume and disables the header search with a visible reason", () => {
+  it("states the pause once on the status line with Resume and disables the header search with a visible reason", () => {
     const onResumeActivity = vi.fn();
     render(buildScreen({ activityPaused: true, onResumeActivity }));
 
-    const banner = screen.getByTestId("discovery-paused-banner");
-    expect(banner.getAttribute("role")).toBe("status");
-    expect(banner.textContent).toMatch(/paused/i);
+    // One amber status item, not a status line plus a banner.
+    const item = pausedItem();
+    expect(
+      item?.closest("[data-page-header-status]")?.getAttribute("role"),
+    ).toBe("status");
+    expect(item?.getAttribute("data-tone")).toBe("warning");
+    expect(item?.textContent).toMatch(/paused/i);
+    expect(screen.queryByTestId("discovery-paused-banner")).toBeNull();
+    expect(screen.getAllByText(/paused/i)).toHaveLength(1);
 
     const searchButton = screen.getByRole("button", { name: "Search now" });
     expect(searchButton.hasAttribute("disabled")).toBe(true);
@@ -169,7 +178,9 @@ describe("DiscoveryScreen paused search availability", () => {
     const reason = document.getElementById(
       "discovery-header-search-paused-reason",
     );
-    expect(reason?.textContent).toContain(DISCOVERY_PAUSED_SEARCH_REASON);
+    expect(reason?.textContent).toBe(
+      "Paused. New searches and applications wait until you resume.",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /resume activity/i }));
     expect(onResumeActivity).toHaveBeenCalledTimes(1);
@@ -184,15 +195,16 @@ describe("DiscoveryScreen paused search availability", () => {
       ) as HTMLElement,
     );
 
-    // Setup mode renders the filters panel; the banner stays above it.
+    // Setup mode renders the filters panel; the pause stays on the line.
     expect(screen.getByText(/setup-search-paused/i)).toBeTruthy();
-    expect(screen.getByTestId("discovery-paused-banner")).toBeTruthy();
+    expect(pausedItem()).toBeTruthy();
   });
 
   it("offers no banner and keeps search available when activity is running again", () => {
     render(buildScreen({}));
 
-    expect(screen.queryByTestId("discovery-paused-banner")).toBeNull();
+    expect(pausedItem()).toBeNull();
+    expect(document.querySelector("[data-page-header-status]")).toBeNull();
     const searchButton = screen.getByRole("button", { name: "Search now" });
     expect(searchButton.hasAttribute("disabled")).toBe(false);
 
@@ -213,9 +225,9 @@ describe("DiscoveryScreen paused search availability", () => {
       }),
     );
 
-    const resumeButton = screen
-      .getByTestId("discovery-paused-banner")
-      .querySelector("button");
+    const resumeButton = screen.getByRole("button", {
+      name: "Resume activity",
+    });
     // The shared Button marks in-flight controls via aria-busy/data-pending
     // plus aria-disabled instead of relying on color alone.
     expect(resumeButton?.getAttribute("data-pending")).toBe("true");

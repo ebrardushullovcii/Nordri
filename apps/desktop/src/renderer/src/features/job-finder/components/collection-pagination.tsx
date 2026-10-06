@@ -69,23 +69,26 @@ export function CollectionPagination({
   }
 
   return (
+    // One line: "1–40 of 353" on the left, the page buttons on the right.
     <nav
       aria-label={`${itemLabel} pagination`}
-      className="flex flex-none flex-wrap items-center justify-between gap-3 border-t border-(--surface-panel-border) px-5 py-3"
+      className="flex h-11 flex-none items-center justify-between gap-3 border-t border-(--surface-panel-border) px-3"
+      data-collection-pagination
     >
       <p
         aria-live="polite"
-        className="text-(length:--text-small) text-foreground-muted"
+        className="min-w-0 truncate text-(length:--text-small) tabular-nums text-foreground-muted"
       >
-        Showing {firstItem}–{lastItem} of {totalCount} {itemLabel}
+        {firstItem}–{lastItem} of {totalCount}
+        <span className="sr-only"> {itemLabel}</span>
       </p>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1">
         <Button
           aria-label="Previous page"
           disabled={currentPage === 1}
           onClick={() => handlePageChange(currentPage - 1, "previous")}
           ref={previousButtonRef}
-          size="sm"
+          size="xs"
           type="button"
           variant="ghost"
         >
@@ -93,7 +96,7 @@ export function CollectionPagination({
         </Button>
         <span
           aria-current="page"
-          className="min-w-20 text-center text-sm text-foreground-soft"
+          className="min-w-16 text-center text-(length:--text-small) tabular-nums text-foreground-soft"
         >
           Page {currentPage} of {pageCount}
         </span>
@@ -102,7 +105,7 @@ export function CollectionPagination({
           disabled={currentPage === pageCount}
           onClick={() => handlePageChange(currentPage + 1, "next")}
           ref={nextButtonRef}
-          size="sm"
+          size="xs"
           type="button"
           variant="ghost"
         >

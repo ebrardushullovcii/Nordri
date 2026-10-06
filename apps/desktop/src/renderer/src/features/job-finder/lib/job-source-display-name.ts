@@ -20,17 +20,26 @@ export function deriveJobSourceLabel(startingUrl: string): string {
   try {
     const url = new URL(startingUrl.trim());
     const hostname = url.hostname.replace(/^www\./, "");
-    const isLoopback =
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "[::1]";
     const firstPathSegment = url.pathname.split("/").filter(Boolean)[0];
-    if (isLoopback && firstPathSegment) {
-      return `${url.host}/${firstPathSegment}`;
+    if (firstPathSegment) {
+      return `${url.host.replace(/^www\./, "")}/${firstPathSegment}`;
     }
     return hostname || startingUrl.trim() || "URL not set";
   } catch {
     return startingUrl.trim() || "URL not set";
+  }
+}
+
+/** Recognizes both current labels and older labels that showed only the host. */
+export function isGeneratedJobSourceLabel(
+  label: string,
+  startingUrl: string,
+): boolean {
+  if (label === deriveJobSourceLabel(startingUrl)) return true;
+  try {
+    return label === new URL(startingUrl).hostname;
+  } catch {
+    return false;
   }
 }
 
@@ -48,10 +57,17 @@ const JOB_SOURCE_NAMES: Record<JobSource, string> = {
  */
 export function jobSourceLabel(
   sourceTargetId: string,
-  targets: readonly Pick<JobDiscoveryTarget, "id" | "label">[],
+  targets: readonly (Pick<JobDiscoveryTarget, "id" | "label"> &
+    Partial<Pick<JobDiscoveryTarget, "startingUrl">>)[],
 ): string {
   const id = sourceTargetId.trim();
-  const saved = targets.find((target) => target.id === id)?.label.trim() ?? "";
+  const target = targets.find((target) => target.id === id);
+  const saved = target?.label.trim() ?? "";
+  if (
+    target?.startingUrl &&
+    isGeneratedJobSourceLabel(saved, target.startingUrl)
+  )
+    return deriveJobSourceLabel(target.startingUrl);
   if (saved.length > 0) return saved;
   return UNNAMED_JOB_SOURCE_NAME;
 }

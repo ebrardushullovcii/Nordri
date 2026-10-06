@@ -115,7 +115,7 @@ export function ProfileSetupStepEditor(props: {
         <div className="grid gap-2">
           <p className="text-sm leading-6 text-foreground-soft">
             {props.hasUnsavedChanges
-              ? "You have unsaved changes on this step."
+              ? "You have unsaved setup changes."
               : "No unsaved changes."}
           </p>
           {props.validationMessage ? (

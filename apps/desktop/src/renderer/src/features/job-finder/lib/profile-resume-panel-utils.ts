@@ -1,4 +1,28 @@
-import type { ResumeImportFieldCandidateSummary } from "@nordri/contracts";
+import type {
+  ResumeImportFieldCandidateSummary,
+  ResumeImportRun,
+  ResumeImportProgressEvent,
+} from "@nordri/contracts";
+
+export function getRunningResumeImportProgress(
+  run: ResumeImportRun | null,
+): ResumeImportProgressEvent | null {
+  if (
+    !run ||
+    !["queued", "parsing", "extracting", "reconciling"].includes(run.status)
+  )
+    return null;
+  return {
+    stage:
+      run.status === "reconciling"
+        ? "saving_results"
+        : run.status === "extracting"
+          ? "building_profile"
+          : "reading_document",
+    message: "The latest resume import is still in progress.",
+    occurredAt: run.startedAt,
+  };
+}
 
 const monthIndexByName: Record<string, number> = {
   jan: 0,
@@ -193,19 +217,23 @@ function getEstimatedYearsExperienceFromRecords(
 }
 
 export function getVisibleYearsExperience(input: {
-  profileYearsExperience: number;
+  profileYearsExperience: number | null;
   reviewCandidates: readonly ResumeImportFieldCandidateSummary[];
   today?: Date;
-}): number {
-  const pendingYearsExperience = getPendingYearsExperience(
-    input.reviewCandidates,
+}): number | null {
+  const reviewedCandidates = input.reviewCandidates.filter(
+    (candidate) =>
+      candidate.resolution === "auto_applied" &&
+      candidate.resolutionReason === "review_confirmed",
   );
+  const pendingYearsExperience = getPendingYearsExperience(reviewedCandidates);
   const estimatedYearsExperience = getEstimatedYearsExperienceFromRecords(
-    input.reviewCandidates,
+    reviewedCandidates,
     input.today,
   );
 
-  return input.profileYearsExperience > 0
+  return input.profileYearsExperience !== null &&
+    input.profileYearsExperience > 0
     ? input.profileYearsExperience
     : (pendingYearsExperience ??
         estimatedYearsExperience ??

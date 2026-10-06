@@ -524,3 +524,33 @@ describe("CampaignRuleBuilder", () => {
     expect(screen.getByLabelText("Value (number)")).toBeTruthy();
   });
 });
+
+it("R3-219 starts a pay rule from EUR yearly profile minimum", () => {
+  const campaign = createCampaign();
+  campaign.searchPreferences.compensation = {
+    minimum: 55000,
+    maximum: null,
+    interval: "year",
+    currency: "EUR",
+    currencyStatus: "explicit",
+  };
+  const onSaveRule = vi.fn();
+  renderBuilder({ campaign, onSaveRule });
+  fireEvent.change(screen.getByLabelText("Job field"), {
+    target: { value: "compensation" },
+  });
+  expect(screen.getByLabelText("Currency")).toHaveProperty("value", "EUR");
+  expect(screen.getByLabelText("Value (number)")).toHaveProperty(
+    "value",
+    "55000",
+  );
+  expect(screen.getByText(/Compare yearly pay/).textContent).toContain(
+    "advertised minimum",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+  expect(onSaveRule.mock.calls[0]?.[0]).toMatchObject({
+    currency: "EUR",
+    numericValue: 55000,
+    operator: "greater_than_or_equal",
+  });
+});

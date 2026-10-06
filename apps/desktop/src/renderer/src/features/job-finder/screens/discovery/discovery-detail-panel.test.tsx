@@ -124,7 +124,7 @@ describe("DiscoveryDetailPanel listing capture copy", () => {
     });
   });
 
-  it("explains a refused detail read as a title-only estimate", () => {
+  it("explains a refused detail read as a not judged yet", () => {
     const blockedJob = {
       ...baseSelectedJob,
       description: "Headway Featured Full-Time United States of America",
@@ -469,7 +469,7 @@ describe("DiscoveryDetailPanel", () => {
     expect(getByText("Location and work mode")).toBeTruthy();
     expect(getByLabelText("Overall fit: not assessed")).toBeTruthy();
     expect(getByText("Review before applying")).toBeTruthy();
-    expect(getByText("Duplicate role reason")).toBeTruthy();
+    expect(getByText("Duplicate role reason.")).toBeTruthy();
     fireEvent.click(getByRole("button", { name: "Not interested" }));
     expect(
       getByText(
@@ -1143,7 +1143,7 @@ describe("DiscoveryDetailPanel", () => {
     const selectedJob = createSelectedJob({
       id: "job_shortlisted",
       title: "Senior Frontend Engineer",
-      status: "shortlisted",
+      status: "drafting",
     });
     const onQueueJob = vi.fn();
 
@@ -1161,7 +1161,7 @@ describe("DiscoveryDetailPanel", () => {
 
     expect(screen.queryByRole("button", { name: "Shortlist job" })).toBeNull();
     expect(screen.queryByText("Already shortlisted")).toBeNull();
-    expect(screen.getByText("Shortlisted")).toBeTruthy();
+    expect(screen.getByText("No resume yet")).toBeTruthy();
     const openLink = screen.getByRole("link", { name: "Open in Shortlisted" });
     expect(
       screen.getByTestId("discovery-detail-primary-action").contains(openLink),
@@ -1611,7 +1611,7 @@ describe("job inspector fit honesty", () => {
     );
 
     expect(screen.getByTestId("discovery-detail-fit-score").textContent).toBe(
-      "Title-only estimate",
+      "Not judged yet",
     );
     expect(screen.queryByText(/^54% fit$/)).toBeNull();
   });
@@ -1770,4 +1770,128 @@ describe("listFlaggedKeywordTerms", () => {
       ),
     ).toEqual(["Kubernetes", "Fintech"]);
   });
+});
+
+describe("requested listing assessment", () => {
+  afterEach(cleanup);
+  it("exposes read and assess, reports failure, and returns to results", async () => {
+    const onAssessJobListing = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "The listing could not be read from this page. Open the listing and try again.",
+        ),
+      );
+    const onBackToResults = vi.fn();
+    render(
+      <MemoryRouter>
+        <DiscoveryDetailPanel
+          discoveryTargets={[]}
+          isJobPending={() => false}
+          onDismissJob={vi.fn()}
+          onQueueJob={vi.fn()}
+          selectedJob={baseSelectedJob}
+          onAssessJobListing={onAssessJobListing}
+          onBackToResults={onBackToResults}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Read and assess listing" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "The listing could not be read from this page. Open the listing and try again.",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(onAssessJobListing).toHaveBeenCalledWith(baseSelectedJob.id);
+    fireEvent.click(screen.getByRole("button", { name: "Back to results" }));
+    expect(onBackToResults).toHaveBeenCalledOnce();
+  });
+});
+
+it("hides a listing without optional reasons and lets a removed shortlist job be added again", async () => {
+  const onDismiss = vi.fn().mockResolvedValue(undefined);
+  const onQueue = vi.fn();
+  render(
+    <MemoryRouter>
+      <DiscoveryDetailPanel
+        discoveryTargets={[]}
+        isJobPending={() => false}
+        onDismissJob={onDismiss}
+        onQueueJob={onQueue}
+        selectedJob={createSelectedJob({
+          id: "returned_job",
+          status: "shortlisted",
+        })}
+      />
+    </MemoryRouter>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Shortlist job" }));
+  expect(onQueue).toHaveBeenCalledWith("returned_job");
+  expect(screen.queryByText("Open in Shortlisted")).toBeNull();
+  expect(screen.queryByText("Shortlisted")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Not interested" }));
+  fireEvent.click(screen.getByRole("button", { name: "Hide this job only" }));
+  await waitFor(() =>
+    expect(onDismiss).toHaveBeenCalledWith(
+      "returned_job",
+      [],
+      "hide_job",
+      null,
+    ),
+  );
+});
+
+it("keeps long German listing words inside the shrinking detail column", () => {
+  cleanup();
+  const text = "EntwicklungszusammenarbeitundQualitaetssicherungsverantwortung";
+  render(
+    <MemoryRouter>
+      <DiscoveryDetailPanel
+        applicationRecords={[]}
+        discoveryTargets={[]}
+        isJobPending={() => false}
+        onDismissJob={vi.fn()}
+        onOpenApplication={vi.fn()}
+        onQueueJob={vi.fn()}
+        selectedJob={{ ...baseSelectedJob, description: text } as SavedJob}
+      />
+    </MemoryRouter>,
+  );
+  const listing = screen.getByTestId("discovery-detail-listing-text");
+  expect(listing.parentElement?.className).toContain("min-w-0");
+  expect(listing.parentElement?.className).toContain(
+    "[overflow-wrap:anywhere]",
+  );
+  expect(listing.textContent).toContain(text);
+});
+
+it("wraps a long employer name in the Companies button instead of widening the column", () => {
+  cleanup();
+  render(
+    <MemoryRouter>
+      <DiscoveryDetailPanel
+        applicationRecords={[]}
+        discoveryTargets={[]}
+        isJobPending={() => false}
+        onDismissJob={vi.fn()}
+        onOpenApplication={vi.fn()}
+        onOpenCompany={vi.fn()}
+        onQueueJob={vi.fn()}
+        selectedJob={
+          {
+            ...baseSelectedJob,
+            company: "Nordlicht Logistik Speditionsgesellschaft mbH",
+          } as SavedJob
+        }
+        selectedJobCompanyId="company_long"
+      />
+    </MemoryRouter>,
+  );
+  const button = screen.getByRole("button", { name: /in Companies$/ });
+  expect(button.className).toContain("whitespace-normal");
+  expect(button.className).toContain("max-w-full");
 });

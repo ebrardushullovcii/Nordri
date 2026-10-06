@@ -127,6 +127,25 @@ function renderPanel(
 }
 
 describe("ReviewQueueMissionPanel", () => {
+  it("keeps a hard conflict visible beside Apply for an Original resume", () => {
+    renderPanel({
+      selectedItem: createItem({ resumeApplicationMode: "original_resume" }),
+      selectedJob: {
+        ...createJob(),
+        matchAssessment: {
+          ...createJob().matchAssessment,
+          recommendation: "skip",
+          recommendationRationale:
+            "The listing belongs to a different occupational role.",
+        },
+      },
+    });
+    expect(screen.getByText("Probably skip")).toBeTruthy();
+    expect(
+      screen.getByText("The listing belongs to a different occupational role."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeTruthy();
+  });
   it("shows the resume level, one Apply, and one sentence on what Apply does", () => {
     const props = renderPanel();
 
@@ -252,7 +271,9 @@ describe("ReviewQueueMissionPanel", () => {
       }),
     });
 
-    expect(screen.queryByRole("button", { name: "Try again with AI" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Try again with AI" }),
+    ).toBeNull();
   });
 
   it("sends an Aggressive draft to review instead of Apply", () => {
@@ -457,7 +478,7 @@ describe("ReviewQueueMissionPanel", () => {
     renderPanel({
       originalResume: {
         id: "resume_base",
-        fileName: "base-resume.pdf",
+        fileName: "base-resume.md",
         uploadedAt: "2026-08-20T00:00:00.000Z",
       } as never,
       selectedAsset: null,
@@ -468,8 +489,8 @@ describe("ReviewQueueMissionPanel", () => {
         resumeReview: {
           status: "original_resume",
           sourceDocumentId: "resume_base",
-          fileName: "base-resume.pdf",
-          filePath: "/tmp/base-resume.pdf",
+          fileName: "base-resume.md",
+          filePath: "/tmp/base-resume.md",
         },
       }),
     });
@@ -479,10 +500,52 @@ describe("ReviewQueueMissionPanel", () => {
       "attaches your original resume",
     );
     expect(
-      screen.getByText(/base-resume\.pdf goes out exactly as imported/),
+      screen.getByText(/base-resume\.md goes out with its content unchanged/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Forms that accept plain text receive an unchanged \.txt copy/,
+      ),
     ).toBeTruthy();
     // Its studio is one press away: that is where the original becomes an
     // editable resume.
     expect(screen.getByRole("button", { name: "Edit resume" })).toBeTruthy();
   });
+});
+
+it("explains that changing a written level starts a draft before the click", () => {
+  renderPanel();
+  expect(
+    screen.getByText(
+      "Choosing another level writes a new draft. Original uses your file unchanged.",
+    ),
+  ).toBeTruthy();
+});
+
+it("lets a person remove a job during writing and explains remaining AI work", () => {
+  const props = renderPanel({ isJobPending: () => true });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Remove from shortlist" }),
+  );
+  expect(props.onRemoveReviewJob).toHaveBeenCalledWith("job_1");
+  expect(screen.getByText(/Removing this job stops the draft/)).toBeTruthy();
+});
+
+it("never describes an Original listing assessment as resume writing", () => {
+  renderPanel({
+    selectedItem: createItem({
+      resumeApplicationMode: "original_resume",
+      assetStatus: "ready",
+      resumeAssetId: "original",
+      resumeReview: {
+        status: "original_resume",
+        fileName: "synthetic.pdf",
+        filePath: "/tmp/synthetic.pdf",
+        sourceDocumentId: "synthetic",
+      },
+    }),
+    isJobPending: () => true,
+  });
+  expect(screen.queryByText(/Writing resume/i)).toBeNull();
+  expect(screen.queryByText(/Writing and checking/i)).toBeNull();
 });

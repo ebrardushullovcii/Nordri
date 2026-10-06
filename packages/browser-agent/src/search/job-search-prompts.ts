@@ -87,6 +87,7 @@ export function createJobSearchPrompts(config: AgentConfig): {
     `You are working in this person's browser on ${promptContext.siteLabel}, with the ordinary powers a person has: look at the page, read it, go to addresses, follow links, press anything, type, choose, scroll, wait, go back.`,
     "",
     goal,
+    "When reading a listing or search-results page without extract_jobs, use observe or read_text with pageType search_results or job_detail. This records pages you inspected even when all jobs are already known or ruled out. Include numbered pages and keyword-search results. Use other for sign-in, help and other non-listing pages. extract_jobs records its own page automatically.",
     packet ? null : searchFocus,
     packet ? null : remoteHandling,
     !packet && searchIntent
@@ -119,8 +120,14 @@ export function createJobSearchPrompts(config: AgentConfig): {
     boundedResumeText ? `- Resume text (bounded):\n${boundedResumeText}` : null,
     "",
     "How to work:",
-    "- Work the site out the way a person would. Use its search and filters when they help; scroll or page through results; open a posting only when the card is not enough.",
-    "- Save what you find with scan_cards (fast, on results pages) or extract_jobs (reads any page). Each tells you what was new and what you already had; saved_jobs lists everything so far. Never reopen a posting you already saved.",
+    "- Read each supplied starting URL. When one is an exact vacancy page, consider and extract that vacancy before exploring other employer pages; do not substitute senior vacancies for a supplied graduate role. Check country/location variants separately rather than assuming a US-only card describes a Canada variant. If a supplied vacancy is excluded, name it and the specific reason in your finish report.",
+    "- Explicit exclusions and the person's source notes apply in every breadth, including wide searches. Keep plausible related roles, not unrelated job families. Extraction receives these instructions too. Your finish report must agree with what you saved; do not say no suitable jobs were kept when saved_jobs contains unsuitable ones.",
+    `- Work eligibility: ${JSON.stringify(config.userProfile.workEligibility)}. Saved authorization: ${config.userProfile.answerBank.workAuthorization ?? "not stated"}. Saved availability: ${config.userProfile.answerBank.availability ?? "not stated"}. Remote country restrictions still apply.`,
+    "- Work the site out the way a person would. Use its search and filters when they help; scroll or page through results.",
+    "- Save from the results pages: extract_jobs on a page of results reads every listing in one step. Pass rejected with each listing URL, category and a short plain reason for every card you rule out; saying it in your final answer does not record the rejection. Cover every results page and paginate or scroll until the source is exhausted; tell the person what remains if you stop early. It tells you what was new and what you already had; saved_jobs lists everything so far. Never reopen a posting you already saved.",
+    packet
+      ? null
+      : "- After the search, Job Finder reads each saved job's full listing and judges how well it fits, so do not open postings just to read their details. Open one only when its card does not show enough to tell whether it could fit, such as a bare title that could mean several kinds of work.",
     "- When the site exposes a task-relevant JSON or text endpoint and the visible page is incomplete, read_page_api can retrieve it with this browser session. It is GET-only. Use an endpoint the page reveals; do not guess unrelated APIs.",
     "- Jobs can be in any language; a non-English posting that fits is a fit.",
     "- Close a cookie banner or chat bubble yourself. If a page is still loading, wait and look again. If a link is the wrong way, go back.",

@@ -267,19 +267,91 @@ export function buildDiscoveryRunReport(
     (total, execution) => total + execution.jobsSkippedByLedger,
     0,
   );
-  const found =
+  const unique = Math.max(
+    new Set(
+      run.targetExecutions.flatMap((execution) => execution.encounteredJobIds),
+    ).size,
+    run.summary.validJobsFound,
+  );
+  const found = Math.max(
+    unique,
     Math.max(reviewed, run.summary.validJobsFound + duplicates) +
-    Math.max(skippedAsSaved, run.summary.jobsSkippedByLedger);
+      Math.max(skippedAsSaved, run.summary.jobsSkippedByLedger),
+  );
 
+  const counted =
+    run.targetExecutions.length > 0 &&
+    run.targetExecutions.every((source) => source.jobsInspected !== undefined);
+  const inspected = run.targetExecutions.reduce(
+    (sum, source) => sum + (source.jobsInspected ?? 0),
+    0,
+  );
   return DiscoveryRunReportSchema.parse({
-    version: 1,
+    sources: run.targetExecutions.map((source) => ({
+      targetId: source.targetId,
+      inspected: source.jobsInspected ?? null,
+      saved: source.jobsPersisted + source.jobsStaged,
+      rejected:
+        source.jobsInspected !== undefined
+          ? (source.rejectedListings?.length ?? 0) + source.invalidSkipped
+          : null,
+      duplicates: source.duplicatesMerged + source.jobsSkippedByLedger,
+      deferred: source.listingsDeferred ?? null,
+      pagesCovered: source.pagesCovered ?? null,
+    })),
+    ...(counted
+      ? {
+          rejected: run.targetExecutions.reduce(
+            (sum, source) =>
+              sum +
+              (source.rejectedListings?.length ?? 0) +
+              source.invalidSkipped,
+            0,
+          ),
+          deferred: run.targetExecutions.reduce(
+            (sum, source) => sum + (source.listingsDeferred ?? 0),
+            0,
+          ),
+          pagesCovered: run.targetExecutions.every(
+            (source) => source.pagesCovered !== undefined,
+          )
+            ? run.targetExecutions.reduce(
+                (sum, source) => sum + (source.pagesCovered ?? 0),
+                0,
+              )
+            : null,
+        }
+      : {}),
+    version: 2,
     measuredAt,
-    found,
+    found: counted ? inspected : found,
+    unique:
+      counted &&
+      run.targetExecutions.some(
+        (source) => source.uniqueInspectionsKnown === false,
+      )
+        ? null
+        : counted &&
+            run.targetExecutions.every(
+              (source) => source.inspectedJobIds !== undefined,
+            )
+          ? new Set(
+              run.targetExecutions.flatMap(
+                (source) => source.inspectedJobIds ?? [],
+              ),
+            ).size
+          : unique,
     new: run.summary.validJobsFound,
     saved,
     retained: run.campaignId === null ? saved : null,
     worthOpening: null,
-    duplicates,
+    duplicates: counted
+      ? run.targetExecutions.reduce(
+          (sum, source) =>
+            sum + source.duplicatesMerged + source.jobsSkippedByLedger,
+          0,
+        )
+      : duplicates,
   });
 }
 
@@ -292,7 +364,6 @@ export function applyDiscoveryRunRetentionCounts(
   run: DiscoveryRunRecord,
   counts: {
     measuredAt: string;
-    new?: number;
     alreadyHere?: number;
     retained: number;
     worthOpening: number;
@@ -307,7 +378,6 @@ export function applyDiscoveryRunRetentionCounts(
       ...run.summary,
       report: DiscoveryRunReportSchema.parse({
         ...report,
-        new: counts.new ?? report.new,
         alreadyHere: counts.alreadyHere ?? report.alreadyHere,
         retained: counts.retained,
         worthOpening: counts.worthOpening,
@@ -383,7 +453,10 @@ export function recoverInterruptedDiscoveryRun(
     }),
   );
 
-  return finalizeDiscoveryRun(recoveredRun, "failed", completedAt);
+  return DiscoveryRunRecordSchema.parse({
+    ...finalizeDiscoveryRun(recoveredRun, "failed", completedAt),
+    runPhase: "interrupted",
+  });
 }
 
 /**

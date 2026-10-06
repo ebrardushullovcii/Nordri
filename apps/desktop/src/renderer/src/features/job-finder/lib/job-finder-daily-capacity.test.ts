@@ -1,3 +1,5 @@
+import { ApplyJobResultSchema } from "@nordri/contracts";
+import { describeDailyPreparationUsage } from "./job-finder-daily-capacity";
 import type { GlobalDailyApplicationPreparationCapacity } from "@nordri/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -54,14 +56,14 @@ describe("formatDailyPreparationCapacitySummaryText", () => {
   it("falls back to the safeguard maximum when no derived capacity exists", () => {
     expect(FALLBACK_DAILY_APPLICATION_PREPARATION_LIMIT).toBe(20);
     expect(formatDailyPreparationCapacitySummaryText(null)).toBe(
-      "Applications today: up to 20 per day",
+      "Preparations today: up to 20 per day",
     );
   });
 
   it("names exact usage, the limit, and remaining slots with reset timing", () => {
     const text = formatDailyPreparationCapacitySummaryText(createCapacity());
 
-    expect(text).toBe("Applications today: 12 of 20 used · resets at midnight");
+    expect(text).toBe("Preparations today: 12 of 20 used · resets at midnight");
     expect(text).not.toContain("exact begun");
     expect(text).not.toContain("available after midnight");
   });
@@ -71,14 +73,14 @@ describe("formatDailyPreparationCapacitySummaryText", () => {
       createCapacity({ used: 19, legacyUncertain: 1, remaining: 0 }),
     );
     expect(singular).toBe(
-      "Applications today: 19 of 20 used (1 older record may also count) · more available after midnight",
+      "Preparations today: 19 of 20 used (1 older record may also count) · more available after midnight",
     );
 
     const plural = formatDailyPreparationCapacitySummaryText(
       createCapacity({ used: 18, legacyUncertain: 2, remaining: 0 }),
     );
     expect(plural).toBe(
-      "Applications today: 18 of 20 used (2 older records may also count) · more available after midnight",
+      "Preparations today: 18 of 20 used (2 older records may also count) · more available after midnight",
     );
   });
 
@@ -100,7 +102,7 @@ describe("formatDailyPreparationBatchExceedsRemainingText", () => {
     });
 
     expect(text).toContain("You selected 4 jobs for this run");
-    expect(text).toContain("only 8 of 20 daily application slots remain");
+    expect(text).toContain("only 8 of 20 daily preparation slots remain");
     expect(text).toContain("Trim the selection to 8 or fewer");
     expect(text).toMatch(/resets at local midnight \(/u);
   });
@@ -112,7 +114,7 @@ describe("formatDailyPreparationBatchExceedsRemainingText", () => {
     });
 
     expect(text).toContain("You selected 1 job for this run");
-    expect(text).toContain("only 1 of 20 daily application slot remains");
+    expect(text).toContain("only 1 of 20 daily preparation slot remains");
   });
 });
 
@@ -123,7 +125,7 @@ describe("formatDailyPreparationCapacityReachedText", () => {
     );
 
     expect(text).toBe(
-      "Today's application preparation limit is reached: 20 of 20 used today. New preparations reset at local midnight (" +
+      "Today's preparation limit is reached: 20 of 20 used today. Failed attempts and retries each use a slot when preparation starts. Continuing a filled form does not. New preparations reset at local midnight (" +
         formatDailyPreparationResetTime("2026-08-26T04:00:00.000Z") +
         ").",
     );
@@ -142,4 +144,29 @@ describe("formatDailyPreparationCapacityReachedText", () => {
       ),
     ).toContain("plus 3 older records that may also have begun");
   });
+});
+
+it("explains charged attempts, retries, failures and confirmed sends separately", () => {
+  const results = ["first", "retry", "second"].map((id, index) =>
+    ApplyJobResultSchema.parse({
+      id,
+      runId: id,
+      jobId: index === 2 ? "other" : "same",
+      state: index === 0 ? "failed" : "awaiting_review",
+      summary: "Synthetic preparation",
+      detail: "Synthetic",
+      startedAt: "2026-08-25T12:00:00Z",
+      updatedAt: "2026-08-25T12:00:00Z",
+      applicationPreparationStartedAt: "2026-08-25T12:00:00Z",
+      applicationPreparationStartedLocalDate: "2026-08-25",
+    }),
+  );
+  expect(
+    describeDailyPreparationUsage({
+      capacity: createCapacity({ used: 3 }),
+      results,
+    }),
+  ).toContain(
+    "3 preparation attempts today · 1 repeat attempt · 1 failed or stopped · 0 confirmed sends",
+  );
 });

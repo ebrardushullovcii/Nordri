@@ -238,3 +238,17 @@ describe("getDiscoveryListingDateBadge", () => {
     ).toEqual({ rankable: false, shown: false, text: "" });
   });
 });
+
+it("keeps the beginning of a long posting chip readable when the row is narrow", () => {
+  render(
+    <DiscoveryResultsPanel
+      browserSession={browserSession}
+      jobs={[createJob("one", { postedAtText: "2 days ago" })]}
+      onSelectJob={vi.fn()}
+      selectedJob={null}
+    />,
+  );
+  const chip = screen.getByText("Posted 2 days ago");
+  expect(chip.className).toContain("justify-start");
+  expect(chip.className).not.toContain("justify-center");
+});

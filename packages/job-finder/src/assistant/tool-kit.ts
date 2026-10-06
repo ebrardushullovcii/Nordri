@@ -1,4 +1,5 @@
 import type {
+  AssistantNavigationDisplay,
   AssistantChangeEntry,
   AssistantChangeReceipt,
   AssistantChangeTarget,
@@ -124,7 +125,11 @@ export interface AssistantTurnSession {
   /** The tab lent for this turn, leased on first use (ADR 0038). */
   browserLease(options?: {
     openUrl?: string | null;
+    newTab?: boolean;
+    tabId?: string;
+    applicationResultId?: string;
   }): Promise<AssistantBrowserLease>;
+  releaseBrowserLease?(): Promise<void>;
   getResultSet(id: string): Promise<AssistantResultSet | null>;
   listResultSets(): Promise<AssistantResultSet[]>;
   recordChange(input: {
@@ -181,8 +186,13 @@ export interface AssistantTurnSession {
     { messageId: string; createdAt: string; role: string; excerpt: string }[]
   >;
   /** True the first time this conversation reads the profile. */
+  /** Checks conversation evidence before an assistant value is filed as the person's answer. */
+  assertPersonAnswerAuthority?(input: {
+    answers: readonly { question: string; answer: string }[];
+    saveForFuture: boolean;
+  }): Promise<void>;
   firstProfileRead(): Promise<boolean>;
-  openInApp(route: string): void;
+  openInApp(route: string): Promise<AssistantNavigationDisplay | void> | void;
   /** The route can see images (screenshots are useful). */
   visionAvailable: boolean;
 }

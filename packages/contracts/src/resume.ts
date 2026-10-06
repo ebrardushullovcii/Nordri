@@ -134,6 +134,7 @@ export type TailoredResumeCoverageMetadata = z.infer<
 export const resumePatchOperationValues = [
   "replace_section_text",
   "replace_entry_summary",
+  "replace_entry_date_range",
   "insert_bullet",
   "update_bullet",
   "remove_bullet",
@@ -261,6 +262,8 @@ export type ResumeClaimEvidenceRef = z.infer<
 export const resumeClaimVerifierValues = [
   "deterministic_candidate_evidence_v1",
   "deterministic_candidate_evidence_v2",
+  /** The model read the line against the candidate's evidence (ADR 0041). */
+  "model_fact_check_v1",
 ] as const;
 export const ResumeClaimVerifierSchema = z.enum(resumeClaimVerifierValues);
 export type ResumeClaimVerifier = z.infer<typeof ResumeClaimVerifierSchema>;
@@ -684,11 +687,74 @@ export const WorkHistoryReviewAcknowledgmentsFieldSchema = z
   .max(100)
   .default([]);
 
+/**
+ * The model's verdict on one resume line, kept with the draft so every check
+ * of the same wording reuses it (ADR 0041). Keyed by the normalized-content
+ * hash; reworded lines are checked again.
+ */
+export const ResumeClaimCheckSchema = z.object({
+  contentHash: NonEmptyStringSchema,
+  verdict: z.enum(["supported", "stretch", "unsupported"]),
+  reason: z.string().default(""),
+  evidenceIds: z.array(NonEmptyStringSchema).default([]),
+  /**
+   * The checker's fix for a line it did not pass: the line rewritten to claim
+   * only what the evidence backs, or "" when nothing in it can be kept. Null
+   * when the line passed or no fix was given.
+   */
+  fix: z.string().nullable().default(null),
+  /** The checker's note when the line is not finished resume writing. */
+  style: z.string().nullable().optional(),
+  /**
+   * Fingerprint of the evidence and tailoring strength it was checked
+   * against; a change to either re-checks.
+   */
+  evidenceKey: NonEmptyStringSchema.nullable().default(null),
+  checkedAt: IsoDateTimeSchema,
+});
+export type ResumeClaimCheck = z.infer<typeof ResumeClaimCheckSchema>;
+
+export const ResumeBatchCheckpointSchema = z.object({
+  id: NonEmptyStringSchema,
+  jobIds: z.array(NonEmptyStringSchema),
+  activeJobIds: z.array(NonEmptyStringSchema),
+  completedJobIds: z.array(NonEmptyStringSchema),
+  done: z.boolean(),
+  stopRequested: z.boolean(),
+  requests: z
+    .array(
+      z.object({
+        jobId: NonEmptyStringSchema,
+        regenerate: z.boolean().optional(),
+        level: z.enum(["light", "tailored", "aggressive"]).optional(),
+        language: NonEmptyStringSchema.optional(),
+      }),
+    )
+    .optional(),
+  durationsMs: z.array(z.number().nonnegative().finite()).optional(),
+  resumedBatchIds: z.array(NonEmptyStringSchema).optional(),
+  /** Liveness is rederived from this process before a saved receipt is displayed. */
+  running: z.boolean().optional(),
+});
+export type ResumeBatchCheckpoint = z.infer<typeof ResumeBatchCheckpointSchema>;
+
+export const ResumeLanguageTranslationSchema = z.object({
+  language: NonEmptyStringSchema,
+  listingLanguage: NonEmptyStringSchema.nullable().optional(),
+  translations: z.array(
+    z.object({ id: NonEmptyStringSchema, text: NonEmptyStringSchema }),
+  ),
+});
+
 export const ResumeDraftSchema = z.object({
   id: NonEmptyStringSchema,
   jobId: NonEmptyStringSchema,
   status: ResumeDraftStatusSchema,
   templateId: ResumeTemplateIdSchema,
+  /** Null follows the listing language; a value is the person’s choice. */
+  language: NonEmptyStringSchema.nullable().optional(),
+  writtenLanguage: NonEmptyStringSchema.nullable().optional(),
+  listingLanguage: NonEmptyStringSchema.nullable().optional(),
   identity: ResumeDraftIdentitySchema.nullable().default(null),
   sections: z.array(ResumeDraftSectionSchema).default([]),
   targetPageCount: z.number().int().min(1).max(3).default(2),
@@ -699,6 +765,7 @@ export const ResumeDraftSchema = z.object({
   workHistoryReviewAcknowledgments: WorkHistoryReviewAcknowledgmentsFieldSchema,
   claimConfirmations: ResumeClaimConfirmationsFieldSchema,
   issueApprovals: ResumeIssueApprovalsFieldSchema,
+  claimChecks: z.array(ResumeClaimCheckSchema).optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });
@@ -816,6 +883,20 @@ export function isBlockingResumeValidationIssue(
   return issue.severity === "error";
 }
 
+/**
+ * Whether an assessment comes from a verifier whose verdicts still stand:
+ * the model's fact check, or the last deterministic verifier for claims
+ * assessed before it (ADR 0041). Older verdicts must be checked again.
+ */
+export function isCurrentResumeClaimVerifier(
+  verifier: ResumeClaimVerifier,
+): boolean {
+  return (
+    verifier === "model_fact_check_v1" ||
+    verifier === "deterministic_candidate_evidence_v2"
+  );
+}
+
 export function isGeneratedResumeClaimOrigin(
   origin: ResumeDraftOrigin,
 ): boolean {
@@ -854,7 +935,7 @@ export function isBlockingResumeClaimAssessment(input: {
 }): boolean {
   const assessment = input.assessment;
 
-  if (assessment.verifier !== "deterministic_candidate_evidence_v2") {
+  if (!isCurrentResumeClaimVerifier(assessment.verifier)) {
     return (
       isGeneratedResumeClaimOrigin(assessment.claimOrigin) ||
       assessment.status === "unsupported"
@@ -900,7 +981,7 @@ export function isResumeClaimAssessmentApprovable(
     "claimOrigin" | "status" | "verifier"
   >,
 ): boolean {
-  if (assessment.verifier !== "deterministic_candidate_evidence_v2") {
+  if (!isCurrentResumeClaimVerifier(assessment.verifier)) {
     return false;
   }
   return (
@@ -927,6 +1008,7 @@ export type ResumeCoverageRoleStatus = z.infer<
 
 export const ResumeCoverageClaimChangeSchema = z.object({
   field: z.enum(["summary", "bullet"]),
+  sourceAchievementIds: z.array(NonEmptyStringSchema).optional(),
   text: NonEmptyStringSchema,
   restorable: z.boolean().default(false),
 });
@@ -1260,3 +1342,43 @@ export const ResumeResearchArtifactSummarySchema =
 export type ResumeResearchArtifactSummary = z.infer<
   typeof ResumeResearchArtifactSummarySchema
 >;
+
+/** Two completed resumes establish an observed average; two writers share the remainder. */
+export function estimateResumeBatchMinutesLeft(
+  durationsMs: readonly number[],
+  remainingCount: number,
+): number | null {
+  if (durationsMs.length < 2 || remainingCount <= 0) return null;
+  const average =
+    durationsMs.reduce((sum, duration) => sum + duration, 0) /
+    durationsMs.length;
+  return Math.max(
+    1,
+    Math.ceil((average * Math.ceil(remainingCount / 2)) / 60_000),
+  );
+}
+
+/** Older translated fields have no original wording to compare against. */
+export function resumeComparisonNeedsRefresh(draft: ResumeDraft): boolean {
+  if (!draft.writtenLanguage) return Boolean(draft.language);
+  return draft.sections.some(
+    (section) =>
+      section.included &&
+      (section.kind === "skills" ||
+        section.kind === "keywords" ||
+        section.kind === "certifications") &&
+      ((!!section.text && section.sourceRefs.length === 0) ||
+        section.bullets.some(
+          (bullet) =>
+            bullet.included && !!bullet.text && bullet.sourceRefs.length === 0,
+        ) ||
+        section.entries.some(
+          (entry) =>
+            entry.included &&
+            entry.sourceRefs.length === 0 &&
+            (!!entry.title ||
+              !!entry.summary ||
+              entry.bullets.some((bullet) => bullet.included && !!bullet.text)),
+        )),
+  );
+}

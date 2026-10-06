@@ -1,3 +1,4 @@
+import { ResumeImportStageUnreadError } from "@nordri/ai-providers";
 import {
   CandidateProfileSchema,
   ResumeDocumentBundleSchema,
@@ -48,13 +49,34 @@ import {
   promoteGroundedSharedMemoryCandidates,
   reconcileCandidates,
 } from "./resume-import-reconciliation";
-import { createUniqueId, uniqueStrings } from "./shared";
+import { createUniqueId, uniqueStrings, normalizeText } from "./shared";
+import { stripImportFormatting, isObject } from "./resume-import-common";
 import { deriveResumeTimelineRepairProposals } from "./resume-timeline-repair";
 import {
   buildResumeAnalysisCacheIdentity,
   cloneCachedResumeAnalysisArtifacts,
   findCompatibleResumeAnalysisCacheEntry,
 } from "./resume-analysis-cache";
+
+/**
+ * With a model, the model reads every section and nothing else reads the
+ * resume (ADR 0041). Without one (tests, or a build with no AI at all) the
+ * rule reader stands in: regex literals beside the built-in stage reader.
+ */
+function readsWithoutModel(ctx: Pick<WorkspaceServiceContext, "aiClient">) {
+  return ctx.aiClient.getStatus().kind === "deterministic";
+}
+
+/** The rule reader's fill-ins for experience records, only without a model. */
+function withRuleReaderMarkers(
+  ctx: Pick<WorkspaceServiceContext, "aiClient">,
+  bundle: Parameters<typeof enrichExperienceCandidatesFromNearbyMarkers>[0],
+  candidates: ResumeImportFieldCandidate[],
+): ResumeImportFieldCandidate[] {
+  return readsWithoutModel(ctx)
+    ? enrichExperienceCandidatesFromNearbyMarkers(bundle, candidates)
+    : candidates;
+}
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -80,7 +102,45 @@ export const RESUME_IMPORT_SUPERSEDED_MESSAGE =
  */
 export const RESUME_IMPORT_VISION_SUPERSEDED_MESSAGE =
   "Your profile changed while the visual resume scan was finishing. The imported text details stayed applied; visual-scan refinements were not applied automatically.";
+export const NO_USABLE_RESUME_MESSAGE =
+  "No resume details were found in this file. Choose another file.";
+export const RESUME_IMPORT_AI_UNAVAILABLE_MESSAGE =
+  "The AI connection failed, so your resume could not be read. Your file is saved. Try again when the connection is back, or continue manually.";
 const RESUME_IMPORT_HELD_FOR_REVIEW_REASON = "profile_changed_before_apply";
+
+function holdChangedImportPreferences(
+  candidates: ResumeImportFieldCandidate[],
+  originalProfile: CandidateProfile,
+  originalPreferences: JobSearchPreferences,
+  latestProfile: CandidateProfile,
+  latestPreferences: JobSearchPreferences,
+): ResumeImportFieldCandidate[] {
+  return candidates.map((candidate) => {
+    const key = candidate.target.key;
+    if (
+      candidate.target.section !== "search_preferences" ||
+      (key !== "targetRoles" && key !== "locations")
+    )
+      return candidate;
+    const changed =
+      JSON.stringify(originalProfile[key]) !==
+        JSON.stringify(latestProfile[key]) ||
+      JSON.stringify(originalPreferences[key]) !==
+        JSON.stringify(latestPreferences[key]);
+    if (
+      !changed ||
+      candidate.resolution === "rejected" ||
+      candidate.resolution === "abstained"
+    )
+      return candidate;
+    return {
+      ...candidate,
+      resolution: "needs_review",
+      resolutionReason: "preferences_changed_during_import",
+      resolvedAt: null,
+    };
+  });
+}
 
 /**
  * A degraded extraction stage still returns usable fields, so nothing downstream
@@ -98,9 +158,7 @@ const RESUME_IMPORT_STAGE_FALLBACK_SUBJECTS: Record<
   identity_summary: "your name, contact details, and summary",
   experience: "your work history",
   background: "your skills, education, and projects",
-  // `shared_memory` is deterministic by design and never has a model call to
-  // lose, so it can never reach this table in practice.
-  shared_memory: "the shared resume context",
+  shared_memory: "your reusable evidence and application answers",
 };
 
 function describeResumeImportFallbackCause(input: {
@@ -422,6 +480,30 @@ function promoteEducationScalarCandidates(
   return promoted;
 }
 
+/** A refresh offers a new read for review; it never replaces confirmed facts. */
+function refreshSuggestions(
+  trigger: ResumeImportRun["trigger"],
+  candidates: ResumeImportFieldCandidate[],
+  originalProfile: CandidateProfile,
+): ResumeImportFieldCandidate[] {
+  const alreadyRead =
+    originalProfile.baseResume.lastAnalyzedAt !== null ||
+    originalProfile.baseResume.extractionStatus === "ready";
+  return trigger !== "refresh" || !alreadyRead
+    ? candidates
+    : candidates.map((candidate) =>
+        candidate.resolution === "auto_applied" &&
+        !hasExplicitUserDecision(candidate)
+          ? {
+              ...candidate,
+              resolution: "needs_review",
+              resolutionReason: "resume_refresh_review",
+              resolvedAt: null,
+            }
+          : candidate,
+      );
+}
+
 type ResumeImportTrigger = ResumeImportRun["trigger"];
 
 type ResumeImportBranchResult =
@@ -485,6 +567,27 @@ type PromiseSnapshot<T> =
       value: T;
     };
 
+export const RESUME_IMPORT_CANCELLED_MESSAGE =
+  "Import stopped. Your file is saved; continue manually or try it again later.";
+
+async function waitForImport<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw new Error(RESUME_IMPORT_CANCELLED_MESSAGE);
+  let stop!: () => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    stop = () => reject(new Error(RESUME_IMPORT_CANCELLED_MESSAGE));
+    signal.addEventListener("abort", stop, { once: true });
+  });
+  try {
+    return await Promise.race([promise, cancelled]);
+  } finally {
+    signal.removeEventListener("abort", stop);
+  }
+}
+
 function observePromise<T>(promise: Promise<T>): {
   promise: Promise<T>;
   getSnapshot: () => PromiseSnapshot<T>;
@@ -526,7 +629,12 @@ function resumeImportStageFailureOutcome(
     ok: false,
     stage,
     message,
-    diagnostic: `Resume import ${stage} stage failed; other text stages continued. ${message}`,
+    // A section the model could not read says so in its own words, for the
+    // person; anything else keeps the technical note.
+    diagnostic:
+      error instanceof ResumeImportStageUnreadError
+        ? message
+        : `Resume import ${stage} stage failed; other text stages continued. ${message}`,
   };
 }
 
@@ -765,6 +873,101 @@ function branchStateFromVisionResolution(input: {
   };
 }
 
+const OPTIONAL_EVIDENCE_UNREAD_MESSAGE =
+  "Optional evidence could not be read. Read the resume again to retry; your profile details are saved.";
+
+// Background readers share the run's artifacts, but never hold this lock while asking the model.
+const deferredArtifactTransitions = new WeakMap<
+  WorkspaceServiceContext,
+  Promise<void>
+>();
+function withDeferredArtifactTransition<T>(
+  ctx: WorkspaceServiceContext,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = deferredArtifactTransitions.get(ctx) ?? Promise.resolve();
+  const next = previous.then(operation, operation);
+  deferredArtifactTransitions.set(
+    ctx,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+async function keepCurrentEvidenceArtifacts(
+  ctx: WorkspaceServiceContext,
+  run: ResumeImportRun,
+  candidates: readonly ResumeImportFieldCandidate[],
+) {
+  const currentCandidates =
+    await ctx.repository.listResumeImportFieldCandidates({ runId: run.id });
+  const currentRun = (await ctx.repository.listResumeImportRuns()).find(
+    (entry) => entry.id === run.id,
+  );
+  const evidenceCandidates = currentCandidates.filter(
+    (candidate) => candidate.sourceKind === "model_shared_memory",
+  );
+  const mergedCandidates = [
+    ...new Map(
+      [...candidates, ...evidenceCandidates].map((candidate) => [
+        candidate.id,
+        candidate,
+      ]),
+    ).values(),
+  ];
+  const evidenceTiming =
+    currentRun?.timing?.textStages.filter(
+      (stage) => stage.stage === "shared_memory",
+    ) ?? [];
+  const mergedRun = ResumeImportRunSchema.parse({
+    ...run,
+    candidateCounts: countResumeImportCandidates(mergedCandidates),
+    warnings: uniqueStrings([
+      ...run.warnings,
+      ...(currentRun?.warnings.filter(
+        (warning) => warning === OPTIONAL_EVIDENCE_UNREAD_MESSAGE,
+      ) ?? []),
+    ]),
+    analysisCacheIdentity:
+      currentRun?.analysisCacheIdentity ?? run.analysisCacheIdentity,
+    ...(evidenceTiming.length > 0
+      ? {
+          timing: {
+            ...run.timing,
+            textStages: [
+              ...(run.timing?.textStages ?? []).filter(
+                (stage) => stage.stage !== "shared_memory",
+              ),
+              ...evidenceTiming,
+            ],
+          },
+        }
+      : {}),
+  });
+  return { run: mergedRun, candidates: mergedCandidates };
+}
+async function replaceDeferredVisionArtifacts(
+  ctx: WorkspaceServiceContext,
+  input: Parameters<
+    WorkspaceServiceContext["repository"]["replaceResumeImportRunArtifacts"]
+  >[0],
+) {
+  return withDeferredArtifactTransition(ctx, async () => {
+    const current = await keepCurrentEvidenceArtifacts(
+      ctx,
+      input.run,
+      input.fieldCandidates,
+    );
+    await ctx.repository.replaceResumeImportRunArtifacts({
+      ...input,
+      run: current.run,
+      fieldCandidates: current.candidates,
+    });
+  });
+}
+
 async function completeDeferredVisionBranch(input: {
   ctx: WorkspaceServiceContext;
   promise: Promise<ResumeVisionBranchResult>;
@@ -773,6 +976,8 @@ async function completeDeferredVisionBranch(input: {
   runId: string;
   now: string;
   textCandidates: readonly ResumeImportFieldCandidate[];
+  baselineProfile: CandidateProfile;
+  baselineSearchPreferences: JobSearchPreferences;
   visionTimeoutMs: number;
 }): Promise<void> {
   const { ctx, promise, bundle, runId, now, textCandidates, visionTimeoutMs } =
@@ -828,7 +1033,7 @@ async function completeDeferredVisionBranch(input: {
       : [];
     const provisionalCandidates = promoteEducationScalarCandidates(
       normalizeSharedMemoryCandidates(
-        enrichExperienceCandidatesFromNearbyMarkers(bundle, [
+        withRuleReaderMarkers(ctx, bundle, [
           ...preservedTextCandidates,
           ...visionCandidates,
         ]),
@@ -857,7 +1062,7 @@ async function completeDeferredVisionBranch(input: {
       },
     });
 
-    await ctx.repository.replaceResumeImportRunArtifacts({
+    await replaceDeferredVisionArtifacts(ctx, {
       run,
       documentBundles: [bundle],
       fieldCandidates: provisionalCandidates,
@@ -870,6 +1075,7 @@ async function completeDeferredVisionBranch(input: {
           latestSearchPreferences,
           provisionalCandidates,
           bundle,
+          { readByModel: !readsWithoutModel(ctx) },
         ),
       ),
       currentCandidates,
@@ -896,7 +1102,7 @@ async function completeDeferredVisionBranch(input: {
       runId,
       reconciledCandidates,
     );
-    await ctx.repository.replaceResumeImportRunArtifacts({
+    await replaceDeferredVisionArtifacts(ctx, {
       run,
       documentBundles: [bundle],
       fieldCandidates: reconciledCandidates,
@@ -920,6 +1126,7 @@ async function completeDeferredVisionBranch(input: {
           latestSearchPreferences,
           adjudicationResult.candidates,
           bundle,
+          { readByModel: !readsWithoutModel(ctx) },
         ),
       ),
       currentCandidates,
@@ -971,26 +1178,49 @@ async function completeDeferredVisionBranch(input: {
 
     const finalizeVisionStage = (
       candidates: readonly ResumeImportFieldCandidate[],
-    ) => {
-      const merged = applyResolvedResumeImportCandidatesToWorkspace({
-        profile: latestProfile,
-        searchPreferences: latestSearchPreferences,
-        candidates,
-        analysisProviderKind: run.analysisProviderKind,
-        analysisProviderLabel: run.analysisProviderLabel,
-        analysisWarnings: stageNotes,
+    ) =>
+      withDeferredArtifactTransition(ctx, async () => {
+        const current = await keepCurrentEvidenceArtifacts(
+          ctx,
+          run,
+          candidates,
+        );
+        run = current.run;
+        const heldCandidates = refreshSuggestions(
+          run.trigger,
+          holdChangedImportPreferences(
+            current.candidates,
+            input.baselineProfile,
+            input.baselineSearchPreferences,
+            latestProfile,
+            latestSearchPreferences,
+          ),
+          input.baselineProfile,
+        );
+        reconciledCandidates = heldCandidates;
+        run = ResumeImportRunSchema.parse({
+          ...run,
+          candidateCounts: countResumeImportCandidates(heldCandidates),
+        });
+        const merged = applyResolvedResumeImportCandidatesToWorkspace({
+          profile: latestProfile,
+          searchPreferences: latestSearchPreferences,
+          candidates: heldCandidates,
+          analysisProviderKind: run.analysisProviderKind,
+          analysisProviderLabel: run.analysisProviderLabel,
+          analysisWarnings: stageNotes,
+        });
+        return finalizeResumeImportRunAtRevision({
+          ctx,
+          expectedProfileRevision: latestProfileRevision,
+          profile: merged.profile,
+          searchPreferences: merged.searchPreferences,
+          run,
+          documentBundles: [bundle],
+          fieldCandidates: heldCandidates,
+          staleMode: "report_only",
+        });
       });
-      return finalizeResumeImportRunAtRevision({
-        ctx,
-        expectedProfileRevision: latestProfileRevision,
-        profile: merged.profile,
-        searchPreferences: merged.searchPreferences,
-        run,
-        documentBundles: [bundle],
-        fieldCandidates: candidates,
-        staleMode: "report_only",
-      });
-    };
 
     let finalization = await finalizeVisionStage(reconciledCandidates);
 
@@ -1012,6 +1242,7 @@ async function completeDeferredVisionBranch(input: {
               latestSearchPreferences,
               adjudicationResult.candidates,
               bundle,
+              { readByModel: !readsWithoutModel(ctx) },
             ),
           ),
           currentCandidates,
@@ -1044,7 +1275,7 @@ async function completeDeferredVisionBranch(input: {
           adjudication: modelRolesFor(appliedTextStageRun).adjudication,
         },
       });
-      await ctx.repository.replaceResumeImportRunArtifacts({
+      await replaceDeferredVisionArtifacts(ctx, {
         run: supersededRun,
         documentBundles: [bundle],
         fieldCandidates: currentCandidates,
@@ -1075,7 +1306,7 @@ async function completeDeferredVisionBranch(input: {
     });
     const currentCandidates =
       await ctx.repository.listResumeImportFieldCandidates({ runId });
-    await ctx.repository.replaceResumeImportRunArtifacts({
+    await replaceDeferredVisionArtifacts(ctx, {
       run: failedRun,
       documentBundles: [bundle],
       fieldCandidates: currentCandidates,
@@ -1085,9 +1316,9 @@ async function completeDeferredVisionBranch(input: {
 
 function scheduleDeferredVisionBranchCompletion(
   input: Parameters<typeof completeDeferredVisionBranch>[0],
-): void {
+): Promise<void> {
   input.ctx.activeResumeVisionRunIds.add(input.runId);
-  void completeDeferredVisionBranch(input)
+  return completeDeferredVisionBranch(input)
     .catch((error: unknown) => {
       console.error("Deferred resume vision branch completion failed.", error);
     })
@@ -1243,6 +1474,7 @@ async function maybeAdjudicateResumeImportCandidates(
 }
 
 type ResumeImportWorkflowInput = {
+  signal?: AbortSignal;
   profile: CandidateProfile;
   searchPreferences: JobSearchPreferences;
   documentBundle: ResumeDocumentBundle;
@@ -1303,7 +1535,7 @@ async function runResumeImportWorkflowInProcess(
     ctx,
     expectedProfileRevision,
   );
-  let literalExtractionMs = 0;
+  const literalExtractionMs = 0;
   let textBranchMs = 0;
   let textStageTimings: ResumeImportTextStageTiming[] = [];
   const now = new Date().toISOString();
@@ -1347,9 +1579,23 @@ async function runResumeImportWorkflowInProcess(
       ...(input.importWarnings ?? []),
       ...cachedAnalysis.run.warnings,
     ]);
+    const latestPreferences = await ctx.repository.getSearchPreferences();
+    const latestProfile = await ctx.repository.getProfile();
+    cachedArtifacts.candidates = holdChangedImportPreferences(
+      cachedArtifacts.candidates,
+      input.profile,
+      input.searchPreferences,
+      latestProfile,
+      latestPreferences,
+    );
+    cachedArtifacts.candidates = refreshSuggestions(
+      input.trigger,
+      cachedArtifacts.candidates,
+      input.profile,
+    );
     const merged = applyResolvedResumeImportCandidatesToWorkspace({
       profile: input.profile,
-      searchPreferences: input.searchPreferences,
+      searchPreferences: latestPreferences,
       candidates: cachedArtifacts.candidates,
       analysisProviderKind: cachedAnalysis.run.analysisProviderKind,
       analysisProviderLabel: cachedAnalysis.run.analysisProviderLabel,
@@ -1526,40 +1772,95 @@ async function runResumeImportWorkflowInProcess(
       fieldCandidates: [],
     });
 
+    const deferredEvidenceState: {
+      promise: Promise<{
+        settlement: PromiseSettledResult<ResumeImportStageExtractionResult>;
+        durationMs: number;
+      }> | null;
+    } = { promise: null };
     const textBranchPromise: Promise<ResumeImportBranchResult> =
       (async (): Promise<ResumeImportBranchResult> => {
-        const literalStartedAtMs = performance.now();
-        const literalCandidates = extractLiteralCandidates(runId, bundle, now);
-        literalExtractionMs = Math.max(
-          0,
-          Math.round(performance.now() - literalStartedAtMs),
-        );
+        const literalCandidates = readsWithoutModel(ctx)
+          ? extractLiteralCandidates(runId, bundle, now)
+          : [];
         const stageDurations = new Map<
           (typeof RESUME_IMPORT_STAGES)[number],
           number
         >();
-        const stageSettlements = await Promise.allSettled(
-          RESUME_IMPORT_STAGES.map((stage) => {
-            const stageStartedAtMs = performance.now();
-            return Promise.resolve()
-              .then(() =>
-                ctx.aiClient.extractResumeImportStage({
-                  stage,
-                  existingProfile: input.profile,
-                  existingSearchPreferences: input.searchPreferences,
-                  documentBundle: bundle,
-                }),
-              )
-              .finally(() => {
-                stageDurations.set(
-                  stage,
-                  Math.max(0, Math.round(performance.now() - stageStartedAtMs)),
+        const stagePromises = RESUME_IMPORT_STAGES.map((stage) => {
+          const stageStartedAtMs = performance.now();
+          return Promise.resolve()
+            .then(async () => {
+              const stageInput = {
+                stage,
+                existingProfile: input.profile,
+                existingSearchPreferences: input.searchPreferences,
+                documentBundle: bundle,
+              };
+              let result = ResumeImportStageExtractionResultSchema.parse(
+                await ctx.aiClient.extractResumeImportStage(stageInput),
+              );
+              if (result.stage !== stage)
+                throw new Error(
+                  `The provider returned ${result.stage} instead of ${stage}.`,
                 );
-              });
-          }),
+              if (
+                stage === "shared_memory" &&
+                result.candidates.length === 0 &&
+                !readsWithoutModel(ctx)
+              ) {
+                if (input.signal?.aborted)
+                  throw new Error(RESUME_IMPORT_CANCELLED_MESSAGE);
+                result = ResumeImportStageExtractionResultSchema.parse(
+                  await ctx.aiClient.extractResumeImportStage(stageInput),
+                );
+                if (result.candidates.length === 0)
+                  throw new Error(
+                    "No reusable evidence was returned after two reads. Read the resume again to retry optional suggestions.",
+                  );
+              }
+              return result;
+            })
+            .finally(() => {
+              stageDurations.set(
+                stage,
+                Math.max(0, Math.round(performance.now() - stageStartedAtMs)),
+              );
+            });
+        });
+        const evidenceIndex = RESUME_IMPORT_STAGES.indexOf("shared_memory");
+        const evidencePromise = stagePromises[evidenceIndex]!;
+        const evidence = observePromise(
+          evidencePromise.then(
+            (value) => ({ status: "fulfilled" as const, value }),
+            (reason: unknown) => ({ status: "rejected" as const, reason }),
+          ),
         );
+        const coreStages = RESUME_IMPORT_STAGES.filter(
+          (stage) => stage !== "shared_memory",
+        );
+        const stageSettlements = await Promise.allSettled(
+          coreStages.map(
+            (stage) => stagePromises[RESUME_IMPORT_STAGES.indexOf(stage)]!,
+          ),
+        );
+        const evidenceSnapshot = readsWithoutModel(ctx)
+          ? { settled: true as const, value: await evidence.promise }
+          : evidence.getSnapshot();
+        const includedStages: ResumeImportExtractionStage[] = [...coreStages];
+        if (evidenceSnapshot.settled) {
+          includedStages.push("shared_memory");
+          stageSettlements.push(evidenceSnapshot.value);
+        } else {
+          deferredEvidenceState.promise = evidence.promise.then(
+            (settlement) => ({
+              settlement,
+              durationMs: stageDurations.get("shared_memory") ?? 0,
+            }),
+          );
+        }
         const stageOutcomes: ResumeImportStageExtractionOutcome[] =
-          RESUME_IMPORT_STAGES.map((stage, index) => {
+          includedStages.map((stage, index) => {
             const settlement = stageSettlements[index];
 
             if (!settlement) {
@@ -1643,12 +1944,14 @@ async function runResumeImportWorkflowInProcess(
           > => !outcome.ok,
         );
 
-        if (successfulStages.length === 0) {
+        if (
+          successfulStages.length === 0 ||
+          (!readsWithoutModel(ctx) &&
+            !successfulStages.some(({ stage }) => stage !== "shared_memory"))
+        ) {
           return {
             ok: false,
-            message:
-              failedStages[0]?.message ||
-              "Text resume import branch produced no usable extraction results.",
+            message: RESUME_IMPORT_AI_UNAVAILABLE_MESSAGE,
           };
         }
 
@@ -1758,7 +2061,7 @@ async function runResumeImportWorkflowInProcess(
           });
     const observedVisionBranch = observePromise(visionBranchPromise);
 
-    const textBranch = await textBranchPromise;
+    const textBranch = await waitForImport(textBranchPromise, input.signal);
     textBranchMs = Math.max(
       0,
       Math.round(performance.now() - textBranchStartedAtMs),
@@ -1769,16 +2072,22 @@ async function runResumeImportWorkflowInProcess(
       const visionSnapshot = observedVisionBranch.getSnapshot();
       visionBranch = visionSnapshot.settled
         ? visionSnapshot.value
-        : await getVisionBranchWithoutBlockingTextCompletion(
-            observedVisionBranch,
-            visionTimeoutMs ?? 600_000,
+        : await waitForImport(
+            getVisionBranchWithoutBlockingTextCompletion(
+              observedVisionBranch,
+              visionTimeoutMs ?? 600_000,
+            ),
+            input.signal,
           );
     } else {
       visionBranch = canRunVision
-        ? await withVisionBranchDeadline(
-            observedVisionBranch.promise,
-            visionTimeoutMs ?? 600_000,
-            ctx,
+        ? await waitForImport(
+            withVisionBranchDeadline(
+              observedVisionBranch.promise,
+              visionTimeoutMs ?? 600_000,
+              ctx,
+            ),
+            input.signal,
           )
         : await observedVisionBranch.promise;
     }
@@ -1824,15 +2133,7 @@ async function runResumeImportWorkflowInProcess(
       visionBranch.ok && visionBranch.result.candidates.length > 0;
 
     if (!textBranch.ok && !visionBranchHasUsableCandidates) {
-      throw new Error(
-        uniqueStrings([
-          textBranch.message,
-          visionBranch.ok
-            ? (visionBranch.result.primaryErrorMessage ??
-              "Vision resume import produced no usable candidates.")
-            : visionBranch.message,
-        ]).join(" ") || "Both resume import extraction branches failed.",
-      );
+      throw new Error(RESUME_IMPORT_AI_UNAVAILABLE_MESSAGE);
     }
 
     const visionCandidates = visionBranch.ok
@@ -1850,7 +2151,7 @@ async function runResumeImportWorkflowInProcess(
 
     const provisionalCandidates = promoteEducationScalarCandidates(
       normalizeSharedMemoryCandidates(
-        enrichExperienceCandidatesFromNearbyMarkers(bundle, [
+        withRuleReaderMarkers(ctx, bundle, [
           ...(textBranch.ok ? textBranch.literalCandidates : []),
           ...(textBranch.ok ? textBranch.stageCandidates : []),
           ...visionCandidates,
@@ -1869,8 +2170,62 @@ async function runResumeImportWorkflowInProcess(
         input.searchPreferences,
         provisionalCandidates,
         bundle,
+        { readByModel: !readsWithoutModel(ctx) },
       ),
     );
+    const sourceText = normalizeText(
+      stripImportFormatting(bundle.fullText ?? ""),
+    );
+    const usableResumeDetails = [
+      ...reconciledCandidates,
+      ...(readsWithoutModel(ctx)
+        ? extractLiteralCandidates(runId, bundle, now)
+        : []),
+    ].some((candidate) => {
+      if (
+        ["invalid_source_structure", "empty_record_candidate"].includes(
+          candidate.resolutionReason ?? "",
+        )
+      )
+        return false;
+      const matchesSource = (value: unknown) =>
+        typeof value === "string" &&
+        value.trim().length > 0 &&
+        sourceText.includes(normalizeText(stripImportFormatting(value)));
+      const hasVisualEvidence = (candidate.visualEvidence?.length ?? 0) > 0;
+      if (
+        candidate.target.section === "identity" &&
+        candidate.target.key === "fullName"
+      )
+        return matchesSource(candidate.value) || hasVisualEvidence;
+      if (
+        candidate.target.section === "contact" &&
+        ["email", "phone"].includes(candidate.target.key)
+      )
+        return matchesSource(candidate.value) || hasVisualEvidence;
+      if (
+        ["experience", "education"].includes(candidate.target.section) &&
+        isObject(candidate.value)
+      )
+        return (
+          hasVisualEvidence ||
+          [
+            candidate.value.companyName,
+            candidate.value.schoolName,
+            candidate.value.title,
+            candidate.value.degree,
+          ].some(matchesSource)
+        );
+      return false;
+    });
+    if (input.signal?.aborted) throw new Error(RESUME_IMPORT_CANCELLED_MESSAGE);
+    if (!usableResumeDetails) {
+      throw new Error(
+        textStageTimings.some((stage) => stage.status !== "completed")
+          ? RESUME_IMPORT_AI_UNAVAILABLE_MESSAGE
+          : NO_USABLE_RESUME_MESSAGE,
+      );
+    }
     const adjudicationStartedAt = new Date().toISOString();
     run = ResumeImportRunSchema.parse({
       ...run,
@@ -1894,16 +2249,16 @@ async function runResumeImportWorkflowInProcess(
       fieldCandidates: reconciledCandidates,
     });
 
-    const adjudicationResult = await maybeAdjudicateResumeImportCandidates(
-      ctx,
-      {
+    const adjudicationResult = await waitForImport(
+      maybeAdjudicateResumeImportCandidates(ctx, {
         profile: input.profile,
         searchPreferences: input.searchPreferences,
         bundle,
         runId,
         now,
         candidates: reconciledCandidates,
-      },
+      }),
+      input.signal,
     );
     reconciledCandidates = promoteGroundedSharedMemoryCandidates(
       reconcileCandidates(
@@ -1911,6 +2266,7 @@ async function runResumeImportWorkflowInProcess(
         input.searchPreferences,
         adjudicationResult.candidates,
         bundle,
+        { readByModel: !readsWithoutModel(ctx) },
       ),
     );
     run = ResumeImportRunSchema.parse({
@@ -1955,9 +2311,23 @@ async function runResumeImportWorkflowInProcess(
     );
     const finalizationStartedAtMs = performance.now();
 
+    const latestPreferences = await ctx.repository.getSearchPreferences();
+    const latestProfile = await ctx.repository.getProfile();
+    reconciledCandidates = holdChangedImportPreferences(
+      reconciledCandidates,
+      input.profile,
+      input.searchPreferences,
+      latestProfile,
+      latestPreferences,
+    );
+    reconciledCandidates = refreshSuggestions(
+      input.trigger,
+      reconciledCandidates,
+      input.profile,
+    );
     const merged = applyResolvedResumeImportCandidatesToWorkspace({
       profile: input.profile,
-      searchPreferences: input.searchPreferences,
+      searchPreferences: latestPreferences,
       candidates: reconciledCandidates,
       analysisProviderKind: run.analysisProviderKind,
       analysisProviderLabel: run.analysisProviderLabel,
@@ -1975,6 +2345,9 @@ async function runResumeImportWorkflowInProcess(
     run = ResumeImportRunSchema.parse({
       ...run,
       status: hasBlockingReviewCandidates ? "review_ready" : "applied",
+      analysisCacheIdentity: deferredEvidenceState.promise
+        ? null
+        : analysisCacheIdentity,
       completedAt: new Date().toISOString(),
       warnings: analysisWarnings,
       candidateCounts,
@@ -2029,6 +2402,7 @@ async function runResumeImportWorkflowInProcess(
           ...retryState.profile,
           baseResume: input.profile.baseResume,
         }),
+        reconciledCandidates,
       ).mismatchReasons.length === 0
     ) {
       // A profile write landed while the model was reading the resume (the
@@ -2042,7 +2416,8 @@ async function runResumeImportWorkflowInProcess(
         ...retryState.profile,
         baseResume: input.profile.baseResume,
       });
-      const retrySearchPreferences = await ctx.repository.getSearchPreferences();
+      const retrySearchPreferences =
+        await ctx.repository.getSearchPreferences();
       reconciledCandidates = await preserveLatestCandidateDecisions(
         ctx,
         run.id,
@@ -2051,7 +2426,20 @@ async function runResumeImportWorkflowInProcess(
           retrySearchPreferences,
           reconciledCandidates,
           bundle,
+          { readByModel: !readsWithoutModel(ctx) },
         ),
+      );
+      reconciledCandidates = holdChangedImportPreferences(
+        reconciledCandidates,
+        input.profile,
+        input.searchPreferences,
+        retryProfile,
+        retrySearchPreferences,
+      );
+      reconciledCandidates = refreshSuggestions(
+        input.trigger,
+        reconciledCandidates,
+        input.profile,
       );
       const retryMerged = applyResolvedResumeImportCandidatesToWorkspace({
         profile: retryProfile,
@@ -2097,7 +2485,7 @@ async function runResumeImportWorkflowInProcess(
       Math.round(performance.now() - finalizationStartedAtMs),
     );
     const measuredRun = ResumeImportRunSchema.parse({
-      ...atomicallyFinalizedRun,
+      ...run,
       timing: {
         ...timingBeforeFinalization,
         totalMs: Math.max(
@@ -2125,13 +2513,15 @@ async function runResumeImportWorkflowInProcess(
       canRunVision &&
       visionTimeoutMs
     ) {
-      scheduleDeferredVisionBranchCompletion({
+      void scheduleDeferredVisionBranchCompletion({
         ctx,
         promise: observedVisionBranch.promise,
         bundle,
         run,
         runId,
         now,
+        baselineProfile: finalization.profile,
+        baselineSearchPreferences: finalization.searchPreferences,
         textCandidates: provisionalCandidates.filter(
           (candidate) => candidate.sourceKind !== "vision_omni",
         ),
@@ -2139,6 +2529,106 @@ async function runResumeImportWorkflowInProcess(
       });
     }
 
+    if (deferredEvidenceState.promise) {
+      ctx.activeResumeEvidenceRunIds.add(runId);
+      void deferredEvidenceState.promise
+        .then((evidence) =>
+          withDeferredArtifactTransition(ctx, async () => {
+            if (input.signal?.aborted) return;
+            const currentProfile = await ctx.repository.getProfile();
+            if (
+              !isSameStoredResumeDocument(
+                currentProfile.baseResume,
+                input.profile.baseResume,
+              )
+            )
+              return;
+            const currentRun = (
+              await ctx.repository.listResumeImportRuns()
+            ).find((entry) => entry.id === runId);
+            if (!currentRun || currentRun.status === "failed") return;
+            const currentCandidates =
+              await ctx.repository.listResumeImportFieldCandidates({ runId });
+            const currentPreferences =
+              await ctx.repository.getSearchPreferences();
+            const result =
+              evidence.settlement.status === "fulfilled"
+                ? ResumeImportStageExtractionResultSchema.parse(
+                    evidence.settlement.value,
+                  )
+                : null;
+            const addedCandidates = result
+              ? reconcileCandidates(
+                  currentProfile,
+                  currentPreferences,
+                  normalizeSharedMemoryCandidates(
+                    result.candidates.map((candidate, index) =>
+                      toCandidate(
+                        bundle,
+                        runId,
+                        "model_shared_memory",
+                        now,
+                        candidate,
+                        index,
+                      ),
+                    ),
+                  ),
+                  bundle,
+                  { readByModel: !readsWithoutModel(ctx) },
+                )
+              : [];
+            const candidates = [
+              ...currentCandidates,
+              ...addedCandidates.map((candidate) =>
+                candidate.resolution === "auto_applied"
+                  ? {
+                      ...candidate,
+                      resolution: "needs_review" as const,
+                      resolutionReason: "confirm_optional_import_suggestion",
+                      resolvedAt: null,
+                    }
+                  : candidate,
+              ),
+            ];
+            const warning = result ? null : OPTIONAL_EVIDENCE_UNREAD_MESSAGE;
+            const updatedRun = ResumeImportRunSchema.parse({
+              ...currentRun,
+              analysisCacheIdentity,
+              candidateCounts: countResumeImportCandidates(candidates),
+              warnings: uniqueStrings([
+                ...currentRun.warnings,
+                ...(warning ? [warning] : []),
+              ]),
+              timing: {
+                ...currentRun.timing,
+                textStages: [
+                  ...(currentRun.timing?.textStages ?? []),
+                  {
+                    stage: "shared_memory",
+                    status: result ? "completed" : "failed",
+                    durationMs: evidence.durationMs,
+                    candidateCount: result?.candidates.length ?? 0,
+                    providerKind: result?.analysisProviderKind ?? null,
+                    providerLabel: result?.analysisProviderLabel ?? null,
+                  },
+                ],
+              },
+            });
+            await ctx.repository.replaceResumeImportRunArtifacts({
+              run: updatedRun,
+              documentBundles: [bundle],
+              fieldCandidates: candidates,
+            });
+          }),
+        )
+        .catch((error: unknown) =>
+          console.error("Optional resume evidence could not be saved.", error),
+        )
+        .finally(() => {
+          ctx.activeResumeEvidenceRunIds.delete(runId);
+          ctx.onResumeEvidenceFinished?.();
+        });
+    }
     return {
       profile: finalization.profile,
       searchPreferences: finalization.searchPreferences,
@@ -2146,9 +2636,31 @@ async function runResumeImportWorkflowInProcess(
       candidates: reconciledCandidates,
     };
   } catch (error) {
+    const stoppedRoles = modelRolesFor(run);
+    if (input.signal?.aborted) {
+      for (const role of ["text", "vision", "adjudication"] as const) {
+        if (stoppedRoles[role].status === "running") {
+          stoppedRoles[role] = {
+            ...stoppedRoles[role],
+            status: "failed",
+            completedAt: new Date().toISOString(),
+            errorMessage: RESUME_IMPORT_CANCELLED_MESSAGE,
+          };
+        }
+      }
+    }
     run = ResumeImportRunSchema.parse({
       ...run,
+      modelRoles: stoppedRoles,
       status: "failed",
+      failureKind: input.signal?.aborted
+        ? "cancelled"
+        : error instanceof Error && error.message === NO_USABLE_RESUME_MESSAGE
+          ? "invalid_document"
+          : error instanceof Error &&
+              error.message === RESUME_IMPORT_AI_UNAVAILABLE_MESSAGE
+            ? "ai_unavailable"
+            : null,
       completedAt: new Date().toISOString(),
       errorMessage:
         error instanceof Error
@@ -2162,6 +2674,7 @@ async function runResumeImportWorkflowInProcess(
       fieldCandidates: [],
     });
 
+    if (run.errorMessage === NO_USABLE_RESUME_MESSAGE) throw error;
     await ctx.repository.commitProfileUpdate(
       (current) =>
         CandidateProfileSchema.parse({

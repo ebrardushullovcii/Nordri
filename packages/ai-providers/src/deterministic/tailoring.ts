@@ -26,7 +26,6 @@ import {
 import {
   filterCandidateFacingResumeKeywords,
   filterGroundedVisibleSkills,
-  isSpokenLanguageResumeChrome,
 } from "./resume-skill-grounding";
 import { inferSkills } from "./resume-parser-skills";
 import { deriveResumeCoveragePlan } from "./resume-coverage";
@@ -92,31 +91,6 @@ function isProfessionalResumeNarrative(
     );
 
   return !isLocationOnly && !(hasFirstPersonVoice && hasCareerChangeMeta);
-}
-
-function hasStrongRoleSignal(
-  value: string | null | undefined,
-  roleTarget: string,
-): boolean {
-  const valueTokens = new Set(tokenizeForQuality(value));
-  const roleTokens = uniqueStrings(tokenizeForQuality(roleTarget)).filter(
-    (token) => token.length >= 4,
-  );
-  const matchedRoleTokens = roleTokens.filter((token) =>
-    valueTokens.has(token),
-  );
-
-  return matchedRoleTokens.length >= Math.min(2, roleTokens.length);
-}
-
-function shouldPreferStoredSummary(input: {
-  storedSummary: string | null | undefined;
-  roleTarget: string;
-}): boolean {
-  return (
-    isProfessionalResumeNarrative(input.storedSummary) &&
-    hasStrongRoleSignal(input.storedSummary, input.roleTarget)
-  );
 }
 
 function shouldKeepExperienceSummary(input: {
@@ -359,45 +333,14 @@ function scoreTargetRelevance(
     .filter((token) => token.length >= 3 && valueTokens.has(token)).length;
 }
 
-function buildTargetedSummary(input: {
-  profile: CandidateProfile;
-  roleTarget: string;
-  coreSkills: readonly string[];
-  targetTerms: readonly string[];
-}): string {
-  const experienceDepth = input.profile.yearsExperience
-    ? `${input.profile.yearsExperience}+ years of experience`
-    : "relevant professional experience";
-  const namedSkills = input.coreSkills.slice(0, 5).join(", ");
-  const strongestEvidence = input.profile.experiences
-    .flatMap((experience) => experience.achievements)
-    .map((claim) => ({
-      claim,
-      score:
-        scoreExperienceBullet(claim, input.targetTerms) +
-        scoreTargetRelevance(claim, input.targetTerms) * 2,
-    }))
-    .sort((left, right) => right.score - left.score)[0]?.claim;
-  const opening = namedSkills
-    ? `${input.roleTarget} with ${experienceDepth} building with ${namedSkills}.`
-    : `${input.roleTarget} with ${experienceDepth}.`;
-
-  if (
-    !strongestEvidence ||
-    scoreTargetRelevance(strongestEvidence, input.targetTerms) === 0
-  ) {
-    return opening;
-  }
-
-  return `${opening} ${strongestEvidence}`;
-}
-
 function buildExperienceBullets(input: {
   experience: CandidateProfile["experiences"][number];
   proofBank: CandidateProfile["proofBank"];
   maxBullets?: number;
   targetTerms?: readonly string[];
   usedBulletSignatures?: Set<string>;
+  sourceAchievements: readonly string[];
+  sourceIdsByText: Map<string, string[]>;
 }): string[] {
   const canonicalBullets = dropTruncatedVariants(
     input.experience.achievements.map(stripLeadingBulletGlyphs).filter(Boolean),
@@ -426,18 +369,34 @@ function buildExperienceBullets(input: {
         .filter(({ overlap }) => overlap >= QUALITY_OVERLAP_THRESHOLD)
         .sort((left, right) => right.overlap - left.overlap)[0]?.proof;
 
+      const sourceIds = input.sourceAchievements.flatMap((source, index) =>
+        stripLeadingBulletGlyphs(source) === bullet
+          ? [`experience:${input.experience.id}:achievement:${index}`]
+          : [],
+      );
       if (!matchingProof) {
+        input.sourceIdsByText.set(
+          normalizeTechnologyTokenSpacing(bullet),
+          sourceIds,
+        );
         return bullet;
       }
 
       usedProofIds.add(matchingProof.id);
       matchedProofs.push(matchingProof);
 
-      return buildProofBullet({
-        claim: matchingProof.claim,
+      // Keep the complete source clause when adding a saved metric. Coverage
+      // is bookkeeping of this transformation, never a wording comparison.
+      const enriched = buildProofBullet({
+        claim: bullet,
         heroMetric: matchingProof.heroMetric,
         fallback: bullet,
       });
+      input.sourceIdsByText.set(
+        normalizeTechnologyTokenSpacing(enriched),
+        sourceIds,
+      );
+      return enriched;
     }),
   );
 
@@ -629,18 +588,6 @@ function compareExperienceReverseChronology(
 
 function createPatchId(prefix: string): string {
   return `${prefix}_${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`}`;
-}
-
-function strategyRoleTarget(
-  input: Pick<TailorResumeInput, "job"> & {
-    strategy?: ResumeGenerationStrategyPolicy | null;
-  },
-): string {
-  if (input.strategy?.headlinePolicy === "role_family_template") {
-    return input.strategy.roleFamily;
-  }
-
-  return input.job.title || "the target role";
 }
 
 function strategyHeadline(
@@ -957,12 +904,8 @@ export function buildDeterministicTailoredResume(
       .map((entry) =>
         [entry.language, entry.proficiency].filter(Boolean).join(" — "),
       )
-      .filter((value) => value && !isSpokenLanguageResumeChrome(value)),
-  ).slice(0, 6);
-  const roleTarget =
-    strategyRoleTarget(input) ||
-    input.searchPreferences.targetRoles[0] ||
-    "the target role";
+      .filter(Boolean),
+  );
   const targetTerms = [
     input.job.title,
     ...input.job.keySkills,
@@ -974,20 +917,7 @@ export function buildDeterministicTailoredResume(
     input.profile.professionalSummary.shortValueProposition ??
     input.profile.summary ??
     null;
-  const summary =
-    input.strategy?.headlinePolicy === "fixed" && preferredStoredSummary
-      ? preferredStoredSummary
-      : shouldPreferStoredSummary({
-            storedSummary: preferredStoredSummary,
-            roleTarget,
-          })
-        ? (preferredStoredSummary ?? roleTarget)
-        : buildTargetedSummary({
-            profile: input.profile,
-            roleTarget,
-            coreSkills,
-            targetTerms,
-          });
+  const summary = preferredStoredSummary ?? "";
   const experienceHighlights: string[] = [];
   const coverageMetadata = deriveResumeCoveragePlan({
     profile: input.profile,
@@ -1021,8 +951,11 @@ export function buildDeterministicTailoredResume(
       if (!isCompact) {
         hasSeenDetailedRole = true;
       }
+      const sourceIdsByText = new Map<string, string[]>();
       const bullets = buildExperienceBullets({
         experience,
+        sourceAchievements: storedExperience.achievements,
+        sourceIdsByText,
         proofBank: input.profile.proofBank,
         maxBullets: isCompact ? 1 : isLeadDetailedRole ? 4 : 3,
         targetTerms,
@@ -1052,6 +985,9 @@ export function buildDeterministicTailoredResume(
               ? candidateSummary
               : null,
           bullets,
+          bulletSourceAchievementIds: bullets.map(
+            (bullet) => sourceIdsByText.get(bullet) ?? [],
+          ),
           profileRecordId: experience.id,
         },
       ];
@@ -1083,7 +1019,7 @@ export function buildDeterministicTailoredResume(
       bullets: [],
       profileRecordId: project.id,
     }));
-  const educationEntries = input.profile.education.slice(0, 2).map((entry) => ({
+  const educationEntries = input.profile.education.map((entry) => ({
     school: entry.schoolName,
     degree: entry.degree,
     fieldOfStudy: entry.fieldOfStudy,
@@ -1092,14 +1028,12 @@ export function buildDeterministicTailoredResume(
     summary: entry.summary,
     profileRecordId: entry.id,
   }));
-  const certificationEntries = input.profile.certifications
-    .slice(0, 3)
-    .map((entry) => ({
-      name: entry.name,
-      issuer: entry.issuer,
-      dateRange: formatDateRange(entry.issueDate, entry.expiryDate),
-      profileRecordId: null,
-    }));
+  const certificationEntries = input.profile.certifications.map((entry) => ({
+    name: entry.name,
+    issuer: entry.issuer,
+    dateRange: formatDateRange(entry.issueDate, entry.expiryDate),
+    profileRecordId: entry.id,
+  }));
   const fullText = buildDeterministicResumeText(
     input.profile,
     input.job,
@@ -1254,12 +1188,7 @@ export function buildDeterministicStructuredResumeDraft(
     ...(input.researchContext?.domainVocabulary ?? []),
     ...(input.researchContext?.priorityThemes ?? []),
   ]).slice(0, 6);
-  const summary =
-    input.strategy?.headlinePolicy === "fixed"
-      ? baseDraft.summary
-      : (evidence?.candidateSummary[0] ??
-        evidence?.summary[0] ??
-        baseDraft.summary);
+  const summary = baseDraft.summary;
   const experienceHighlights: string[] = [];
   const coreSkills = input.strategy
     ? baseDraft.coreSkills

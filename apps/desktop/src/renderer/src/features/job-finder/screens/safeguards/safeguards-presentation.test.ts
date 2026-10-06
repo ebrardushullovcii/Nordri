@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
-import { JobFinderIntelligenceSafeguardsSchema } from "@nordri/contracts";
+import {
+  ApplicationRecordSchema,
+  JobFinderIntelligenceSafeguardsSchema,
+} from "@nordri/contracts";
 import {
   buildSafeguardsPresentationModel,
   describeSampleReviewExplanation,
@@ -107,7 +110,7 @@ describe("buildSafeguardsPresentationModel", () => {
     expect(capRows[0]?.title).toBe("3/3 applications");
     expect(capRows[0]?.lineage.companies).toContain("Signal Systems");
     expect(capRows[0]?.lineage.jobs).toContain(
-      "Senior Product Designer · Signal Systems",
+      "Senior Product Designer · Remote · Signal Systems",
     );
     expect(model.counts.blockers).toBe(1);
     expect(model.counts.caps).toBe(1);
@@ -133,7 +136,7 @@ describe("buildSafeguardsPresentationModel", () => {
     const conflictRows = model.rows.filter((row) => row.kind === "conflicts");
     expect(conflictRows).toHaveLength(1);
     expect(conflictRows[0]?.title).toContain(
-      "Senior Product Designer · Signal Systems",
+      "Senior Product Designer · Remote · Signal Systems",
     );
     expect(conflictRows[0]?.title).not.toContain("application_a");
     expect(conflictRows[0]?.blocked).toBe(true);
@@ -230,7 +233,7 @@ describe("buildSafeguardsPresentationModel", () => {
     expect(reviewRows[0]?.title).toBe("Quality sample review");
     expect(reviewRows[0]?.blocked).toBe(true);
     expect(reviewRows[0]?.sampleLinks?.[0]?.label).toBe(
-      "Senior Product Designer · Signal Systems",
+      "Senior Product Designer · Remote · Signal Systems",
     );
     expect(reviewRows[0]?.sampleLinks?.[0]?.href).toContain(
       "applicationRecordId=application_a",
@@ -453,7 +456,7 @@ describe("filterSafeguardRows", () => {
       blocked: true,
       dismissed: false,
       lineage: {
-        jobs: ["Senior Product Designer · Signal Systems"],
+        jobs: ["Senior Product Designer · Remote · Signal Systems"],
         companies: [],
         campaigns: [],
       },
@@ -492,7 +495,9 @@ describe("filterSafeguardRows", () => {
     expect(row?.explanation).toBe(
       "Job Finder stopped after your search plan's safety rule was reached.",
     );
-    expect(row?.recoveryGuidance).toContain("Prepare remaining jobs");
+    expect(row?.recoveryGuidance).toContain("Try again on an unstarted job");
+    expect(row?.recoveryGuidance).toContain("Daily limits reset tomorrow");
+    expect(row?.recoveryGuidance).not.toContain("Settle the limit above");
     expect(row?.recoveryLink).toEqual({
       href: "/job-finder/applications",
       label: "Open Applications",
@@ -589,4 +594,121 @@ describe("describeSampleReviewExplanation", () => {
       "A company cap was reached.",
     );
   });
+});
+
+it("keeps an old same-company conflict limited to its two applications and uses plain text", () => {
+  const workspace = workspaceWith();
+  workspace.applicationRecords = Array.from({ length: 10 }, (_, index) => ({
+    id: `application_${index}`,
+    jobId: `job_${index}`,
+    title: `Role ${index}`,
+    company: "Synthetic Employer",
+  })) as JobFinderWorkspaceSnapshot["applicationRecords"];
+  workspace.discoveryJobs = workspace.applicationRecords.map((record) => ({
+    id: record.jobId,
+    title: record.title,
+    company: record.company,
+    location: "Remote",
+  })) as JobFinderWorkspaceSnapshot["discoveryJobs"];
+  const safeguards = JobFinderIntelligenceSafeguardsSchema.parse({
+    simultaneousApplicationConflicts: [
+      {
+        id: "legacy",
+        applicationRecordId: "application_0",
+        conflictingApplicationRecordId: "application_1",
+        explanation:
+          "application_0 conservatively normalized company application_1",
+        recoveryGuidance: "Review internal IDs",
+      },
+    ],
+  });
+  const row = buildSafeguardsPresentationModel({
+    safeguards,
+    workspace,
+  }).rows.find((row) => row.kind === "conflicts")!;
+  expect(row.lineage.jobs).toHaveLength(2);
+  expect(row.lineage.jobs.join(" ")).not.toContain("Role 9");
+  expect(row.explanation).not.toContain("application_");
+  expect(row.explanation).not.toContain("normalized");
+});
+
+it("shows one company group, labelled places, and revocable choices for specific pairs", () => {
+  const safeguards = JobFinderIntelligenceSafeguardsSchema.parse({
+    simultaneousApplicationConflicts: [
+      {
+        id: "company_group",
+        applicationRecordId: "application_a",
+        conflictingApplicationRecordId: "application_b",
+        companyKey: "signal systems",
+        companyName: "Signal Systems",
+        jobIds: ["job_ready", "job_generating"],
+        status: "detected",
+        explanation: "Same employer",
+        recoveryGuidance: "Choose a pair",
+      },
+    ],
+  });
+  const workspace = workspaceWith();
+  workspace.companyJobs = [];
+  workspace.dismissedDiscoveryJobs = [];
+  workspace.discoveryJobs = workspace.discoveryJobs.map((job) => ({
+    ...job,
+    title: "Engineer",
+    company: "Signal Systems",
+  }));
+  const row = buildSafeguardsPresentationModel({
+    workspace,
+    safeguards,
+  }).rows.find((row) => row.kind === "conflicts")!;
+  expect(row.title).toBe("Signal Systems");
+  expect(row.lineage.jobs).toEqual([
+    "Engineer · Remote · Signal Systems",
+    "Engineer · Hybrid, London · Signal Systems",
+  ]);
+  expect(row.controls[0]?.label).toContain("London");
+  expect(row.controls[0]?.mutation).toEqual({
+    type: "decide_same_company_send_pair",
+    conflictId: "company_group",
+    jobIds: ["job_ready", "job_generating"],
+    allow: true,
+  });
+  safeguards.simultaneousApplicationConflicts[0]!.allowedPairs = [
+    {
+      jobIds: ["job_generating", "job_ready"],
+      decidedAt: now,
+      revokedAt: null,
+    },
+  ];
+  const allowed = buildSafeguardsPresentationModel({
+    workspace,
+    safeguards,
+  }).rows.find((row) => row.kind === "conflicts")!;
+  expect(allowed.blocked).toBe(false);
+  expect(allowed.recoveryGuidance).not.toContain("Choose Send both anyway");
+  expect(allowed.recoveryGuidance).toContain("Your choices are saved");
+  expect(allowed.controls[0]?.mutation).toMatchObject({ allow: false });
+  expect(allowed.controls[0]?.label).toContain("Revoke Send both anyway");
+  safeguards.simultaneousApplicationConflicts[0]!.allowedPairs = [];
+  workspace.applicationRecords = workspace.discoveryJobs
+    .filter((job) => ["job_ready", "job_generating"].includes(job.id))
+    .map((job) =>
+      ApplicationRecordSchema.parse({
+        id: `record_${job.id}`,
+        jobId: job.id,
+        title: job.title,
+        company: job.company,
+        status: "submitted",
+        lastAttemptState: "submitted",
+        lastActionLabel: "Confirmed",
+        nextActionLabel: "View application",
+        lastUpdatedAt: now,
+      }),
+    );
+  const historical = buildSafeguardsPresentationModel({
+    workspace,
+    safeguards,
+  }).rows.find((row) => row.kind === "conflicts")!;
+  expect(historical.statusLabel).toBe("Past overlap");
+  expect(historical.blocked).toBe(false);
+  expect(historical.controls).toHaveLength(0);
 });

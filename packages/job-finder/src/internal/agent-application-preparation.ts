@@ -1,4 +1,6 @@
 import {
+  checkWrittenApplicationAnswer,
+  applicationFacts,
   createApplyPageHands,
   createMoveReviewer,
   runApplyAgent,
@@ -18,7 +20,10 @@ export type ApplyPreparationInput = Omit<
   ExecuteApplicationFlowInput,
   "prepareApplicationForm"
 >;
-import { createApplicationLetterProvider } from "./application-letter-provider";
+import {
+  ApplicationLetterGroundingError,
+  createApplicationLetterProvider,
+} from "./application-letter-provider";
 import {
   decideApplySubmissionHandoff,
   type ApplySubmissionHandoff,
@@ -29,6 +34,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import {
+  type ApplyAgentTiming,
   AiBehaviorPreferenceSchema,
   ApplicationReviewCardSchema,
   CoverLetterPreferenceSchema,
@@ -45,6 +51,7 @@ import type {
   ApplicationReviewCard,
   CandidateProfile,
   JobFinderSettings,
+  JobSearchPreferences,
   SavedJob,
 } from "@nordri/contracts";
 /**
@@ -69,6 +76,8 @@ export interface AgentApplicationPreparationInput {
   /** The saved permission this run works inside, when there is one. */
   envelope?: ApplicationAuthorityEnvelope | null;
   executionInput: ApplyPreparationInput;
+  applicationRecordId?: string;
+  searchPreferences?: JobSearchPreferences | undefined;
   llmClient: LLMClient;
   startedAt: string;
   /** What the person would call this site. */
@@ -200,7 +209,7 @@ const BLOCKER_CODES: Record<
   account_creation_required: "requires_manual_review",
   security_challenge: "requires_manual_review",
   multi_factor_required: "requires_manual_review",
-  application_closed: "requires_manual_review",
+  application_closed: "application_closed",
   application_page_unreachable: "application_page_unreachable",
   site_saves_as_you_go: "site_saves_as_you_go",
 };
@@ -260,7 +269,7 @@ function toBlocker(
   if (questions.length > 0) {
     return {
       code: "missing_candidate_answer",
-      userActionKind: questions.some(
+      userActionKind: questions.every(
         (question) => question.answerControlType === "file",
       )
         ? "manual_upload"
@@ -268,6 +277,17 @@ function toBlocker(
       summary: result.reason,
       detail: result.reason,
       questionIds: questions.map((question) => question.id),
+      sourceDebugEvidenceRefIds: [],
+      url: result.finalUrl,
+    };
+  }
+  if (result.outcome === "paused") {
+    return {
+      code: "requires_manual_review",
+      userActionKind: "other",
+      summary: result.reason,
+      detail: result.reason,
+      questionIds: [],
       sourceDebugEvidenceRefIds: [],
       url: result.finalUrl,
     };
@@ -357,11 +377,27 @@ function toModelUse(
 function nextActionFor(result: ApplyAgentResult): string {
   const blocked = result.pauses.find((pause) => pause.blocker !== null);
   if (blocked?.blocker) {
+    if (blocked.blocker.code === "application_closed")
+      return "Find another job";
     return blocked.blocker.nextActionLabel;
   }
-  if (result.pauses.some((pause) => pause.question !== null)) {
-    return "Answer the form's questions and continue";
+  const questions = toQuestions(result);
+  const files = questions.filter(
+    (question) => question.answerControlType === "file",
+  );
+  if (files.length === questions.length && files.length > 0) {
+    return files.length === 1
+      ? `Add the required ${files[0]!.prompt
+          .split(" — ")
+          .at(-1)!
+          .replace(/[\s*:]+$/u, "")
+          .replace(/\s+upload$/iu, "")
+          .toLowerCase()}`
+      : "Add the required files";
   }
+  if (files.length > 0)
+    return "Add the required files and answer the remaining questions";
+  if (questions.length > 0) return "Answer the form's questions and continue";
   if (result.outcome === "stuck") {
     return "Try again, or open the listing and apply on the site";
   }
@@ -389,10 +425,23 @@ async function runApplyAgentSafely(
   input: AgentApplicationPreparationInput,
   config: Parameters<typeof runApplyAgent>[0],
 ): Promise<
-  { ok: true; result: ApplyAgentResult } | { ok: false; detail: string }
+  | { ok: true; result: ApplyAgentResult }
+  | { ok: false; detail: string; timing?: ApplyAgentTiming }
 > {
+  let timing: ApplyAgentTiming | undefined;
   try {
-    return { ok: true, result: await runApplyAgent(config, input.llmClient) };
+    return {
+      ok: true,
+      result: await runApplyAgent(
+        {
+          ...config,
+          onTiming: (value) => {
+            timing = value;
+          },
+        },
+        input.llmClient,
+      ),
+    };
   } catch (error) {
     const reason =
       error instanceof Error && error.message.trim()
@@ -400,6 +449,7 @@ async function runApplyAgentSafely(
         : "Something went wrong while it was working through the form.";
     return {
       ok: false,
+      ...(timing ? { timing } : {}),
       detail: `Job Finder hit a problem on ${input.siteLabel} it could not work around. ${reason} Nothing was sent, and anything it filled in is still on the page.`,
     };
   }
@@ -492,9 +542,14 @@ export async function runAgentApplicationPreparation(
     ...(input.signal ? { signal: input.signal } : {}),
   });
 
+  const approvedLetterText = await input.letters?.getApprovedText?.(
+    executionInput.job.id,
+    input.applicationRecordId,
+  );
   const outcome = await runApplyAgentSafely(input, {
     hands: createApplyPageHands(input.session, now),
     safety: input.session,
+    modelQuestionClassification: true,
     intermediateWritesAuthorized:
       executionInput.intermediateMutationsAuthorized === true,
     accountCreationAuthorized:
@@ -502,6 +557,7 @@ export async function runAgentApplicationPreparation(
     authority: activeAuthority,
     sources: {
       profile: executionInput.profile,
+      preferences: input.searchPreferences,
       resumeText: executionInput.profile.baseResume.textContent,
       posting: {
         title: executionInput.job.title,
@@ -509,12 +565,19 @@ export async function runAgentApplicationPreparation(
         location: executionInput.job.location,
         description: executionInput.job.description,
       },
+      ...(approvedLetterText != null ? { approvedLetterText } : {}),
       reusableAnswers: executionInput.profile.answerBank.customAnswers,
       documents: toApplyDocuments(executionInput),
     },
     application: {
       jobId: executionInput.job.id,
       applicationId: executionInput.idempotencyKey ?? executionInput.job.id,
+      ...(executionInput.applicationPageBindingKey
+        ? { resultId: executionInput.applicationPageBindingKey }
+        : {}),
+      ...(input.applicationRecordId
+        ? { applicationRecordId: input.applicationRecordId }
+        : {}),
       startingUrl: targetUrl,
       ...(executionInput.instructions?.length
         ? { instructions: executionInput.instructions }
@@ -583,7 +646,7 @@ export async function runAgentApplicationPreparation(
     // Whatever went wrong, this run ends as a recorded outcome rather than as
     // a thrown error: a run that disappears leaves the person with a button
     // that does nothing and a record that says it is still going.
-    return buildPreparationResult({
+    const failed = buildPreparationResult({
       executionInput,
       // A run the model or browser dropped is a failed attempt to try again,
       // not a step waiting on the person.
@@ -608,6 +671,7 @@ export async function runAgentApplicationPreparation(
       now: now().toISOString(),
       nextActionLabel: "Try this application again",
     });
+    return { ...failed, agentTiming: outcome.timing };
   }
 
   const result = outcome.result;
@@ -642,15 +706,15 @@ export async function runAgentApplicationPreparation(
   // them to read over and send. Recording it as "paused" put every finished
   // application in the Waiting-on-you count beside the ones that were stuck.
   const attemptState: ApplyExecutionResult["state"] =
-    result.outcome === "stuck"
-      ? "failed"
-      : blocker === null &&
-          questions.length === 0 &&
-          !result.structuredExperienceGap
-        ? "ready"
-        : "paused";
+    questions.length > 0
+      ? "paused"
+      : result.outcome === "stuck" || blocker?.code === "application_closed"
+        ? "failed"
+        : blocker === null && questions.length === 0
+          ? "ready"
+          : "paused";
 
-  return buildPreparationResult({
+  const prepared = buildPreparationResult({
     executionInput,
     state: attemptState,
     summary: summaryFor(result),
@@ -667,6 +731,7 @@ export async function runAgentApplicationPreparation(
     externalWrites: toExternalWrites(result),
     modelUse: toModelUse(result, input, startedAt),
   });
+  return { ...prepared, agentTiming: result.timing };
 }
 
 /**
@@ -723,6 +788,8 @@ export function toApplyLlmClient(aiClient: {
  */
 export function createApplyFormPreparer(input: {
   executionInput: ApplyPreparationInput;
+  applicationRecordId?: string;
+  searchPreferences?: JobSearchPreferences | undefined;
   aiClient: Parameters<typeof toApplyLlmClient>[0];
   siteLabel: string;
   letters?:
@@ -774,6 +841,10 @@ export function createApplyFormPreparer(input: {
       session,
       currentUrl,
       executionInput: input.executionInput,
+      ...(input.applicationRecordId
+        ? { applicationRecordId: input.applicationRecordId }
+        : {}),
+      searchPreferences: input.searchPreferences,
       llmClient,
       startedAt,
       siteLabel: input.siteLabel,
@@ -804,6 +875,7 @@ export function buildApplyLetterDependencies(input: {
     ) => ReturnType<LLMClient["chatWithTools"]>;
   };
   documentManager: {
+    getApprovedApplicationLetter?: import("./workspace-service-contracts").JobFinderDocumentManager["getApprovedApplicationLetter"];
     renderLetterArtifact?: (renderInput: {
       text: string;
       job: SavedJob;
@@ -815,6 +887,7 @@ export function buildApplyLetterDependencies(input: {
   job: SavedJob;
   profile: CandidateProfile;
   settings: JobFinderSettings;
+  searchPreferences?: JobSearchPreferences | undefined;
 }): Omit<ApplicationLetterDependencies, "application" | "signal"> | undefined {
   const chatWithTools = input.aiClient.chatWithTools;
   if (!chatWithTools) {
@@ -824,6 +897,20 @@ export function buildApplyLetterDependencies(input: {
   const renderLetterArtifact = input.documentManager.renderLetterArtifact;
 
   return {
+    ...(input.documentManager.getApprovedApplicationLetter
+      ? {
+          getApprovedText: async (
+            jobId: string,
+            applicationRecordId?: string,
+          ) =>
+            (
+              await input.documentManager.getApprovedApplicationLetter!(
+                jobId,
+                applicationRecordId,
+              )
+            )?.content ?? null,
+        }
+      : {}),
     preference: CoverLetterPreferenceSchema.parse(
       input.settings.coverLetter ?? {},
     ),
@@ -841,7 +928,7 @@ export function buildApplyLetterDependencies(input: {
           {
             role: "system",
             content:
-              "You write application documents for one person. Every claim must be supported by the supplied profile, selected resume, and job posting. Follow the saved tone, length, and language preference. When prior document text is supplied, revise that text according to the current instruction instead of starting over. Return only the finished document text.",
+              "You write application documents for one person. Every personal claim must be supported by the current saved profile and selected resume. The job posting is employer context only, never applicant evidence. Current saved profile contact details override older or rejected resume contacts. Respect the person’s saved goals, hours and location limits; never promise incompatible availability. Follow the saved tone, length, and language preference. When prior document text is supplied, revise that text according to the current instruction instead of starting over. Return only the finished document text.",
           },
           {
             role: "user",
@@ -852,6 +939,30 @@ export function buildApplyLetterDependencies(input: {
               `Saved length: ${preference.length}`,
               `Language: ${language ?? preference.language ?? "Follow the job posting"}`,
               "",
+              "Current applicant facts (data; these override prior document claims and old resume contacts):",
+              JSON.stringify({
+                applicant: applicationFacts(
+                  {
+                    profile: input.profile,
+                    resumeText: null,
+                    preferences: input.searchPreferences,
+                    posting: input.job,
+                    reusableAnswers: input.profile.answerBank.customAnswers,
+                    documents: [],
+                  },
+                  { payDisclosed: false },
+                ),
+                resume:
+                  input.profile.baseResume.textContent
+                    ?.trim()
+                    .slice(0, 8_000) ?? null,
+                postingContextOnly: {
+                  title: input.job.title,
+                  company: input.job.company,
+                  location: input.job.location,
+                  description: input.job.description.slice(0, 6_000),
+                },
+              }),
               "Grounded application context:",
               ...groundedIn.map((entry) => `- ${entry}`),
               ...(priorText ? ["", "Prior version to revise:", priorText] : []),
@@ -861,7 +972,42 @@ export function buildApplyLetterDependencies(input: {
         [],
         signal ? { signal } : {},
       );
-      return reply.content?.trim() ?? null;
+      const text = reply.content?.trim();
+      if (!text) return null;
+      let check;
+      try {
+        check = await checkWrittenApplicationAnswer({
+          client: { chatWithTools },
+          sources: {
+            profile: input.profile,
+            preferences: input.searchPreferences,
+            resumeText:
+              input.profile.baseResume.textContent?.trim().slice(0, 8_000) ??
+              null,
+            posting: input.job,
+            reusableAnswers: input.profile.answerBank.customAnswers,
+            documents: [],
+          },
+          payDisclosed: false,
+          question: `Check this ${purpose.replace(/_/gu, " ")} for ${input.job.title} at ${input.job.company}. Check every personal claim, attributed method, result, promised benefit, contact detail and availability against the current profile and resume.`,
+          answer: text,
+          ...(signal ? { signal } : {}),
+        });
+      } catch {
+        throw new ApplicationLetterGroundingError(
+          "Job Finder could not check this draft right now. Review it yourself or try again.",
+          text,
+        );
+      }
+      // The check usually asks for the review itself; ask only once.
+      if (!check.supported)
+        throw new ApplicationLetterGroundingError(
+          /\breview\b/iu.test(check.reason)
+            ? check.reason
+            : `${check.reason} Review and agree the wording for this application before approving it.`,
+          check.reviewWording ?? text,
+        );
+      return text;
     },
     ...(renderLetterArtifact
       ? {
@@ -906,14 +1052,45 @@ export function buildApplyLetterDependencies(input: {
  * and the page it ended on. Nothing is inferred and nothing is hidden — a
  * review that does not show the generated answers is not a review.
  */
+function reviewQuestionKey(
+  fieldKey: string | undefined,
+  label: string,
+  siblings: readonly { fieldKey?: string | undefined; label: string }[] = [],
+): string {
+  if (!fieldKey) return label;
+  const parts = fieldKey.split("|");
+  if (parts.length < 4) return fieldKey;
+  const base = `${parts[0]}|${parts[1]}|${label}`;
+  if (parts[2]?.startsWith("field:"))
+    return `${base}|${parts[2].split(":").at(-1)}`;
+  const same = siblings.filter((entry) => {
+    const peer = entry.fieldKey?.split("|");
+    return (
+      peer &&
+      peer.length >= 4 &&
+      `${peer[0]}|${peer[1]}|${entry.label}` === base
+    );
+  });
+  const ordinal = same.findIndex((entry) => entry.fieldKey === fieldKey);
+  // Equal-worded questions on one screen remain separate by their order.
+  // Temporary handles never become the identity of a unique question.
+  return `${base}|${same.length > 1 ? Math.max(0, ordinal) : 0}`;
+}
+
 export function buildApplyReviewCard(input: {
   result: ApplyAgentResult;
   siteLabel: string;
   preparedAt: string;
 }): ApplicationReviewCard {
-  const letterEntry = input.result.filled.find(
+  const filled = input.result.reviewFilled ?? input.result.filled;
+  const attached = input.result.reviewAttachments ?? input.result.attachments;
+  const letterEntry = filled.find(
     (entry) => entry.questionKind === "cover_letter",
   );
+  const attachedLetter = attached.find((entry) => entry.reviewText)?.reviewText;
+  const reviewDraft = input.result.pauses.find(
+    (pause) => pause.reviewDraft,
+  )?.reviewDraft;
   // The card's schema caps every string. The run's own text (a grounding
   // note that quotes a resume line, a long field label) can run past a cap,
   // and an over-long note used to make this parse throw after the form had
@@ -921,7 +1098,7 @@ export function buildApplyReviewCard(input: {
   // sent. Text is clamped to what the card can hold; the record keeps the
   // full run trail.
   const clamp = (text: string, max: number): string => {
-    const trimmed = text.trim() || "-";
+    const trimmed = text.trim() ? text : "-";
     return trimmed.length <= max
       ? trimmed
       : `${trimmed.slice(0, max - 1).trimEnd()}…`;
@@ -936,32 +1113,279 @@ export function buildApplyReviewCard(input: {
   return ApplicationReviewCardSchema.parse({
     siteLabel: clamp(input.siteLabel, 240),
     pageUrl: input.result.finalUrl,
-    answers: input.result.filled.slice(0, 200).map((entry) => ({
-      question: clamp(entry.label, 2_000),
-      answer: clamp(entry.answer.value, 12_000),
-      source: clamp(entry.answer.provenanceLabel, 240),
-      written: entry.answer.sourceKind === "generated",
-      groundedIn: clampGrounding(entry.answer.groundedIn),
-    })),
-    attachments: input.result.attachments.slice(0, 20).map((attachment) => ({
-      label: clamp(attachment.label, 240),
-      fileName: clamp(attachment.fileName, 240),
-      field: clamp(attachment.controlLabel, 2_000),
-    })),
-    letter: letterEntry
-      ? {
-          text: clamp(letterEntry.answer.value, 12_000),
-          groundedIn: clampGrounding(letterEntry.answer.groundedIn),
-        }
-      : null,
-    waitingOnYou: [
-      ...input.result.pauses.map((pause) => pause.summary),
-      ...(input.result.structuredExperienceGap
-        ? [input.result.structuredExperienceGap]
-        : []),
+    ...(input.result.reviewObservedFieldKeys
+      ? { observedFieldKeys: input.result.reviewObservedFieldKeys }
+      : {}),
+    answers: [
+      ...new Map(
+        filled.map((entry) => [entry.fieldKey ?? entry.label, entry]),
+      ).values(),
     ]
+      .slice(0, 200)
+      .map((entry) => ({
+        ...(entry.fieldKey ? { fieldKey: entry.fieldKey } : {}),
+        question: clamp(entry.label, 2_000),
+        answer: clamp(entry.answer.value, 12_000),
+        source: clamp(entry.answer.provenanceLabel, 240),
+        sourceId: entry.answer.sourceId,
+        written: entry.answer.sourceKind === "generated",
+        groundedIn: clampGrounding(entry.answer.groundedIn),
+      })),
+    attachments: [
+      ...new Map(
+        attached.map((entry) => [entry.fieldKey ?? entry.controlLabel, entry]),
+      ).values(),
+    ]
+      .slice(0, 20)
+      .map((attachment) => ({
+        ...(attachment.fieldKey ? { fieldKey: attachment.fieldKey } : {}),
+        label: clamp(attachment.label, 240),
+        fileName: clamp(attachment.fileName, 240),
+        field: clamp(attachment.controlLabel, 2_000),
+      })),
+    letter: reviewDraft
+      ? {
+          text: clamp(reviewDraft.text, 12_000),
+          groundedIn: clampGrounding(reviewDraft.groundedIn),
+          reviewReason: clamp(reviewDraft.reason, 2_000),
+        }
+      : letterEntry
+        ? {
+            fields: [
+              ...filled
+                .filter((entry) => entry.questionKind === "cover_letter")
+                .map((entry) => entry.label),
+              ...attached
+                .filter((entry) => entry.reviewText)
+                .map((entry) => entry.controlLabel),
+            ],
+            text: clamp(letterEntry.answer.value, 12_000),
+            groundedIn: clampGrounding(letterEntry.answer.groundedIn),
+          }
+        : attachedLetter
+          ? {
+              fields: attached
+                .filter((entry) => entry.reviewText)
+                .map((entry) => entry.controlLabel),
+              text: clamp(attachedLetter.text, 12_000),
+              groundedIn: clampGrounding(attachedLetter.groundedIn),
+            }
+          : null,
+    waitingOnYou: input.result.pauses
+      .map((pause) => pause.summary)
       .slice(0, 20)
       .map((summary) => clamp(summary, 2_000)),
     preparedAt: input.preparedAt,
+  });
+}
+
+/** The address and recorded step identify a screen, without interpreting its label. */
+function reviewStepKey(fieldKey: string | undefined): string | null {
+  const parts = fieldKey?.split("|");
+  return parts && parts.length >= 4 && parts[0]
+    ? `${parts[0]}|${parts[1]}`
+    : null;
+}
+
+/** A continuation adds to the retained form review; latest fields win. */
+
+export function mergeApplyReviewCards(
+  previous: ApplicationReviewCard | null,
+  current: ApplicationReviewCard | null,
+  options: { freshPreparation?: boolean } = {},
+): ApplicationReviewCard | null {
+  if (!current) return options.freshPreparation ? null : previous;
+  if (!previous) return current;
+  const answerPeers = (card: ApplicationReviewCard) =>
+    card.answers.map((entry) => ({ ...entry, label: entry.question }));
+  const attachmentPeers = (card: ApplicationReviewCard) =>
+    card.attachments.map((entry) => ({ ...entry, label: entry.field }));
+  const answerKey = (
+    card: ApplicationReviewCard,
+    entry: ApplicationReviewCard["answers"][number],
+  ) => reviewQuestionKey(entry.fieldKey, entry.question, answerPeers(card));
+  const attachmentKey = (
+    card: ApplicationReviewCard,
+    entry: ApplicationReviewCard["attachments"][number],
+  ) => reviewQuestionKey(entry.fieldKey, entry.field, attachmentPeers(card));
+  const observedPeers = (current.observedFieldKeys ?? []).map((fieldKey) => ({
+    fieldKey,
+    label: fieldKey.split("|").slice(3).join("|"),
+  }));
+  const currentSteps = new Set(
+    (current.observedFieldKeys ?? []).map(reviewStepKey).filter(Boolean),
+  );
+  const previousKeys = [
+    ...previous.answers.map((answer) => answer.fieldKey),
+    ...previous.attachments.map((attachment) => attachment.fieldKey),
+    ...(previous.observedFieldKeys ?? []),
+  ];
+  const previousSteps = [...new Set(previousKeys.map(reviewStepKey))].filter(
+    (step) => step !== null,
+  );
+  const previousObservedSteps = new Set(
+    (previous.observedFieldKeys ?? []).map(reviewStepKey),
+  );
+  // Older continuations stored only their last run's observations. Recover
+  // their earlier screens from the retained answers when that history is partial.
+  const orderedPreviousSteps = previousSteps.every((step) =>
+    previousObservedSteps.has(step),
+  )
+    ? [...previousObservedSteps].filter((step) => step !== null)
+    : previousSteps;
+  const firstCurrentStep = reviewStepKey(current.observedFieldKeys?.[0]);
+  const previousObservedPeers = (previous.observedFieldKeys ?? []).map(
+    (fieldKey) => ({
+      fieldKey,
+      label: fieldKey.split("|").slice(3).join("|"),
+    }),
+  );
+  const previousQuestionKeys = new Set([
+    ...previous.answers.map((answer) => answerKey(previous, answer)),
+    ...previous.attachments.map((attachment) =>
+      attachmentKey(previous, attachment),
+    ),
+    ...previousObservedPeers.map((entry) =>
+      reviewQuestionKey(entry.fieldKey, entry.label, previousObservedPeers),
+    ),
+  ]);
+  const continuedForm =
+    firstCurrentStep !== null &&
+    orderedPreviousSteps.indexOf(firstCurrentStep) > 0 &&
+    !orderedPreviousSteps
+      .slice(0, orderedPreviousSteps.indexOf(firstCurrentStep))
+      .some((step) => currentSteps.has(step)) &&
+    observedPeers.some(
+      (observed) =>
+        reviewStepKey(observed.fieldKey) === firstCurrentStep &&
+        previousQuestionKeys.has(
+          reviewQuestionKey(observed.fieldKey, observed.label, observedPeers),
+        ),
+    );
+  const retainEarlier = !options.freshPreparation || continuedForm;
+  const unobservedStep = (fieldKey: string | undefined): boolean => {
+    const step = reviewStepKey(fieldKey);
+    return step !== null ? !currentSteps.has(step) : !options.freshPreparation;
+  };
+  const observedFieldKeys = new Set<string>();
+  if (retainEarlier && current.observedFieldKeys) {
+    // Replace each observed screen in its original position so revisiting the
+    // first screen cannot make a later screen look like the form's start.
+    for (const key of previous.observedFieldKeys ?? []) {
+      if (unobservedStep(key)) observedFieldKeys.add(key);
+      else {
+        for (const currentKey of current.observedFieldKeys) {
+          if (reviewStepKey(currentKey) === reviewStepKey(key))
+            observedFieldKeys.add(currentKey);
+        }
+      }
+    }
+    for (const key of current.observedFieldKeys) observedFieldKeys.add(key);
+  }
+  const answers = current.answers.map((answer) => {
+    const recorded = previous.answers.find((entry) =>
+      answer.fieldKey && entry.fieldKey
+        ? answerKey(current, answer) === answerKey(previous, entry)
+        : answer.question === entry.question,
+    );
+    return answer.source === "the filled application form" &&
+      recorded?.answer === answer.answer
+      ? {
+          ...recorded,
+          ...(answer.fieldKey ? { fieldKey: answer.fieldKey } : {}),
+        }
+      : answer;
+  });
+  const earlierAnswers = (retainEarlier ? previous.answers : []).filter(
+    (answer) =>
+      unobservedStep(answer.fieldKey) &&
+      (answer.fieldKey
+        ? !current.observedFieldKeys?.some(
+            (key) =>
+              reviewQuestionKey(
+                key,
+                key.split("|").slice(3).join("|"),
+                observedPeers,
+              ) === answerKey(previous, answer),
+          ) &&
+          !answers.some(
+            (entry) =>
+              answerKey(current, entry) === answerKey(previous, answer),
+          )
+        : !answers.some((entry) => entry.question === answer.question)),
+  );
+  const earlierAttachments = (retainEarlier ? previous.attachments : []).filter(
+    (attachment) =>
+      unobservedStep(attachment.fieldKey) &&
+      (attachment.fieldKey
+        ? !current.observedFieldKeys?.some(
+            (key) =>
+              reviewQuestionKey(
+                key,
+                key.split("|").slice(3).join("|"),
+                observedPeers,
+              ) === attachmentKey(previous, attachment),
+          ) &&
+          !current.attachments.some(
+            (entry) =>
+              attachmentKey(current, entry) ===
+              attachmentKey(previous, attachment),
+          )
+        : !current.attachments.some(
+            (entry) => entry.field === attachment.field,
+          )),
+  );
+  return ApplicationReviewCardSchema.parse({
+    ...current,
+    ...(retainEarlier && current.observedFieldKeys
+      ? {
+          observedFieldKeys: [...observedFieldKeys].slice(0, 500),
+        }
+      : {}),
+    answers: [
+      ...new Map(
+        [...earlierAnswers, ...answers].map((answer) => [
+          answerKey(
+            earlierAnswers.includes(answer) ? previous : current,
+            answer,
+          ),
+          answer,
+        ]),
+      ).values(),
+    ].filter(
+      (entry, index, all) =>
+        all.findLastIndex(
+          (candidate) =>
+            (candidate.fieldKey === entry.fieldKey ||
+              ((candidate.fieldKey?.split("|").length ?? 0) < 4 &&
+                (entry.fieldKey?.split("|").length ?? 0) < 4)) &&
+            candidate.question === entry.question &&
+            candidate.answer === entry.answer,
+        ) === index,
+    ),
+    attachments: [
+      ...new Map(
+        [...earlierAttachments, ...current.attachments].map((attachment) => [
+          attachmentKey(
+            earlierAttachments.includes(attachment) ? previous : current,
+            attachment,
+          ),
+          attachment,
+        ]),
+      ).values(),
+    ].filter(
+      (entry, index, all) =>
+        all.findLastIndex(
+          (candidate) =>
+            (candidate.fieldKey === entry.fieldKey ||
+              ((candidate.fieldKey?.split("|").length ?? 0) < 4 &&
+                (entry.fieldKey?.split("|").length ?? 0) < 4)) &&
+            candidate.field === entry.field &&
+            candidate.fileName === entry.fileName,
+        ) === index,
+    ),
+    letter: options.freshPreparation
+      ? current.letter
+      : (current.letter ?? previous.letter),
   });
 }

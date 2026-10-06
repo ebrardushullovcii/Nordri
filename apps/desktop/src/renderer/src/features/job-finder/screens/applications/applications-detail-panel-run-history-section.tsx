@@ -5,6 +5,7 @@ import {
   formatTimestamp,
   formatStatusLabel,
 } from "@renderer/features/job-finder/lib/job-finder-utils";
+import { resolveApplyStatePresentation } from "./apply-state";
 import { StatusBadge } from "../../components/status-badge";
 import {
   formatApplyRunModeLabel,
@@ -12,6 +13,7 @@ import {
   getCustomerFacingApplyText,
 } from "./applications-detail-panel-helpers";
 import { resolveApplicationRecoveryPresentation } from "./applications-recovery-state";
+import { PREPARED_PAGE_CLOSED_SUMMARY } from "@nordri/contracts";
 import { APPLICATION_DETAIL_FACT_LABEL_CLASS } from "./applications-detail-fact-strip";
 
 function RunHistoryEntry(props: {
@@ -21,6 +23,13 @@ function RunHistoryEntry(props: {
   run: JobFinderWorkspaceSnapshot["applyRuns"][number] | null;
 }) {
   const { isSelected, onSelect, result, run } = props;
+  const applicationState = resolveApplyStatePresentation({
+    mode: "fill_only",
+    result,
+    run: run
+      ? { state: run.state, activityPaused: false, started: true }
+      : null,
+  });
 
   return (
     <button
@@ -51,9 +60,15 @@ function RunHistoryEntry(props: {
                 : "active"
           }
         >
-          {result.state === "cancelled"
-            ? "Cancelled by you"
-            : formatStatusLabel(result.state)}
+          {result.summary === PREPARED_PAGE_CLOSED_SUMMARY
+            ? "Prepare again"
+            : result.state === "cancelled"
+              ? "Cancelled by you"
+              : applicationState.kind === "ready_to_send" &&
+                  result.privacyReceipt?.submissionOutcome?.browserAction
+                    ?.reason !== "form_validation_failed"
+                ? applicationState.title
+                : formatStatusLabel(result.state)}
         </StatusBadge>
       </span>
       {/* The same title the status block gives this run. A run that paused

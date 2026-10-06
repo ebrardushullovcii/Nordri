@@ -120,6 +120,14 @@ function createReceipt(
 }
 
 describe("getCustomerFacingApplyText", () => {
+  it("uses a plain source label in retained answer history", () => {
+    expect(
+      getCustomerFacingApplyText(
+        'Answered "Currency" from chosen on the form.',
+      ),
+    ).toBe('Answered "Currency" from a choice Job Finder made on the form.');
+  });
+
   it("keeps transport implementation language out of retained customer history", () => {
     const resumeMessage = getCustomerFacingApplyText(
       "Prepare-only guard blocked a POST xhr attempt while the resume upload was running.",
@@ -320,17 +328,17 @@ describe("getQueueStateExplanation", () => {
     );
   });
 
-  it("says a stop-rule pause will not continue and needs a fresh Prepare remaining jobs run", () => {
+  it("says a stop-rule pause needs an explicit retry", () => {
     const explanation = getQueueStateExplanation({
       ...baseInput,
       runState: "paused_for_user_review",
     });
 
-    expect(explanation).toContain("one of your safety limits was reached");
+    expect(explanation).toContain("A safety limit paused this run.");
     expect(explanation).toContain("will not carry on by itself");
-    expect(explanation).toContain("Review the prepared sample in Safeguards");
+    expect(explanation).toContain("Open Safeguards to see the limit");
     expect(explanation).toContain(
-      "Use Prepare remaining jobs to finish the ones it did not get to",
+      "press Try again on an unstarted job when the limit allows it",
     );
     // Unlike the consent pause, there is nothing to resolve to resume.
     expect(explanation).not.toContain("Needs you");
@@ -690,5 +698,38 @@ it("lets the person retry a cancelled item without including it in the remaining
   ).toBe(false);
   expect(getQueueRecoveryTone("cancelled")).toBe(
     getQueueRecoveryTone("failed"),
+  );
+});
+
+it("counts question waits as pending work without inventing a safety limit", () => {
+  expect(
+    getQueueStateExplanation({
+      runState: "paused_for_user_review",
+      selectedJobCount: 2,
+      blockedJobCount: 0,
+      skippedJobCount: 0,
+      failedJobCount: 0,
+      completedJobCount: 0,
+      waitingJobCount: 2,
+      unfinishedJobCount: 0,
+    }),
+  ).toBe(
+    "0 sent. 2 applications need your answers or review. Open each waiting application to continue.",
+  );
+});
+
+it("describes a failed preparation without internal workflow jargon", () => {
+  expect(
+    getQueueStateExplanation({
+      runState: "completed",
+      selectedJobCount: 1,
+      blockedJobCount: 0,
+      skippedJobCount: 0,
+      failedJobCount: 1,
+      completedJobCount: 0,
+      unfinishedJobCount: 1,
+    }),
+  ).toBe(
+    "Some applications could not be prepared. Check each job below before trying again.",
   );
 });

@@ -195,7 +195,11 @@ export function inferEducationEntries(resumeText: string) {
   const degreePattern =
     /\b(?:degree|associate|bachelor|master|ph\.?d|b\.?sc|m\.?sc|diploma|bootcamp)\b/i;
   const anchors = lines.flatMap((line, index) =>
-    schoolPattern.test(line) && !isResumeSectionHeading(line) ? [index] : [],
+    (schoolPattern.test(line) ||
+      /^([^,]+),\s*([^,]+)(?:,\s*([^,]+))?,\s*(?:19|20)\d{2}$/.test(line)) &&
+    !isResumeSectionHeading(line)
+      ? [index]
+      : [],
   );
   const starts = anchors.map((index, position) => {
     const previous = lines[index - 1] ?? "";
@@ -224,6 +228,27 @@ function inferEducationEntry(resumeText: string) {
     "EDUCATION",
   ] as const);
   const candidatePool = educationLines.length > 0 ? educationLines : lines;
+  // A qualification, institution and graduation year are structural fields;
+  // their wording need not belong to an English degree vocabulary.
+  const inline = educationLines
+    .map((line) =>
+      line.match(/^([^,]+),\s*([^,]+)(?:,\s*([^,]+))?,\s*((?:19|20)\d{2})$/),
+    )
+    .find(Boolean);
+  if (inline) {
+    const qualification = (inline[1] ?? "").match(/^(.+?)\s+in\s+(.+)$/i);
+    return [
+      {
+        schoolName: inline[2] ?? null,
+        degree: qualification?.[1] ?? inline[1] ?? null,
+        fieldOfStudy: qualification?.[2] ?? null,
+        location: inline[3] ?? null,
+        startDate: null,
+        endDate: inline[4] ?? null,
+        summary: null,
+      },
+    ];
+  }
   const educationDegreePattern =
     /\b(?:degree|associate|bachelor|master|ph\.?d|b\.?sc|m\.?sc|b\.?a|m\.?a|btech|mtech)\b/i;
 
@@ -342,11 +367,24 @@ function inferEducationEntry(resumeText: string) {
       (parsedEducationLine || educationLine).slice(0, schoolKeywordIndex),
     )
   ) {
+    const beforeSchool = (parsedEducationLine || educationLine).slice(
+      0,
+      schoolKeywordIndex,
+    );
+    const separator = Math.max(
+      beforeSchool.lastIndexOf(","),
+      beforeSchool.lastIndexOf("—"),
+      beforeSchool.lastIndexOf("–"),
+    );
+    const schoolStart =
+      separator >= 0 && /\bin\s+.+/i.test(beforeSchool.slice(0, separator))
+        ? separator + 1
+        : schoolKeywordIndex;
     schoolName = cleanLine(
-      (parsedEducationLine || educationLine).slice(schoolKeywordIndex),
+      (parsedEducationLine || educationLine).slice(schoolStart),
     );
     const detailParts = cleanLine(
-      (parsedEducationLine || educationLine).slice(0, schoolKeywordIndex),
+      (parsedEducationLine || educationLine).slice(0, schoolStart),
     ).replace(/^[,\s–—-]+|[,\s–—-]+$/g, "");
 
     if (detailParts) {

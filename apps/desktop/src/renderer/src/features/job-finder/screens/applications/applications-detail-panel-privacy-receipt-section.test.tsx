@@ -103,12 +103,35 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
             source: "original_upload",
             sourceDocumentId: "document-1",
             exportArtifactId: null,
-            fileName: "Ebrar-CV.pdf",
+            fileName: "Robin-CV.pdf",
             sha256: null,
           },
           stayedLocal: ["job_listing_data", "browser_evidence"],
-          modelUse: [],
+          modelUse: [
+            {
+              purpose: "application_answering",
+              transport: "external_model",
+              providerLabel: "Example AI",
+              modelLabel: "Example model",
+              dataCategories: ["profile_data", "application_answers"],
+              occurredAt: "2026-07-30T10:00:00.000Z",
+            },
+          ],
           externalWrites: [
+            {
+              category: "application_answer",
+              fieldLabel: "Skills",
+              occurredAt: "2026-07-30T10:00:00.000Z",
+              artifactRefId: null,
+              verified: true,
+            },
+            {
+              category: "application_answer",
+              fieldLabel: "Skills",
+              occurredAt: "2026-07-30T10:00:00.000Z",
+              artifactRefId: null,
+              verified: true,
+            },
             {
               category: "resume_attachment",
               fieldLabel: "Resume",
@@ -129,20 +152,27 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
     expect(screen.queryByText("Earlier preparation record")).toBeNull();
 
     fireEvent.click(screen.getByText("Show details"));
-    // The summary names the document in the user's terms; the generated
-    // file name stays inside the expanded technical detail.
+    // The summary names the exact file recorded in the form.
     expect(
       screen.getByText(
-        "https://boards.greenhouse.io/example/jobs/123 · Your approved resume (PDF)",
+        "https://boards.greenhouse.io/example/jobs/123 · Resume: Robin-CV.pdf (PDF)",
       ),
     ).not.toBeNull();
-    expect(screen.getByText("Ebrar-CV.pdf")).not.toBeNull();
+    expect(screen.getByText("Robin-CV.pdf")).not.toBeNull();
     expect(
       screen.getByText(/contains personal application answers/i),
     ).not.toBeNull();
-    expect(screen.getByText("Stayed local")).not.toBeNull();
+    expect(screen.getByText("Stored on this device")).not.toBeNull();
     expect(screen.getByText("Sent to a model")).not.toBeNull();
+    expect(screen.queryByText("Stayed local")).toBeNull();
+    expect(
+      screen.getByText(
+        /Profile Data, Application Answers for Application Answering via Example AI/,
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("Written to the site")).not.toBeNull();
+    expect(screen.getByText("Skills, Resume")).not.toBeNull();
+    expect(screen.queryByText("Skills, Skills, Resume")).toBeNull();
     expect(screen.getByText("The resume that was used")).not.toBeNull();
     expect(
       screen.getByText(
@@ -189,7 +219,7 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
             source: "original_upload",
             sourceDocumentId: "document-1",
             exportArtifactId: null,
-            fileName: "Ebrar-CV.pdf",
+            fileName: "Robin-CV.pdf",
             sha256: null,
           },
           stayedLocal: [],
@@ -287,7 +317,7 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
             source: "original_upload",
             sourceDocumentId: "document-1",
             exportArtifactId: null,
-            fileName: "Ebrar-CV.pdf",
+            fileName: "Robin-CV.pdf",
             sha256: null,
           },
           stayedLocal: [],
@@ -379,7 +409,7 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
             source: "original_upload",
             sourceDocumentId: "document-1",
             exportArtifactId: null,
-            fileName: "Ebrar-CV.txt",
+            fileName: "Robin-CV.txt",
             sha256,
           },
           stayedLocal: [],
@@ -396,8 +426,10 @@ describe("ApplicationsDetailPanelPrivacyReceiptSection", () => {
     // The one screen whose job is proving nothing was altered must not
     // misname the file it is vouching for.
     const text = document.body.textContent ?? "";
-    expect(text).toContain("Your approved resume (text file)");
-    expect(text).toContain("This is the exact text file you approved");
+    expect(text).toContain("Resume: Robin-CV.txt (text file)");
+    expect(text).toContain(
+      "This is a plain-text copy of your original, unchanged.",
+    );
     expect(text).not.toMatch(/PDF/);
   });
 

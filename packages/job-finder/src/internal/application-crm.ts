@@ -1,4 +1,6 @@
 import type {
+  ApplicationCrmBulkStageMutationInput,
+  OutcomeEvent,
   ApplicationCrmCalendarEntry,
   ApplicationCrmData,
   ApplicationCrmDuplicateHint,
@@ -9,10 +11,15 @@ import type {
   ApplicationCrmRecommendedAction,
   ApplicationCrmSettings,
   ApplicationCrmStage,
+  ApplyJobResult,
+  ApplyRunSummary,
   ApplicationRecord,
 } from "@nordri/contracts";
 import type { ApplicationRecordBatchCommitResult } from "@nordri/db";
 import {
+  projectApplicationRecordsActivity,
+  APPLICATION_CRM_STAGE_NAMES,
+  inferApplicationActivityStage,
   ApplicationCrmDataSchema,
   ApplicationCrmBulkStageMutationInputSchema,
   ApplicationCrmExportInputSchema,
@@ -227,37 +234,7 @@ export function inferApplicationCrmStage(
   record: Pick<ApplicationRecord, "status" | "lastAttemptState"> &
     Partial<Pick<ApplicationRecord, "latestBlocker">>,
 ): ApplicationCrmStage {
-  // Match the Tracker's inferred stage when its first note, tag, or reminder
-  // creates the CRM payload. A paused form is still being prepared.
-  const preparationBlocked =
-    Boolean(record.latestBlocker) || record.lastAttemptState === "paused";
-  switch (record.status) {
-    case "shortlisted":
-      return preparationBlocked ? "preparing" : "shortlisted";
-    case "drafting":
-      return "preparing";
-    case "ready_for_review":
-    case "approved":
-      return preparationBlocked ? "preparing" : "ready_for_approval";
-    case "submitted":
-      return "applied";
-    case "assessment":
-      return "assessment";
-    case "interview":
-      return "interview";
-    case "offer":
-      return "offer";
-    case "rejected":
-      return "rejected";
-    case "withdrawn":
-      return "withdrawn";
-    case "archived":
-      return "no_response";
-    default:
-      return preparationBlocked || record.lastAttemptState === "in_progress"
-        ? "preparing"
-        : "discovered";
-  }
+  return inferApplicationActivityStage(record);
 }
 
 /**
@@ -363,6 +340,11 @@ function applyMutation(input: {
   const crm = input.crm;
 
   switch (mutation.type) {
+    case "set_archived":
+      return ApplicationCrmDataSchema.parse({
+        ...crm,
+        archivedAt: mutation.archived ? (crm.archivedAt ?? now) : null,
+      });
     case "set_stage": {
       if (
         crm.stageSource === "user" &&
@@ -729,26 +711,42 @@ function applyBulkStageMutationToRecord(input: {
   now: string;
   createId: () => string;
   actor: "user" | "assistant";
+  command: ApplicationCrmBulkStageMutationInput;
+  previousStage?: ApplicationCrmBulkStageMutationInput["items"][number]["previousStage"];
 }): { record: ApplicationRecord; changed: boolean } {
   const crm = getApplicationCrmData(input.record);
   const mutated = applyMutation({
     crm,
-    mutation: {
-      type: "set_stage",
-      stage: input.stage,
-      customStageId: input.customStageId,
-      note: input.note,
-    },
+    mutation:
+      input.command.action === "tags"
+        ? {
+            type: "set_tags",
+            tags: [...crm.tags, ...(input.command.tags ?? [])],
+          }
+        : input.command.action === "archive" ||
+            input.command.action === "restore"
+          ? {
+              type: "set_archived",
+              archived: input.command.action === "archive",
+            }
+          : {
+              type: "set_stage",
+              stage: input.previousStage?.stage ?? input.stage,
+              customStageId:
+                input.previousStage?.customStageId ?? input.customStageId,
+              note: input.note,
+            },
     now: input.now,
     createId: input.createId,
     actor: input.actor,
   });
-  if (mutated === crm) {
+  if (mutated === crm && input.command.action !== "undo") {
     return { record: input.record, changed: false };
   }
 
   const nextCrm = ApplicationCrmDataSchema.parse({
     ...mutated,
+    ...(input.command.action === "undo" ? input.previousStage : {}),
     revision: crm.revision + 1,
   });
   return {
@@ -756,7 +754,12 @@ function applyBulkStageMutationToRecord(input: {
     record: ApplicationRecordSchema.parse({
       ...input.record,
       status: input.record.status,
-      lastActionLabel: `Stage changed to ${nextCrm.stage.replaceAll("_", " ")}`,
+      lastActionLabel:
+        !input.command.action ||
+        input.command.action === "stage" ||
+        input.command.action === "undo"
+          ? `Stage changed to ${nextCrm.stage.replaceAll("_", " ")}`
+          : input.record.lastActionLabel,
       lastUpdatedAt: input.now,
       crm: nextCrm,
     }),
@@ -806,21 +809,25 @@ export function prepareApplicationCrmBulkStageMutation(input: {
     input.createId ??
     (() => `crm_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
   const changedRecordIds: string[] = [];
-  const nextRecords = command.items.map(({ applicationRecordId }) => {
-    const prepared = applyBulkStageMutationToRecord({
-      record: recordsById.get(applicationRecordId)!,
-      stage: command.stage,
-      customStageId: command.customStageId,
-      note: command.note,
-      now,
-      createId,
-      actor: command.actor ?? "user",
-    });
-    if (!prepared.changed) return prepared.record;
+  const nextRecords = command.items.map(
+    ({ applicationRecordId, previousStage }) => {
+      const prepared = applyBulkStageMutationToRecord({
+        record: recordsById.get(applicationRecordId)!,
+        command,
+        previousStage,
+        stage: command.stage,
+        customStageId: command.customStageId,
+        note: command.note,
+        now,
+        createId,
+        actor: command.actor ?? "user",
+      });
+      if (!prepared.changed) return prepared.record;
 
-    changedRecordIds.push(applicationRecordId);
-    return prepared.record;
-  });
+      changedRecordIds.push(applicationRecordId);
+      return prepared.record;
+    },
+  );
 
   return { nextRecords, changedRecordIds };
 }
@@ -881,6 +888,8 @@ export async function mutateApplicationCrmBulkStage(input: {
         }
         const prepared = applyBulkStageMutationToRecord({
           record: freshRecord,
+          command,
+          previousStage: item.previousStage,
           stage: command.stage,
           customStageId: command.customStageId,
           note: command.note,
@@ -1073,6 +1082,7 @@ export function buildApplicationCrmCalendar(
   return records
     .flatMap((record) => {
       const crm = getApplicationCrmData(record);
+      if (crm.archivedAt) return [];
       const entries: ApplicationCrmCalendarEntry[] = [
         ...crm.reminders
           .filter((reminder) => reminder.status === "pending")
@@ -1080,7 +1090,7 @@ export function buildApplicationCrmCalendar(
             id: `reminder_${reminder.id}`,
             applicationRecordId: record.id,
             kind: "reminder" as const,
-            title: `${reminder.title} · ${record.company}`,
+            title: `${reminder.title} · ${record.title} at ${record.company}`,
             startsAt: reminder.dueAt,
             endsAt: null,
             status: reminder.status,
@@ -1091,8 +1101,9 @@ export function buildApplicationCrmCalendar(
             id: `interview_${interview.id}`,
             applicationRecordId: record.id,
             kind: "interview" as const,
-            title: `${interview.title} · ${record.company}`,
+            title: `${interview.title} · ${record.title} at ${record.company}`,
             startsAt: interview.startsAt,
+            timeZone: interview.timeZone,
             endsAt: interview.endsAt,
             status: interview.status,
           })),
@@ -1102,7 +1113,7 @@ export function buildApplicationCrmCalendar(
           id: `offer_deadline_${record.id}`,
           applicationRecordId: record.id,
           kind: "offer_deadline",
-          title: `Offer deadline · ${record.company}`,
+          title: `Offer deadline · ${record.title} at ${record.company}`,
           startsAt: crm.compensation.offerDeadlineAt,
           endsAt: null,
           status: crm.compensation.offerStatus,
@@ -1147,7 +1158,10 @@ export function recommendApplicationCrmAction(input: {
     };
   }
 
-  const ready = input.records.find(isApplicationAwaitingUserApproval);
+  const activeRecords = input.records.filter(
+    (record) => !record.crm?.archivedAt,
+  );
+  const ready = activeRecords.find(isApplicationAwaitingUserApproval);
   if (ready) {
     return {
       applicationRecordId: ready.id,
@@ -1158,7 +1172,7 @@ export function recommendApplicationCrmAction(input: {
     };
   }
 
-  const followUp = input.records.find(
+  const followUp = activeRecords.find(
     (record) => getApplicationCrmData(record).stage === "no_response",
   );
   if (followUp) {
@@ -1283,6 +1297,9 @@ export function exportApplicationCrm(input: {
   exportedAt?: string;
   /** The person's named stages, so an export carries their words. */
   customStages?: readonly { id: string; label: string }[];
+  outcomes?: readonly OutcomeEvent[];
+  results?: readonly ApplyJobResult[];
+  runs?: readonly ApplyRunSummary[];
 }): ApplicationCrmExportResult {
   const customStageLabel = (customStageId: string | null | undefined) =>
     customStageId
@@ -1291,9 +1308,11 @@ export function exportApplicationCrm(input: {
       : null;
   const request = ApplicationCrmExportInputSchema.parse(input.request);
   const selectedIds = new Set(request.applicationRecordIds);
-  const records = input.records.filter(
-    (record) => selectedIds.size === 0 || selectedIds.has(record.id),
-  );
+  const records = projectApplicationRecordsActivity({
+    records: input.records,
+    results: input.results ?? [],
+    runs: input.runs ?? [],
+  }).filter((record) => selectedIds.size === 0 || selectedIds.has(record.id));
   const exportedAt = input.exportedAt ?? new Date().toISOString();
   const dateLabel = exportedAt.slice(0, 10);
   // One application exports under its own name, so the file says what it
@@ -1323,6 +1342,14 @@ export function exportApplicationCrm(input: {
               jobId: record.jobId,
               title: record.title,
               company: record.company,
+              status: record.status,
+              lastAttemptState: record.lastAttemptState,
+              outcomes: (input.outcomes ?? []).filter(
+                (outcome) =>
+                  outcome.applicationRecordId === record.id ||
+                  (!outcome.applicationRecordId &&
+                    outcome.jobId === record.jobId),
+              ),
               lastUpdatedAt: record.lastUpdatedAt,
               crm: {
                 ...crm,
@@ -1356,10 +1383,22 @@ export function exportApplicationCrm(input: {
     "Next reminder",
     "Next interview",
     "Last updated",
+    "Notes",
+    "Offer amount",
+    "Offer currency",
+    "Offer period",
+    "Offer deadline",
+    "Offer status",
+    "Reminders",
+    "Interviews",
+    "Archived at",
   ];
   const rows = records.map((record) => {
     const crm = getApplicationCrmData(record);
-    const provenance = applicationCrmProvenance(record);
+    const provenance =
+      applicationCrmProvenance(record) === "user_recorded_local"
+        ? "Recorded by you"
+        : "Recorded by Nordri";
     const nextReminder = crm.reminders
       .filter((reminder) => reminder.status === "pending")
       .sort((left, right) => left.dueAt.localeCompare(right.dueAt))[0];
@@ -1371,16 +1410,35 @@ export function exportApplicationCrm(input: {
       record.jobId,
       record.title,
       record.company,
-      crm.stage,
+      APPLICATION_CRM_STAGE_NAMES[crm.stage],
       customStageLabel(crm.customStageId),
       provenance,
       crm.tags.join("; "),
       crm.appliedAt,
       crm.appliedAt ? provenance : null,
-      "not_verified_with_employer_or_ats",
+      "Not checked with the employer",
       nextReminder?.dueAt ?? null,
       nextInterview?.startsAt ?? null,
       record.lastUpdatedAt,
+      crm.notes.map((note) => note.body).join("\n"),
+      crm.compensation.offerBase?.amount ?? null,
+      crm.compensation.offerBase?.currency ?? null,
+      crm.compensation.offerBase?.period ?? null,
+      crm.compensation.offerDeadlineAt,
+      crm.compensation.offerStatus,
+      crm.reminders
+        .map(
+          (entry) =>
+            `${entry.title} · ${entry.dueAt} · ${entry.status}${entry.note ? ` · ${entry.note}` : ""}`,
+        )
+        .join("; "),
+      crm.interviews
+        .map(
+          (entry) =>
+            `${entry.title} · ${entry.startsAt}${entry.timeZone ? ` (${entry.timeZone})` : ""} · ${entry.status}${entry.notes ? ` · ${entry.notes}` : ""}`,
+        )
+        .join("; "),
+      crm.archivedAt ?? null,
     ];
   });
   return {

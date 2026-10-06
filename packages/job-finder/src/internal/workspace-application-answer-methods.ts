@@ -1,5 +1,6 @@
 import {
   ApplicationAnswerRecordSchema,
+  compareApplicationAnswerRecency,
   ClearApplicationAnswerCommandSchema,
   SaveApplicationAnswerCommandSchema,
   type ApplicationAnswerRecord,
@@ -13,20 +14,10 @@ import {
 } from "@nordri/contracts";
 import {
   createReusableAnswerForQuestion,
+  eligibilityAnswerScope,
   normalizeAnswerQuestion,
 } from "./workspace-answer-memory";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
-
-function compareAnswerRecency(
-  left: ApplicationAnswerRecord,
-  right: ApplicationAnswerRecord,
-): number {
-  return (
-    right.revision - left.revision ||
-    Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-    right.id.localeCompare(left.id)
-  );
-}
 
 function getLatestQuestionAnswer(
   details: ApplyRunDetails,
@@ -35,7 +26,7 @@ function getLatestQuestionAnswer(
   return (
     details.answerRecords
       .filter((answer) => answer.questionId === questionId)
-      .sort(compareAnswerRecency)[0] ?? null
+      .sort(compareApplicationAnswerRecency)[0] ?? null
   );
 }
 
@@ -129,6 +120,7 @@ async function saveReusableAnswer(input: {
   command: SaveApplicationAnswerCommand;
   ctx: WorkspaceServiceContext;
   prompt: string;
+  applicationRecordId: string | null;
   questionKind: Parameters<typeof createReusableAnswerForQuestion>[0]["kind"];
   text: string;
 }) {
@@ -141,22 +133,46 @@ async function saveReusableAnswer(input: {
     );
   }
 
+  const job = (await input.ctx.repository.listSavedJobs()).find(
+    (entry) => entry.id === input.command.jobId,
+  );
+  const applicationScope = eligibilityAnswerScope({
+    kind: input.questionKind,
+    resultId: input.command.resultId,
+    applicationRecordId: input.applicationRecordId,
+    location: job?.location,
+  });
   const normalizedPrompt = normalizeAnswerQuestion(input.prompt);
   await input.ctx.repository.commitProfileUpdate((current) => {
     const exactMatches = current.answerBank.customAnswers.filter((candidate) =>
       [candidate.question, candidate.label].some(
-        (value) => normalizeAnswerQuestion(value) === normalizedPrompt,
+        (value) =>
+          normalizeAnswerQuestion(value) === normalizedPrompt &&
+          (candidate.applicationScope?.location ?? null) ===
+            (applicationScope?.location ?? null),
       ),
     );
-    if (
-      exactMatches.some((candidate) => candidate.answer.trim() !== input.text)
-    ) {
-      throw new Error(
-        "A different reusable answer already exists for this exact question. This application answer was not saved so nothing was overwritten.",
-      );
-    }
+    // Saving for next time replaces a different answer saved earlier for the
+    // same question; refusing would leave the application stuck.
     if (exactMatches.length > 0) {
-      return current;
+      if (
+        exactMatches.every(
+          (candidate) => candidate.answer.trim() === input.text,
+        )
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        answerBank: {
+          ...current.answerBank,
+          customAnswers: current.answerBank.customAnswers.map((candidate) =>
+            exactMatches.includes(candidate)
+              ? { ...candidate, answer: input.text }
+              : candidate,
+          ),
+        },
+      };
     }
 
     return {
@@ -168,6 +184,7 @@ async function saveReusableAnswer(input: {
           createReusableAnswerForQuestion({
             answer: input.text,
             prompt: input.prompt,
+            ...(applicationScope ? { applicationScope } : {}),
             kind: input.questionKind,
           }),
         ],
@@ -332,6 +349,7 @@ export function createWorkspaceApplicationAnswerMethods(
       command: { ...command, value },
       ctx,
       prompt: question.prompt,
+      applicationRecordId: question.applicationRecordId ?? null,
       questionKind: question.kind,
       text,
     });

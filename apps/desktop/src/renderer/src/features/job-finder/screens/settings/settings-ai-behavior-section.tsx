@@ -174,32 +174,34 @@ const declarationChoices: ReadonlyArray<{
   {
     kind: "truthfulness_certification",
     label: "My answers are true",
-    description: "\"I certify the information I gave is accurate.\"",
+    description: '"I certify the information I gave is accurate."',
   },
   {
     kind: "privacy_notice_acknowledgement",
     label: "Privacy notice",
-    description: "\"I have read the candidate privacy notice.\"",
+    description: '"I have read the candidate privacy notice."',
   },
   {
     kind: "terms_acceptance",
     label: "Site terms",
-    description: "\"I agree to the terms of use.\"",
+    description: '"I agree to the terms of use."',
   },
   {
     kind: "background_check_consent",
     label: "Background check",
-    description: "\"I consent to a background or reference check.\"",
+    description:
+      "Ticks background or reference check consent on forms for you. Turn it off to be asked each time.",
   },
   {
     kind: "equal_opportunity_self_identification",
     label: "Self-identification",
-    description: "Voluntary gender, ethnicity, veteran and disability questions, answered from your profile.",
+    description:
+      "Voluntary gender, ethnicity, veteran and disability questions, answered from your profile.",
   },
   {
     kind: "marketing_contact_consent",
     label: "Marketing contact",
-    description: "\"Keep me informed about other opportunities.\"",
+    description: '"Keep me informed about other opportunities."',
   },
 ];
 
@@ -289,7 +291,6 @@ interface SettingsAiBehaviorSectionProps {
   settings: JobFinderSettings;
 }
 
-
 export function SettingsAiBehaviorSection({
   onSettingsDraftEdited,
   onUpdateAiBehavior,
@@ -377,10 +378,10 @@ export function SettingsAiBehaviorSection({
           </h3>
           <p className="text-(length:--text-description) leading-5 text-foreground-soft">
             How the AI works for you: how it talks in the side chat, how picky
-            it is when it searches, how far it rewrites your resume, and what
-            it writes when it applies. These choices change what it does and
-            how it sounds, never what it is allowed to do. Sending, signing
-            in, and creating accounts stay yours.
+            it is when it searches, how far it rewrites your resume, and what it
+            writes when it applies. These choices change what it does and how it
+            sounds, never what it is allowed to do. Sending follows your
+            Applying choice; signing in and creating accounts stay yours.
           </p>
         </div>
         <SettingsSectionSaveControl
@@ -612,8 +613,8 @@ export function SettingsAiBehaviorSection({
                 value={draft.coverLetter.language ?? ""}
               />
               <p className="text-sm leading-5 text-foreground-soft">
-                Left empty, letters are written in whatever language the
-                posting uses, which is usually what the employer expects.
+                Left empty, letters are written in whatever language the posting
+                uses, which is usually what the employer expects.
               </p>
             </Field>
             <Field>

@@ -16,6 +16,7 @@ import {
   isValidProfileSetupSourceUrl,
   PROFILE_SETUP_SOURCE_PAGE_SIZE,
 } from "./profile-setup-screen-helpers";
+import { parseJobSourceUrls } from "../profile-job-sources-tab";
 import { deriveJobSourceLabel } from "../../../lib/job-source-display-name";
 import {
   type CandidateProfile,
@@ -665,9 +666,10 @@ export function ProfileSetupTargetingStep(props: {
   );
   const [manualSourceLabel, setManualSourceLabel] = useState("");
   const [manualSourceUrl, setManualSourceUrl] = useState("");
-  const [lastAddedSourceLabel, setLastAddedSourceLabel] = useState<
-    string | null
-  >(null);
+  const [lastAddedSources, setLastAddedSources] = useState<{
+    count: number;
+    label: string;
+  } | null>(null);
   const manualSourceLabelId = "profile-setup-field-manual-source-label";
   const manualSourceUrlId = "profile-setup-field-manual-source-url";
   const manualSourceUrlErrorId = "profile-setup-field-manual-source-url-error";
@@ -712,13 +714,16 @@ export function ProfileSetupTargetingStep(props: {
   ).length;
   // The address is enough; a name is derived from the site when none is
   // typed, the same as the paste box on Profile › Job sources.
-  const isManualSourceComplete = isValidProfileSetupSourceUrl(manualSourceUrl);
-  const manualSourceDerivedLabel = (() => {
-    return deriveJobSourceLabel(manualSourceUrl);
-  })();
+  const parsedManualSources = parseJobSourceUrls(manualSourceUrl);
+  const isManualSourceComplete =
+    parsedManualSources.urls.length > 0 &&
+    parsedManualSources.invalid.length === 0 &&
+    manualSourceUrl
+      .split(/[\s,]+/u)
+      .filter(Boolean)
+      .every(isValidProfileSetupSourceUrl);
   const isManualSourceUrlInvalid =
-    manualSourceUrl.trim().length > 0 &&
-    !isValidProfileSetupSourceUrl(manualSourceUrl);
+    manualSourceUrl.trim().length > 0 && !isManualSourceComplete;
 
   const setSourceLibraryView = (nextQuery: string) => {
     setSourceQuery(nextQuery);
@@ -764,27 +769,32 @@ export function ProfileSetupTargetingStep(props: {
       return;
     }
 
-    const targetId = createDiscoveryTargetId();
+    const addedUrls = parsedManualSources.urls.filter(
+      (url) => !discoveryTargets.some((target) => target.startingUrl === url),
+    );
     const nextTargets: SearchPreferencesEditorValues["discoveryTargets"] = [
       ...discoveryTargets,
-      {
-        id: targetId,
-        label: manualSourceLabel.trim() || manualSourceDerivedLabel,
-        startingUrl: manualSourceUrl.trim(),
+      ...addedUrls.map((url) => ({
+        id: createDiscoveryTargetId(),
+        label:
+          addedUrls.length === 1
+            ? manualSourceLabel.trim() || deriveJobSourceLabel(url)
+            : deriveJobSourceLabel(url),
+        startingUrl: url,
         // Adding a site is already the act of choosing it: saving it switched
         // off left people with "All 1 saved sources are turned off" and no
         // way to search. The row keeps its Include toggle, so turning it back
         // off stays one click away.
         enabled: true,
-        adapterKind: "auto",
+        adapterKind: "auto" as const,
         customInstructions: "",
-        instructionStatus: "missing",
+        instructionStatus: "missing" as const,
         validatedInstructionId: null,
         draftInstructionId: null,
         lastDebugRunId: null,
         lastVerifiedAt: null,
         staleReason: null,
-      },
+      })),
     ];
     updateDiscoveryTargets(nextTargets);
     setManualSourceLabel("");
@@ -792,9 +802,13 @@ export function ProfileSetupTargetingStep(props: {
     // The form stays open with the cursor in the address field: adding a
     // second site used to take a press on "Add a source URL manually" first.
     setIsManualSourceOpen(true);
-    setLastAddedSourceLabel(
-      manualSourceLabel.trim() || manualSourceDerivedLabel,
-    );
+    setLastAddedSources({
+      count: addedUrls.length,
+      label:
+        addedUrls.length === 1
+          ? manualSourceLabel.trim() || deriveJobSourceLabel(addedUrls[0] ?? "")
+          : "",
+    });
     setEditingTargetId(null);
     setSourceLibraryView("");
     setSourcePage(
@@ -866,6 +880,7 @@ export function ProfileSetupTargetingStep(props: {
         <ProfileListEditor
           inputId={targetRolesId}
           label="Target roles"
+          draftParser={parseProfileLocationDraft}
           onChange={(values) =>
             props.preferencesForm.setValue(
               "targetRoles",
@@ -893,7 +908,8 @@ export function ProfileSetupTargetingStep(props: {
               )}
             />
             <p className="px-1 text-(length:--text-body) leading-6 text-foreground">
-              Related titles you&apos;d also consider, e.g. Backend Engineer.
+              Related titles you&apos;d also consider, e.g. Teaching Assistant,
+              Registered Nurse, or Visual Designer.
             </p>
           </div>
           <div className="grid gap-2">
@@ -908,7 +924,7 @@ export function ProfileSetupTargetingStep(props: {
                   listFieldOptions,
                 )
               }
-              placeholder="Example: Austin, TX; Remote"
+              placeholder="Example: Hamburg; Remote"
               values={parseListInput(props.preferencesForm.watch("locations"))}
             />
             <p className="px-1 text-(length:--text-body) leading-6 text-foreground">
@@ -940,26 +956,16 @@ export function ProfileSetupTargetingStep(props: {
 
           {discoveryTargets.length === 0 ? (
             <div
-              className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3 text-sm leading-6 text-(--warning-text)"
+              className="rounded-(--radius-field) border border-dashed border-(--surface-panel-border) p-3 text-sm leading-6 text-foreground-soft"
               role="status"
             >
-              Add at least one site to search — for example
-              https://weworkremotely.com/remote-jobs, https://remoteok.com, or a
-              company&apos;s careers page. Job Finder searches only the sites
-              you add.
+              Add an employer’s careers page or a job board you already use. Job
+              Finder searches only the sites you add.
             </div>
           ) : (
             <>
-              {enabledSourceCount === 0 ? (
-                <div
-                  className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) p-3 text-sm leading-6 text-(--warning-text)"
-                  role="status"
-                >
-                  All {discoveryTargets.length} saved sources are turned off.
-                  Enable at least one source below so Job Finder has somewhere
-                  to search.
-                </div>
-              ) : null}
+              {/* "Saved job sources are still off" already heads this step
+                  with a jump to this list; a second box here said it twice. */}
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <div className="grid gap-(--gap-field)">
                   <FieldLabel htmlFor={sourceSearchInputId}>
@@ -1157,7 +1163,7 @@ export function ProfileSetupTargetingStep(props: {
                                         ),
                                       )
                                     }
-                                    placeholder="Example: Acme careers"
+                                    placeholder="Example: City Hospital careers"
                                     value={target.label}
                                   />
                                 </div>
@@ -1296,15 +1302,21 @@ export function ProfileSetupTargetingStep(props: {
                 </Button>
               )}
             </div>
-            {lastAddedSourceLabel && isManualSourceOpen ? (
+            {lastAddedSources !== null &&
+            isManualSourceOpen &&
+            !isManualSourceUrlInvalid ? (
               <p
                 aria-live="polite"
                 className="text-sm leading-6 text-foreground-soft"
                 data-profile-setup-source-added
                 role="status"
               >
-                Added {lastAddedSourceLabel} and turned it on. Paste another
-                address to add one more.
+                {lastAddedSources.count === 0
+                  ? "Those sites are already in your list."
+                  : lastAddedSources.count === 1
+                    ? `Added ${lastAddedSources.label} and turned it on.`
+                    : `Added ${lastAddedSources.count} sources and turned them on.`}{" "}
+                Paste another address to add one more.
               </p>
             ) : null}
             {isManualSourceOpen ? (
@@ -1326,7 +1338,7 @@ export function ProfileSetupTargetingStep(props: {
                       onChange={(event) =>
                         setManualSourceLabel(event.target.value)
                       }
-                      placeholder="Example: Acme careers"
+                      placeholder="Example: City Hospital careers"
                       value={manualSourceLabel}
                     />
                   </div>
@@ -1342,11 +1354,26 @@ export function ProfileSetupTargetingStep(props: {
                       }
                       aria-invalid={isManualSourceUrlInvalid}
                       id={manualSourceUrlId}
+                      onPaste={(event) => {
+                        const pasted = event.clipboardData.getData("text");
+                        if (pasted.includes("\n") || pasted.includes("\r")) {
+                          // A one-line field drops line breaks; keep one
+                          // address per entry by joining them with commas.
+                          event.preventDefault();
+                          setManualSourceUrl(
+                            pasted
+                              .split(/[\r\n]+/u)
+                              .map((line) => line.trim())
+                              .filter(Boolean)
+                              .join(", "),
+                          );
+                        }
+                      }}
                       onChange={(event) =>
                         setManualSourceUrl(event.target.value)
                       }
                       placeholder="https://company.example/careers"
-                      type="url"
+                      type="text"
                       value={manualSourceUrl}
                     />
                   </div>
@@ -1357,8 +1384,9 @@ export function ProfileSetupTargetingStep(props: {
                     id={manualSourceUrlErrorId}
                     role="status"
                   >
-                    Enter a complete http or https URL before this source can be
-                    used.
+                    {parsedManualSources.invalid[0]
+                      ? `“${parsedManualSources.invalid[0]}” is not a web address. Use complete http or https URLs, separated by spaces or new lines.`
+                      : "Enter a complete http or https URL."}
                   </p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-2">
@@ -1370,12 +1398,12 @@ export function ProfileSetupTargetingStep(props: {
                       setIsManualSourceOpen(false);
                       setManualSourceLabel("");
                       setManualSourceUrl("");
-                      setLastAddedSourceLabel(null);
+                      setLastAddedSources(null);
                     }}
                     type="button"
                     variant="ghost"
                   >
-                    {lastAddedSourceLabel ? "Done adding" : "Cancel"}
+                    {lastAddedSources ? "Done adding" : "Cancel"}
                   </Button>
                   {!isManualSourceComplete && !isManualSourceUrlInvalid ? (
                     <p className="text-(length:--text-body) leading-6 text-foreground-soft">

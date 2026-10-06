@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   extractListingDetailFromHtml,
+  listingPageLinks,
+  findApplyLinkInHtml,
   htmlToPlainText,
+  listingPageText,
 } from "./listing-detail-extraction";
 
 const JOB_POSTING_PAGE = `<!doctype html>
@@ -108,154 +111,47 @@ describe("extractListingDetailFromHtml", () => {
     expect(detail?.workModeHints).toEqual(["remote"]);
   });
 
-  it("falls back to the page's main text when no record is published", () => {
-    const body = Array.from(
-      { length: 40 },
-      (_, index) =>
-        `<p>Paragraph ${index}: you will own services and work with the team on requirements and delivery.</p>`,
-    ).join("");
-    const html = `<html><head><title>Platform Engineer | Northwind</title></head><body><header>Menu</header><main><h1>Platform Engineer</h1>${body}<h2>Requirements</h2><ul><li>Five years of experience.</li></ul></main><footer>© Northwind</footer></body></html>`;
-
-    const detail = extractListingDetailFromHtml({
-      html,
-      url: "https://northwind.example.test/jobs/9",
-      expectedTitle: "Platform Engineer",
-    });
-
-    expect(detail?.method).toBe("page_text");
-    expect(detail?.title).toBe("Platform Engineer | Northwind");
-    expect(detail?.description).toContain("• Five years of experience.");
-    expect(detail?.description).not.toContain("Menu");
-    expect(detail?.description).not.toContain("© Northwind");
-  });
-
-  it("reads a non-English posting when it is long and names the job, starting at the title", () => {
-    const menu = [
-      "Thirrje",
-      "Publiko Konkurs",
-      "Produktet",
-      "Llogarite Pagën",
-      "Rroga",
-      "Akademi Pune",
-      "Blog",
-      "Kontakt",
-      "AL",
-      "Profili Im",
-    ]
-      .map((item) => `<div><a href="/x">${item}</a></div>`)
-      .join("");
-    const body = Array.from(
-      { length: 30 },
-      (_, index) =>
-        `<p>Paragrafi ${index}: kandidati do të zhvillojë shërbime, do të punojë me ekipin dhe do të mirëmbajë sistemet tona.</p>`,
-    ).join("");
-    const html = `<html><head><title>Zhvillues Softueri • Board</title></head><body>${menu}<div class="x"><h1>Zhvillues Softueri</h1><div>Kc Commerce</div>${body}</div><div>Punë të ngjashme</div></body></html>`;
-
-    const detail = extractListingDetailFromHtml({
-      html,
-      url: "https://board.example.test/kc-commerce/zhvillues-softueri",
-      expectedTitle: "Zhvillues Softueri / IT",
-    });
-
-    expect(detail?.method).toBe("page_text");
-    expect(detail?.description.startsWith("Zhvillues Softueri")).toBe(true);
-    expect(detail?.description).not.toContain("Publiko Konkurs");
-    expect(detail?.description).toContain("Paragrafi 29");
-
-    // Without the card title the page cannot be told from any other long page.
-    expect(
-      extractListingDetailFromHtml({
-        html,
-        url: "https://board.example.test/kc-commerce/zhvillues-softueri",
-      }),
-    ).toBeNull();
-  });
-
-  it("returns null for a thin page rather than inventing a body", () => {
-    const html = `<html><body><main><h1>Job</h1><p>Sign in to view this listing.</p></main></body></html>`;
-
-    expect(
-      extractListingDetailFromHtml({ html, url: "https://x.example.test/2" }),
-    ).toBeNull();
-  });
-
-  it("reads a compact listing with a named title, role sections, and an apply link", () => {
-    const html = `<html><head><title>Full-stack Engineer</title></head><body><main>
-      <h1>Full-stack Engineer</h1><h2>About the role</h2>
-      <p>Build reliable software for a collaborative planning product with a small product engineering team.</p>
-      <h2>What you will do</h2><ul><li>Design and ship maintainable software with TypeScript, SQL and automated tests.</li><li>Collaborate across product and engineering.</li><li>Improve performance, accessibility and reliability.</li></ul>
-      <h2>What you bring</h2><p>Professional software development experience, clear communication and an interest in learning.</p>
-      <a href="/apply/1">Apply for this job</a>
-    </main></body></html>`;
-
-    const detail = extractListingDetailFromHtml({
-      html,
-      url: "https://x.example.test/jobs/1",
-      expectedTitle: "Full-stack Engineer",
-    });
-
-    expect(detail?.method).toBe("page_text");
-    expect(detail?.description).toContain("TypeScript, SQL");
-    expect(detail?.directApplyUrl).toBe("https://x.example.test/apply/1");
-  });
-
-  it("starts the listing at the heading that names the job, dropping the banner and meta line above it", () => {
-    const html = `<html><body><header><a href="/board/">Jobs</a></header><main>
-      <p class="fixture">Local test fixture • Fictional jobs • Use synthetic data only</p>
-      <p>Dusk Acorn Collective · Remote, Europe · Posted 6d ago</p>
-      <h1>Frontend Engineer, Dusk Design Systems</h1><h2>About the role</h2>
-      <p>Build reliable software for a collaborative planning product with a small product engineering team.</p>
-      <h2>What you will do</h2><ul><li>Design and ship maintainable software with TypeScript, SQL and automated tests.</li><li>Collaborate across product and engineering.</li><li>Improve performance, accessibility and reliability.</li></ul>
-      <h2>What you bring</h2><p>Professional software development experience, clear communication and an interest in learning.</p>
-      <a class="button" href="/employer-a/apply/8">Apply now</a>
-    </main></body></html>`;
-
-    const detail = extractListingDetailFromHtml({
-      html,
-      url: "https://x.example.test/board/jobs/8",
-      expectedTitle: "Frontend Engineer, Dusk Design Systems",
-    });
-
-    expect(detail?.description.startsWith("Frontend Engineer, Dusk Design Systems")).toBe(true);
-    expect(detail?.description).not.toContain("Local test fixture");
-    expect(detail?.description).not.toContain("Posted 6d ago");
-    expect(detail?.description).toContain("TypeScript, SQL");
-    // The apply link below the body is still found.
-    expect(detail?.directApplyUrl).toBe("https://x.example.test/employer-a/apply/8");
-  });
-
-  it("keeps text above an h1 that does not name the job", () => {
-    const html = `<html><body><main>
-      <p>Frontend Engineer, Dusk Design Systems is a role on our product team building reliable planning software.</p>
-      <h1>Dusk Acorn Collective</h1><h2>About the role</h2>
-      <p>Design and ship maintainable software with TypeScript, SQL and automated tests across product and engineering.</p>
-      <h2>What you bring</h2><p>Professional software development experience, clear communication and an interest in learning.</p>
-    </main></body></html>`;
-
-    const detail = extractListingDetailFromHtml({
-      html,
-      url: "https://x.example.test/jobs/8",
-      expectedTitle: "Frontend Engineer, Dusk Design Systems",
-    });
-
-    expect(detail?.description).toContain("is a role on our product team");
-  });
-
-  it("rejects compact listing-like text when it does not name the expected job", () => {
-    const body = Array.from(
-      { length: 8 },
-      () =>
-        "This role has responsibilities and requirements for professional experience, collaboration, communication, and reliable delivery.",
-    ).join(" ");
-    const html = `<html><body><main><h1>Account required</h1><p>${body}</p></main></body></html>`;
+  it("returns null when the page publishes no record; the model reads those", () => {
+    const html = `<html><head><title>Platform Engineer | Northwind</title></head><body><main><h1>Platform Engineer</h1><p>${"You will own services and work with the team. ".repeat(40)}</p></main></body></html>`;
 
     expect(
       extractListingDetailFromHtml({
         html,
-        url: "https://x.example.test/login",
-        expectedTitle: "Full-stack Engineer",
+        url: "https://northwind.example.test/jobs/9",
+        expectedTitle: "Platform Engineer",
       }),
     ).toBeNull();
+  });
+});
+
+describe("listingPageText", () => {
+  it("turns the page into text for the model without judging what it says", () => {
+    const body = "<p>You will own services and work with the team.</p>".repeat(
+      12,
+    );
+    const html = `<html><head><title>Platform Engineer | Northwind</title><meta property="og:site_name" content="Northwind Careers"><script>track()</script><style>.x{}</style></head><body><header>Menu</header><main><h1>Platform Engineer</h1>${body}<h2>Requirements</h2><ul><li>Five years of experience.</li></ul></main><footer>© Northwind</footer></body></html>`;
+
+    const text = listingPageText(html);
+
+    expect(text.startsWith("Page title: Platform Engineer | Northwind")).toBe(
+      true,
+    );
+    expect(text).toContain("Site name: Northwind Careers");
+    expect(text).toContain("• Five years of experience.");
+    expect(text).not.toContain("track()");
+    // Keep all body sections; requirements may be outside main.
+    expect(text).toContain("Menu");
+    expect(text).toContain("© Northwind");
+  });
+
+  it("keeps the whole body when the page has no main or article", () => {
+    const text = listingPageText(
+      `<html><body><div><a href="/x">Thirrje</a></div><div><h1>Zhvillues Softueri</h1><div>Kc Commerce</div><p>Paragrafi 1</p></div></body></html>`,
+    );
+
+    expect(text).toContain("Thirrje");
+    expect(text).toContain("Zhvillues Softueri");
+    expect(text).toContain("Kc Commerce");
   });
 });
 
@@ -270,36 +166,67 @@ describe("htmlToPlainText", () => {
 });
 
 describe("the apply link on a listing page", () => {
-  const body = `<h3>Responsibilities</h3><p>${"Own the internal platform and ship it. ".repeat(40)}</p><h3>Requirements</h3><p>${"Five years of experience running campaigns. ".repeat(20)}</p>`;
-
   it("reads a plain apply link so a run starts on the form", () => {
-    const detail = extractListingDetailFromHtml({
-      html: `<html><body><main><h1>Events Manager</h1>${body}<a class="btn" href="/apply/11124457">Apply now</a></main></body></html>`,
-      url: "https://board.example.test/job/events-manager",
-    });
-
-    expect(detail?.directApplyUrl).toBe(
-      "https://board.example.test/apply/11124457",
-    );
+    expect(
+      findApplyLinkInHtml(
+        `<html><body><main><h1>Events Manager</h1><a class="btn" href="/apply/11124457">Apply now</a></main></body></html>`,
+        "https://board.example.test/job/events-manager",
+      ),
+    ).toBe("https://board.example.test/apply/11124457");
   });
 
   it("reads an apply link that leads to the employer's own site", () => {
-    const detail = extractListingDetailFromHtml({
-      html: `<html><body><main><h1>Events Manager</h1>${body}<a href="https://employer.example.test/careers/apply">Apply on company site</a></main></body></html>`,
-      url: "https://board.example.test/job/events-manager",
-    });
-
-    expect(detail?.directApplyUrl).toBe(
-      "https://employer.example.test/careers/apply",
-    );
+    expect(
+      findApplyLinkInHtml(
+        `<html><body><main><h1>Events Manager</h1><a href="https://employer.example.test/careers/apply">Apply on company site</a></main></body></html>`,
+        "https://board.example.test/job/events-manager",
+      ),
+    ).toBe("https://employer.example.test/careers/apply");
   });
 
   it("leaves a page with no apply link alone", () => {
-    const detail = extractListingDetailFromHtml({
-      html: `<html><body><main><h1>Events Manager</h1>${body}<a href="/jobs">Similar jobs</a><a href="/help">How to apply</a></main></body></html>`,
-      url: "https://board.example.test/job/events-manager",
-    });
-
-    expect(detail?.directApplyUrl).toBeNull();
+    expect(
+      findApplyLinkInHtml(
+        `<html><body><main><h1>Events Manager</h1><a href="/jobs">Similar jobs</a><a href="/help">How to apply</a></main></body></html>`,
+        "https://board.example.test/job/events-manager",
+      ),
+    ).toBeNull();
   });
+});
+
+it("deduplicates and bounds page links in page order without choosing an application route", () => {
+  const html =
+    `<a href="#requirements">Requirements</a><a href="/logo.svg">Logo</a><a href="/style.css">Style</a><a href="/jobs/one">One</a><a href="/jobs/one">One again</a>` +
+    Array.from(
+      { length: 180 },
+      (_, i) => `<a href="/page/${i}">Page ${i}</a>`,
+    ).join("");
+  const links = listingPageLinks(html, "https://jobs.example.test/listing");
+  expect(links).toHaveLength(150);
+  expect(links[0]).toEqual({
+    label: "One",
+    url: "https://jobs.example.test/jobs/one",
+  });
+  expect(links[149]?.url).toBe("https://jobs.example.test/page/148");
+  expect(
+    links.some(
+      (link) =>
+        link.label === "Requirements" ||
+        link.label === "Logo" ||
+        link.label === "Style" ||
+        link.label === "One again",
+    ),
+  ).toBe(false);
+});
+
+it("bounds large page text and discloses omitted text while keeping ordinary listings whole", () => {
+  const ordinary =
+    "a".repeat(10000) + "Java and Dutch C1 are required" + "z".repeat(10000);
+  expect(listingPageText(`<main>${ordinary}</main>`)).toBe(ordinary);
+  const long = listingPageText(
+    `<main>${"Body ".repeat(20000)}End requirements</main>`,
+  );
+  expect(long.length).toBeLessThanOrEqual(64000);
+  expect(long).toContain("[Page text excerpt: middle omitted]");
+  expect(long).toContain("End requirements");
 });

@@ -1,5 +1,8 @@
 import {
   PREPARED_PAGE_CLOSED_SUMMARY,
+  WITHDRAWAL_UNDONE_SUMMARY,
+  WITHDRAWN_BY_PERSON_SUMMARY,
+  isApplicationTrackedAsSentByPerson,
   ApplicationRecordSchema,
   ApplyJobResultSchema,
   ApplyRunSchema,
@@ -208,7 +211,13 @@ async function listNeededApplicationFiles(input: {
           `apply_question_${input.applicationRecordId}_${questionId}` &&
         entry.answerControlType === "file",
     );
-    const label = record?.prompt.trim().replace(/[\s*:]+$/u, "") ?? "";
+    const label =
+      record?.prompt
+        .split(" — ")
+        .at(-1)
+        ?.trim()
+        .replace(/[\s*:]+$/u, "")
+        .replace(/\s+upload$/iu, "") ?? "";
     if (!label) return [];
     // "Academic transcript" reads "your academic transcript"; "CV" stays.
     return [
@@ -317,6 +326,7 @@ export function mapApplicationBlockerToUserActionKind(
     case "external_redirect":
     case "unsupported_apply_path":
       return "external_redirect";
+    case "application_closed":
     case "application_page_unreachable":
       // Technical failure: never surfaced as a user-owned browser step.
       return "other";
@@ -331,13 +341,16 @@ export function mapApplicationBlockerToUserActionKind(
 }
 
 /**
- * True for runtime technical failures that are not the user's responsibility.
+ * Unreachable or closed pages have no browser step the person can resolve.
  * These blockers must never create a Needs-you user-action request.
  */
 export function isApplicationTechnicalFailureBlocker(
   blocker: ApplicationAttemptBlocker,
 ): boolean {
-  return blocker.code === "application_page_unreachable";
+  return (
+    blocker.code === "application_page_unreachable" ||
+    blocker.code === "application_closed"
+  );
 }
 
 export function isApplicationAuthenticationUserActionKind(
@@ -480,6 +493,7 @@ export async function persistApplicationUserAction(input: {
   replayCheckpointId: string | null;
   blocker: ApplicationAttemptBlocker | null;
   occurredAt: string;
+  questions?: readonly { id: string; prompt: string }[];
 }): Promise<void> {
   if (!input.resultId || !input.replayCheckpointId) return;
   if (input.resultState === "failed") {
@@ -533,9 +547,10 @@ export async function persistApplicationUserAction(input: {
     ].join("|"),
   );
   const dedupeKey = `application_${kind}:${occurrenceFingerprint}`;
-  const existingRequest = (
-    await input.repository.listUserActionRequests()
-  ).find((request) => request.dedupeKey === dedupeKey);
+  const allRequests = await input.repository.listUserActionRequests();
+  const existingRequest = allRequests.find(
+    (request) => request.dedupeKey === dedupeKey,
+  );
   if (existingRequest) {
     if (
       existingRequest.kind !== kind ||
@@ -573,6 +588,29 @@ export async function persistApplicationUserAction(input: {
         })
       : [];
   const neededFileLabel = joinWithAnd(neededFiles);
+  const questionPrompts =
+    kind === "manual_answer"
+      ? (
+          input.questions ??
+          (await input.repository.listApplicationQuestionRecords({
+            applicationRecordId: input.applicationRecordId,
+            resultId: input.resultId,
+          }))
+        )
+          .filter((question) =>
+            (input.blocker?.questionIds ?? []).some(
+              (id) =>
+                question.id === id ||
+                question.id ===
+                  `apply_question_${input.applicationRecordId}_${id}`,
+            ),
+          )
+          .map((question) => question.prompt)
+      : [];
+  const answerPrompt =
+    questionPrompts.length === 1
+      ? `Answer “${questionPrompts[0]}” in the app.`
+      : "Answer the application questions in the app.";
   const request = UserActionRequestSchema.parse({
     id: `application_${kind}_${occurrenceFingerprint}`,
     dedupeKey,
@@ -603,32 +641,38 @@ export async function persistApplicationUserAction(input: {
         },
     title: neededFileLabel
       ? `Add your ${neededFileLabel} to continue the ${input.job.company} application`
-      : `${copy.titleVerb} to continue the ${input.job.company} application`,
+      : `${kind === "manual_answer" && (input.blocker?.questionIds.length ?? 0) > 1 ? "Answer the required questions" : copy.titleVerb} to continue the ${input.job.company} application`,
     // A sign-in on the kept application page is watched and carries on by
     // itself (ADR 0027); every other step still ends with the person's
     // confirmation.
-    summary: isApplicationAuthenticationUserActionKind(kind)
-      ? `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}; Job Finder carries on with this application by itself once you're in.`
-      : kind === "manual_upload"
-        ? neededFileLabel
-          ? `The ${input.job.company} form asks for your ${neededFileLabel}. Add or restore ${neededFiles.length === 1 ? "it" : "them"} in Profile › Files and Job Finder attaches ${neededFiles.length === 1 ? "it" : "them"} and carries on by itself.`
-          : `${describeApplicationBlockerReason(input.blocker)} Add or restore the file in Profile › Files and Job Finder attaches it and carries on by itself.`
-        : `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}, then come back here and confirm so Job Finder can check the page again.`,
-    instructions: isApplicationAuthenticationUserActionKind(kind)
-      ? [
-          copy.instruction,
-          "Job Finder watches this page and carries on with this exact application once the sign-in is done.",
-        ]
-      : kind === "manual_upload"
-        ? [
-            "Add or restore the file in Profile › Files; Job Finder attaches it and carries on by itself.",
-            `Or attach it yourself in the ${JOB_FINDER_BROWSER_LABEL}, then choose Check whether this step is done.`,
-          ]
-        : [
-            copy.instruction,
-            "Return to Needs you and confirm completion only after the browser step is complete.",
-            "After confirmation, Job Finder checks the page again and carries on in your saved apply mode.",
-          ],
+    summary:
+      kind === "manual_answer"
+        ? `${answerPrompt} Job Finder continues after you save your answer.`
+        : isApplicationAuthenticationUserActionKind(kind)
+          ? `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}; Job Finder carries on with this application by itself once you're in.`
+          : kind === "manual_upload"
+            ? neededFileLabel
+              ? `${describeApplicationBlockerReason(input.blocker)} The ${input.job.company} form asks for your ${neededFileLabel}. Add or restore ${neededFiles.length === 1 ? "it" : "them"} in Profile › Files and Job Finder attaches ${neededFiles.length === 1 ? "it" : "them"} and carries on by itself.`
+              : `${describeApplicationBlockerReason(input.blocker)} Add or restore the file in Profile › Files and Job Finder attaches it and carries on by itself.`
+            : `${describeApplicationBlockerReason(input.blocker)} Complete this ${copy.summaryStep} step in the ${JOB_FINDER_BROWSER_LABEL}, then come back here and confirm so Job Finder can check the page again.`,
+    instructions:
+      kind === "manual_answer"
+        ? ["Answer the questions here, then save your answers to continue."]
+        : isApplicationAuthenticationUserActionKind(kind)
+          ? [
+              copy.instruction,
+              "Job Finder watches this page and carries on with this exact application once the sign-in is done.",
+            ]
+          : kind === "manual_upload"
+            ? [
+                "Add or restore the file in Profile › Files; Job Finder attaches it and carries on by itself.",
+                `Or attach it yourself in the ${JOB_FINDER_BROWSER_LABEL}, then choose Check whether this step is done.`,
+              ]
+            : [
+                copy.instruction,
+                "Return to Needs you and confirm completion only after the browser step is complete.",
+                "After confirmation, Job Finder checks the page again and carries on in your saved apply mode.",
+              ],
     actionUrl: browserTarget?.actionUrl ?? null,
     displayOrigin: browserTarget?.expectedOrigin ?? null,
     credentialsPolicy: "browser_only",
@@ -642,6 +686,24 @@ export async function persistApplicationUserAction(input: {
     resolvedAt: null,
     expiresAt: null,
   });
+  if (kind === "manual_answer") {
+    const cancelled = allRequests
+      .filter(
+        (previous) =>
+          previous.kind === "manual_answer" &&
+          previous.state === "cancelled" &&
+          previous.answerDraft &&
+          previous.scope.type === "application" &&
+          previous.scope.applicationRecordId === input.applicationRecordId &&
+          "blockerFingerprint" in previous.verification &&
+          previous.verification.blockerFingerprint === blockerFingerprint,
+      )
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    if (cancelled) {
+      request.answerDraft = cancelled.answerDraft;
+      request.answerDraftFieldUpdatedAt = cancelled.answerDraftFieldUpdatedAt;
+    }
+  }
   await input.repository.createUserActionRequest(request);
   await keepOnlyLatestApplicationActionable({
     repository: input.repository,
@@ -841,6 +903,7 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   eventId: string;
   dismissal: "cancelled" | "skipped";
   unavailablePreparedPage?: boolean;
+  preserveCompletedPreparation?: boolean;
   /**
    * Said instead of "you cancelled the step" when Job Finder closed a step
    * that was never the person's to do.
@@ -944,6 +1007,9 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   if (
     !result ||
     result.state === "submitted" ||
+    (input.preserveCompletedPreparation &&
+      result.state === "awaiting_review" &&
+      result.completedAt !== null) ||
     result.privacyReceipt?.submissionOutcome?.outcome === "outcome_uncertain"
   ) {
     return;
@@ -983,27 +1049,45 @@ export async function releaseApplicationRecordAfterDismissedUserAction(input: {
   const nextResults = runResults.map((entry) =>
     entry.id === terminalResult.id ? terminalResult : entry,
   );
-  const pendingResults = nextResults.filter(
-    (entry) => entry.state === "awaiting_review",
+  const pendingResults = nextResults.filter((entry) =>
+    [
+      "planned",
+      "question_capture",
+      "filling",
+      "submitting",
+      "awaiting_review",
+    ].includes(entry.state),
   );
+  const workingResults = pendingResults.filter(
+    (entry) => entry.state !== "awaiting_review",
+  );
+  const blockedResults = nextResults.filter(
+    (entry) => entry.state === "blocked",
+  );
+  const hasWaitingWork = pendingResults.length > 0 || blockedResults.length > 0;
   await input.repository.upsertApplyRun(
     ApplyRunSchema.parse({
       ...run,
       state:
         run.state === "cancelled" || run.state === "failed"
           ? run.state
-          : pendingResults.length > 0
-            ? "paused_for_user_review"
-            : "completed",
+          : workingResults.length > 0
+            ? "running"
+            : hasWaitingWork
+              ? "paused_for_user_review"
+              : "completed",
       currentJobId:
         run.state === "cancelled" || run.state === "failed"
           ? null
-          : (pendingResults[0]?.jobId ?? null),
+          : (workingResults[0]?.jobId ??
+            pendingResults[0]?.jobId ??
+            blockedResults[0]?.jobId ??
+            null),
       updatedAt: input.occurredAt,
       completedAt:
         run.state === "cancelled" || run.state === "failed"
           ? run.completedAt
-          : pendingResults.length > 0
+          : hasWaitingWork
             ? null
             : input.occurredAt,
       // Every outcome in the batch is counted, so one cancel does not hide
@@ -1180,7 +1264,7 @@ export async function closeApplicationStepsTrackedByPerson(
             "Your tracker says this application was sent. Job Finder did not see the site's confirmation and will not fill it in again.",
         }
       : {
-          commandReason: "You marked this application withdrawn.",
+          commandReason: WITHDRAWN_BY_PERSON_SUMMARY,
           lastActionLabel: "You marked this application withdrawn.",
           eventTitle: "Application step closed: you withdrew it",
           eventDetail:
@@ -1231,6 +1315,7 @@ export async function closeApplicationStepsTrackedByPerson(
           occurredAt: now,
           eventId: `event_${request.id}_tracked_${reason}`,
           dismissal: "skipped",
+          preserveCompletedPreparation: true,
           closedBecause: {
             lastActionLabel: wording.lastActionLabel,
             eventTitle: wording.eventTitle,
@@ -1241,5 +1326,54 @@ export async function closeApplicationStepsTrackedByPerson(
           },
         }),
     );
+  }
+}
+
+/** Undo restores the tracker, but cannot reopen a task already closed. */
+export async function restoreWithdrawnApplicationPreparation(
+  repository: JobFinderRepository,
+  applicationRecordIds: readonly string[],
+): Promise<void> {
+  for (const recordId of applicationRecordIds) {
+    await withApplicationRecordTransition(repository, recordId, async () => {
+      const record = (await repository.listApplicationRecords()).find(
+        (entry) => entry.id === recordId,
+      );
+      if (!record || record.crm?.stage === "withdrawn") return;
+      const latest = (await repository.listApplyJobResults())
+        .filter((entry) => entry.applicationRecordId === recordId)
+        .sort(
+          (left, right) =>
+            Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+        )[0];
+      if (
+        !latest ||
+        latest.state !== "skipped" ||
+        latest.summary !== WITHDRAWN_BY_PERSON_SUMMARY
+      )
+        return;
+      const now = new Date().toISOString();
+      const trackedAsSent = isApplicationTrackedAsSentByPerson(record.crm);
+      await repository.upsertApplyJobResult(
+        ApplyJobResultSchema.parse({
+          ...latest,
+          summary: trackedAsSent
+            ? "Withdrawal undone. Tracked as sent."
+            : WITHDRAWAL_UNDONE_SUMMARY,
+          detail: trackedAsSent
+            ? "Your previous tracker stage is restored. You marked this application as sent."
+            : "Your previous tracker stage is restored. Prepare this application again using your saved answers and files.",
+          updatedAt: now,
+        }),
+      );
+      await repository.upsertApplicationRecord(
+        ApplicationRecordSchema.parse({
+          ...record,
+          lastActionLabel: "Withdrawal undone.",
+          nextActionLabel: trackedAsSent ? null : "Prepare again",
+          lastUpdatedAt: now,
+        }),
+      );
+    });
   }
 }

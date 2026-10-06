@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
 
 import {
+  countWorkspaceNeedsYouItems,
   countApplicationLedgerEntries,
   countApplyRunItemsNeedingYou,
   countNeedsYouItems,
@@ -192,4 +193,29 @@ describe("one apply run's share of the Needs you population", () => {
       }),
     ).toBe(2);
   });
+});
+
+it("keeps resume drafts out of Needs you while the assistant can report them separately", () => {
+  expect(
+    countNeedsYouItems({
+      reviewQueue: [
+        {
+          jobId: "review",
+          resumeReview: { status: "needs_review" },
+          resumeApplicationMode: "tailored_per_job",
+        },
+      ] as JobFinderWorkspaceSnapshot["reviewQueue"],
+      requests: [],
+      applicationRecords: [],
+    }),
+  ).toBe(0);
+});
+
+it("counts a partially hydrated workspace without reading missing collections", () => {
+  expect(
+    countWorkspaceNeedsYouItems({
+      applicationRecords: [],
+      userActionRequests: [],
+    } as unknown as JobFinderWorkspaceSnapshot),
+  ).toBe(0);
 });

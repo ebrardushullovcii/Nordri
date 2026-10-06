@@ -1,9 +1,15 @@
+import { Button } from "@renderer/components/ui/button";
 import type {
   ApplicationAttemptQuestion,
   UserActionCommandInput,
   UserActionRequest,
 } from "@nordri/contracts";
-import { QuestionAnswerForm, createCommand } from "../actions/actions-screen";
+import {
+  QuestionAnswerForm,
+  type QuestionAnswerDraft,
+  createCommand,
+  useMinutesSince,
+} from "../actions/actions-screen";
 
 /**
  * The question step an application is waiting on, answerable right where the
@@ -13,8 +19,13 @@ import { QuestionAnswerForm, createCommand } from "../actions/actions-screen";
  */
 export interface ApplicationAnswerStep {
   request: UserActionRequest;
+  draft?: QuestionAnswerDraft;
+  draftRestored?: boolean;
+  onDraftChange?: (draft: QuestionAnswerDraft) => void | Promise<void>;
+  jobLocation?: string | undefined;
   questions: readonly ApplicationAttemptQuestion[];
   isPending: boolean;
+  waitingForTurn?: boolean;
   onCommand: (command: UserActionCommandInput) => void | Promise<void>;
 }
 
@@ -22,6 +33,9 @@ export function ApplicationAnswerStepCard(props: {
   step: ApplicationAnswerStep;
 }) {
   const { request, questions, isPending, onCommand } = props.step;
+  const elapsed = useMinutesSince(
+    request.state === "verifying" ? request.updatedAt : null,
+  );
   if (request.state === "verifying") {
     return (
       <p
@@ -30,7 +44,11 @@ export function ApplicationAnswerStepCard(props: {
         data-testid="application-answer-step-status"
         role="status"
       >
-        Answered. Job Finder is putting your answers in and carrying on.
+        {props.step.waitingForTurn
+          ? "Waiting its turn"
+          : "Inserting your answer"}{" "}
+        ({elapsed === 0 ? "under a minute" : `${elapsed ?? 0} min`}). Job Finder
+        will continue when it is in the form.
       </p>
     );
   }
@@ -40,8 +58,14 @@ export function ApplicationAnswerStepCard(props: {
         Answer here and Job Finder will continue.
       </p>
       <QuestionAnswerForm
+        key={`${request.id}-${props.step.draftRestored ? "restored" : "current"}`}
+        {...(props.step.draft ? { draft: props.step.draft } : {})}
+        {...(props.step.onDraftChange
+          ? { onDraftChange: props.step.onDraftChange }
+          : {})}
+        jobLocation={props.step.jobLocation}
         isPending={isPending}
-        onAnswer={async (answers, saveForFuture) => {
+        onAnswer={async (answers, saveForFuture, hiringCountry) => {
           const first = answers[0];
           if (!first) return;
           await onCommand({
@@ -52,11 +76,24 @@ export function ApplicationAnswerStepCard(props: {
               ? { answers: answers.map((entry) => ({ ...entry })) }
               : {}),
             saveForFuture,
+            ...(hiringCountry ? { hiringCountry } : {}),
           });
         }}
         questions={questions}
         requestId={request.id}
       />
+      <Button
+        type="button"
+        variant="ghost"
+        pending={isPending}
+        onClick={() => void onCommand(createCommand(request, "cancel"))}
+      >
+        Skip this job
+      </Button>
+      <p className="text-xs text-foreground-muted">
+        Stops this application without sending it. Its history is kept, and you
+        can try again later.
+      </p>
     </div>
   );
 }

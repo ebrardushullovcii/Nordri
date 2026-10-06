@@ -10,7 +10,6 @@ import {
   ResumeImportAdjudicationResultSchema,
   ResumeImportStageExtractionResultSchema,
   sanitizeStageCandidates,
-  selectBlocksForResumeImportStage,
   type AdjudicateResumeImportCandidatesInput,
   type ExtractResumeImportStageInput,
   type ResumeImportAdjudicationResult,
@@ -190,28 +189,32 @@ export function buildResumeImportStageInstructions(
   switch (stage) {
     case "identity_summary":
       return [
-        "Return only identity, contact, location, and search-preference candidates.",
-        "Valid target sections: identity, contact, location, search_preferences.",
-        "Use keys such as fullName, firstName, lastName, middleName, headline, summary, currentLocation, timeZone, yearsExperience, email, phone, portfolioUrl, linkedinUrl, githubUrl, personalWebsiteUrl, targetRoles, locations, workModes, salaryCurrency.",
-        "Return search_preferences.workModes only when the header, contact line, or summary literally says remote, hybrid, onsite, or flexible; the value is an array of those lowercase words and nothing else.",
+        "Return only identity, contact, location, search-preference and work-eligibility candidates.",
+        "Valid target sections: identity, contact, location, search_preferences, work_eligibility.",
+        "Use keys such as fullName, firstName, lastName, middleName, headline, summary, currentLocation, timeZone, yearsExperience, email, phone, portfolioUrl, linkedinUrl, githubUrl, personalWebsiteUrl, targetRoles, locations, workModes, employmentTypes, compensation, salaryCurrency.",
+        "Read the whole resume, not only its header: a work authorization or work preferences line can sit anywhere.",
+        'When the resume states work authorization outright, return work_eligibility.authorizedWorkCountries (an array of the countries or regions named, such as "European Union") and work_eligibility.requiresVisaSponsorship (true or false). Never infer either from where the person lives, studied or worked. A permit limited to study, training or an internship is not authorization to work there; record it nowhere in authorizedWorkCountries.',
+        'When the resume states the employment type it wants, return search_preferences.employmentTypes using "Full-time", "Part-time", "Contract", "Temporary" or "Internship". When it states a minimum pay, return search_preferences.compensation as {"minimum": number, "maximum": number or null, "interval": "year", "month", "week", "day" or "hour", "currency": a three-letter code or null, "currencyStatus": "explicit" when a currency code or unambiguous symbol is written, otherwise "needs_clarification"}; a bare "$" is not a currency.',
+        "Read work preferences anywhere in the resume. Preserve all stated alternatives: local onsite work or remote dispatching means both onsite and remote, never remote alone. Return search_preferences.workModes as an array of remote, hybrid, onsite or flexible; abstain when the preference is unclear. Do not infer remote-only from a remote option or a past remote job.",
+        "Offer explicit role goals as search_preferences.targetRoles. If no explicit goal is stated, offer clear professional headline roles as editable suggestions, separating distinct roles into their own strings. Do not substitute a degree, employer or seniority alone for a target role. Leave unclear goals absent.",
         "Prefer literal values from the document over inferred rewrites.",
-        "Never use a section heading like ABOUT ME, SKILLS, or WORK EXPERIENCE as a person name.",
-        "Only return currentLocation when the blocks show an address or a short literal location label, not a narrative sentence.",
+        "Identify the person from the contact header beside their email, phone or address, before considering later sections. A job title, volunteer role, degree or section heading is never a person name. Use the contact-header name as evidence for fullName, firstName and lastName; abstain if it is unclear.",
+        "Only return currentLocation when the blocks show an address or a short location label, not a narrative sentence. Also return location.currentCity, location.currentRegion and location.currentCountry separately, using null for an absent region. A country is not a state or region. Normalize country names to English, for example Deutschland to Germany; Copenhagen, Denmark has city Copenhagen, region null and country Denmark.",
         'Each candidate target must be an object like {"section":"identity","key":"fullName","recordId":null}, not a string.',
       ].join(" ");
     case "experience":
       return [
         "Return only experience record candidates.",
         "Valid target section: experience.",
-        "Use target.key = 'record' and a stable recordId like experience_1, experience_2.",
+        "Use target.key = 'record' and a stable recordId like experience_1, experience_2. Compare each role with existingProfile.experiences, including partial records with missing title or dates. When the employer and available details identify the same role, use that saved record's id as target.recordId so review can complete it without creating a duplicate. Missing details are not contradictions; if multiple saved roles could match, abstain from choosing one and explain the ambiguity in notes.",
         "Each value must be a structured object matching one resume experience record with exactly these keys: companyName, companyUrl, title, employmentType, location, workMode (array), startDate, endDate, isCurrent (boolean), summary, achievements (array of strings), skills (array), domainTags (array).",
-        "Write startDate and endDate as YYYY-MM; when the role is ongoing set isCurrent true and endDate null.",
-        "Put every bullet under that role into achievements as a separate complete sentence.",
+        "Write startDate and endDate as YYYY-MM, or as YYYY when the resume gives only the year; never add a month the resume does not state. When the role is ongoing set isCurrent true and endDate null.",
+        "Put each achievement under that role into achievements as a separate complete sentence. Respect section boundaries: education, degrees and certifications are not job achievements, even when adjacent to a role. Never attach a qualification earned later to an earlier employer unless the source explicitly states an achievement there.",
         "Use the nearest explicit company marker or inline company segment when the resume shows one, and populate companyName separately from title.",
         "When a role header has no employer on the same line, take the employer from the nearest company marker, section heading, or employer line that governs that role, even if it sits a few lines away; leave companyName null only when the resume never names an employer for that role.",
         "If title, company, and location appear on one header line, split them into the correct fields instead of embedding company or location inside title.",
-        "Merge wrapped continuation lines so summaries and achievements read as complete sentences instead of broken fragments.",
-        "Populate workMode only when the record explicitly says remote, hybrid, onsite, or flexible.",
+        "Merge wrapped PDF continuation lines so summaries and achievements read as complete sentences. Rejoin a split number only when the source context supports it, preserving decimal places and units. Use the same supported metric consistently in every derived field; abstain and explain ambiguity rather than inventing digits.",
+        "Populate workMode only when the record explicitly says remote, hybrid, onsite, or flexible. Use employmentType Freelance or Self-employed when explicitly stated, preserving that distinction rather than leaving it blank or changing it to Contract.",
         "Include skills only when that specific role header, summary, or achievement explicitly names the skill or directly demonstrates a skill that is also declared in the resume skills section.",
         "Do not copy unrelated global skills onto every experience record.",
         "Do not create an experience record unless the blocks contain an explicit role header or date range.",
@@ -220,12 +223,15 @@ export function buildResumeImportStageInstructions(
     case "background":
       return [
         "Return only background candidates for skills, education, certifications, links, projects, and languages.",
+        "Read the languages section even when it is below projects or labelled Spoken languages. Return one language record per language with its stated proficiency; a mention in notes is not an imported record. Preserve parenthesized software levels word for word, including advanced, basic or learning, in skill values.",
         "Valid target sections: skill, education, certification, link, project, language.",
         'Use target {"section":"skill","key":"skills","recordId":null} for a complete skills array, and optional skillGroups.coreSkills, skillGroups.tools, skillGroups.languagesAndFrameworks, skillGroups.softSkills, or skillGroups.highlightedSkills for grouped skill arrays.',
         'Use target {"section":"education","key":"record","recordId":"education_1"} for each education object with schoolName, degree, fieldOfStudy, location, startDate, endDate, and summary fields.',
         "Preserve the named qualification and completion date or year in degree and endDate; leave dates absent from the document null rather than inventing months or years.",
         "Do not emit education.institution, education.startDate, education.graduationDate, or education.education scalar targets; fold those values into an education record object.",
         "Use key 'record' for certification, link, project, and language object records.",
+        "Keep every explicitly labelled public URL, including Dribbble, as a link record with label, kind, url and notes. Preserve the source label; use kind other when no supported kind applies. A link saved in a contact field can also be a public link; do not drop other labelled links.",
+        "For project records use name, projectType, summary, role, skills (array), outcome, projectUrl, repositoryUrl and caseStudyUrl. Preserve the full description and stated research, participant counts, prototypes, tools and testing in summary and outcome. Keep training, personal and volunteer context in projectType and role; a project is not employment. If details cannot be mapped, name the project and the unresolved details in notes with a plain sentence starting Could not import.",
       ].join(" ");
     case "shared_memory":
       return [
@@ -233,8 +239,8 @@ export function buildResumeImportStageInstructions(
         "Valid target sections: narrative, proof_point, answer_bank, application_identity.",
         "Never invent sensitive facts such as work authorization, sponsorship, relocation, notice period, availability, or salary expectations.",
         "For application_identity, prefer keys preferredEmail, preferredPhone, or preferredLinkIds.",
-        "For proof_point records, use value objects with title, claim, heroMetric, supportingContext, roleFamilies, projectIds, and linkIds.",
-        "Prefer concise reusable narratives grounded in multiple resume lines over clipped fragments from a single wrapped sentence.",
+        "For proof_point records, use value objects with title, claim, heroMetric, supportingContext, roleFamilies, projectIds, and linkIds. Offer stated achievements, including numbered sales achievements, as reusable evidence for review. Education, degrees and certifications belong in their own sections, never in employer proof points. Attribute a claim to a role only when the source states that achievement for that role.",
+        "Give each proof point a meaningful title describing its achievement, never punctuation such as a slash. Rejoin PDF line breaks in metrics only when supported by the source, and use the same number and units as the work-history achievement. Prefer concise reusable narratives grounded in multiple resume lines over clipped fragments from a single wrapped sentence.",
       ].join(" ");
     default:
       return "Return conservative grounded candidates only.";
@@ -252,16 +258,18 @@ export async function extractOpenAiCompatibleResumeImportStage(input: {
   ) => Promise<unknown>;
   timeoutMs: number;
 }): Promise<ResumeImportStageExtractionResult> {
-  const blocks = selectBlocksForResumeImportStage(
-    input.stageInput.documentBundle,
-    input.stageInput.stage,
+  // Section hints are parser guesses; each model read needs the complete document.
+  const blocks = [...input.stageInput.documentBundle.blocks].sort(
+    (left, right) =>
+      left.pageNumber - right.pageNumber ||
+      left.readingOrder - right.readingOrder,
   );
   const payload = await input.fetchModelJson(
     "extractResumeImportStage",
     [
       "You extract structured resume import candidates from parsed document blocks.",
       "Return JSON only.",
-      "Use only the provided blocks as evidence.",
+      "Use only the provided document as evidence.",
       "Each candidate must include target, label, value, normalizedValue when helpful, evidenceText, sourceBlockIds, confidence, notes, and alternatives.",
       'Example candidate: {"target":{"section":"identity","key":"fullName","recordId":null},"label":"Full name","value":"Jane Doe","normalizedValue":"Jane Doe","evidenceText":"Jane Doe","sourceBlockIds":["block_1"],"confidence":0.98,"notes":[],"alternatives":[]}',
       "Only use sourceBlockIds that exist in the input block list.",
@@ -271,11 +279,20 @@ export async function extractOpenAiCompatibleResumeImportStage(input: {
     ].join(" "),
     {
       stage: input.stageInput.stage,
-      existingProfile: input.stageInput.existingProfile,
+      existingProfile: {
+        ...input.stageInput.existingProfile,
+        baseResume: {
+          ...input.stageInput.existingProfile.baseResume,
+          textContent: null,
+        },
+      },
       existingSearchPreferences: input.stageInput.existingSearchPreferences,
       documentBundle: {
         id: input.stageInput.documentBundle.id,
         sourceResumeId: input.stageInput.documentBundle.sourceResumeId,
+        ...(blocks.length === 0
+          ? { fullText: input.stageInput.documentBundle.fullText }
+          : {}),
         parserKinds: input.stageInput.documentBundle.parserKinds,
         warnings: input.stageInput.documentBundle.warnings,
         blocks: blocks.map((block) => ({

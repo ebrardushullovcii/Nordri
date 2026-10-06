@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { MemoryRouter } from "react-router-dom";
 import type {
   BrowserSessionState,
   JobDiscoveryTarget,
@@ -98,6 +99,7 @@ function renderBar(
       searchPreferences={preferences()}
       {...overrides}
     />,
+    { wrapper: MemoryRouter },
   );
   return { onOpenBrowserSession, onRunAgentDiscovery, onToggleSetup };
 }
@@ -263,7 +265,9 @@ describe("DiscoverySearchBar", () => {
         discovery: { historyLimit: 5, targets: [target(), second] },
       }),
     };
-    const view = render(<DiscoverySearchBar {...props} />);
+    const view = render(<DiscoverySearchBar {...props} />, {
+      wrapper: MemoryRouter,
+    });
     fireEvent.click(screen.getByRole("button", { name: "All sources" }));
     fireEvent.click(screen.getByLabelText("Example Careers"));
     view.rerender(
@@ -301,7 +305,9 @@ describe("DiscoverySearchBar", () => {
         discovery: { historyLimit: 5, targets: [target(), second] },
       }),
     };
-    const view = render(<DiscoverySearchBar {...props} />);
+    const view = render(<DiscoverySearchBar {...props} />, {
+      wrapper: MemoryRouter,
+    });
     fireEvent.click(screen.getByRole("button", { name: "All sources" }));
     fireEvent.click(screen.getByLabelText("Example Careers"));
     fireEvent.click(screen.getByLabelText("Wellfound"));
@@ -380,4 +386,89 @@ describe("DiscoverySearchBar plan chip", () => {
     expect(screen.queryByLabelText("Search plan")).toBeNull();
     expect(screen.queryByTestId("discovery-search-plan")).toBeNull();
   });
+});
+
+it("links directly to Search plans beside search controls", () => {
+  renderBar();
+  expect(
+    screen.getByRole("link", { name: "Search plans" }).getAttribute("href"),
+  ).toBe("/job-finder/campaigns");
+});
+
+it("names the background plan on its Stop button", () => {
+  const onStopSearch = vi.fn();
+  renderBar({
+    isSearchRunning: true,
+    backgroundPlanName: "Local B",
+    onStopSearch,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Stop Local B search" }));
+  expect(onStopSearch).toHaveBeenCalledOnce();
+});
+
+it("labels an explicit plan source that is off in Profile without turning it off for this search", () => {
+  const { onRunAgentDiscovery } = renderBar({
+    profileSourceEnabled: { target_wellfound: false },
+    searchPreferences: preferences({
+      discovery: {
+        historyLimit: 5,
+        targets: [target(), target({ id: "second", label: "Second" })],
+      },
+    }),
+  });
+  fireEvent.click(screen.getByRole("button", { name: /All .*sources/i }));
+  expect(
+    screen.getByRole("button", { name: "All sources in this plan" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByText("Off in Profile; this plan still searches it"),
+  ).toBeTruthy();
+  expect((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked).toBe(
+    true,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+  expect(onRunAgentDiscovery).toHaveBeenCalled();
+});
+
+it("refreshes the selected sources when the plan adds a source without leaving Find jobs", () => {
+  const first = target();
+  const second = target({ id: "second", label: "Second source" });
+  const third = target({ id: "third", label: "Third source" });
+  const onRunAgentDiscovery = vi.fn();
+  const props = {
+    browserSession,
+    isBrowserSessionPending: false,
+    isSearchDisabled: false,
+    isSearchPending: false,
+    isSearchRunning: false,
+    isSetupOpen: false,
+    onOpenBrowserSession: vi.fn(),
+    onRunAgentDiscovery,
+    onToggleSetup: vi.fn(),
+    activeCampaignId: "plan",
+    searchPreferences: preferences({
+      discovery: { historyLimit: 5, targets: [first, second] },
+    }),
+  };
+  const view = render(<DiscoverySearchBar {...props} />, {
+    wrapper: MemoryRouter,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "All sources" }));
+  fireEvent.click(screen.getByLabelText("Second source"));
+  view.rerender(
+    <DiscoverySearchBar
+      {...props}
+      searchPreferences={preferences({
+        discovery: { historyLimit: 5, targets: [first, second, third] },
+      })}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "All sources" }));
+  expect(screen.getByLabelText<HTMLInputElement>("Third source").checked).toBe(
+    true,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+  expect(onRunAgentDiscovery).toHaveBeenCalledWith(
+    expect.objectContaining({ sourceIds: "all" }),
+  );
 });

@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,11 +10,16 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import type { JobFinderWorkspaceSnapshot } from "@nordri/contracts";
+import type { ReactElement } from "react";
+import type {
+  JobFinderWorkspaceSnapshot,
+  UserActionCommandInput,
+} from "@nordri/contracts";
 import type { FinishInBrowserInput } from "@renderer/features/job-finder/screens/applications/applications-detail-panel-recovery-actions-section";
 import type { JobFinderPageContext } from "./job-finder-page-context";
 import {
   JobFinderApplicationsRoute,
+  JobFinderActionsRoute,
   getUnavailableApplicationMessage,
   runJobFinderApplicationBrowserHandoff,
   selectCampaignApplicationsScope,
@@ -40,6 +46,11 @@ describe("getUnavailableApplicationMessage", () => {
 const { applicationsScreenProps } = vi.hoisted(() => ({
   applicationsScreenProps: {
     current: null as {
+      scopeControl?: ReactElement<{
+        onSelect: (id: string) => Promise<boolean>;
+      }>;
+      searchPlanName?: string;
+      applicationRecords?: { id: string }[];
       canConfirmFinishedInBrowser?: boolean;
       onConfirmFinishedInBrowser?: (input: FinishInBrowserInput) => void;
       onSubmitPreparedApplication?: (jobId: string) => Promise<void>;
@@ -170,6 +181,15 @@ describe("selectOutcomeAnalyticsScope", () => {
 });
 
 describe("selectCampaignApplicationsScope", () => {
+  it("shows saved applications across plans when all plans are requested", () => {
+    const saved = applicationWorkspace("campaign_2");
+    expect(
+      selectCampaignApplicationsScope(saved, true).applicationRecords,
+    ).toEqual(saved.applicationRecords);
+    expect(selectCampaignApplicationsScope(saved, true).applyRuns).toEqual(
+      saved.applyRuns,
+    );
+  });
   function applicationWorkspace(activeCampaignId: string) {
     return {
       activeCampaignId,
@@ -713,6 +733,31 @@ describe("Applications browser-step confirmation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("switches the Applications view without changing the app's current plan", async () => {
+    const saved = selectedRecordWorkspace([]);
+    saved.campaigns.push({
+      ...saved.campaigns[0]!,
+      id: "campaign_empty",
+      name: "Empty plan",
+      jobIds: [],
+    });
+    const onSelectCampaign = vi.fn();
+    renderApplicationsRoute({
+      workspace: saved,
+      onPerformUserAction: vi.fn(),
+      onSelectCampaign,
+    });
+    await act(async () => {
+      await applicationsScreenProps.current?.scopeControl?.props.onSelect(
+        "campaign_empty",
+      );
+    });
+    expect(applicationsScreenProps.current?.searchPlanName).toBe("Empty plan");
+    expect(applicationsScreenProps.current?.applicationRecords).toEqual([]);
+    expect(onSelectCampaign).not.toHaveBeenCalled();
+    expect(saved.activeCampaignId).toBe("campaign_1");
+  });
+
   it("shows the start failure and retries the exact job with one press when no record was created", () => {
     const current = selectedRecordWorkspace([]);
     current.applicationRecords = [];
@@ -1212,5 +1257,66 @@ describe("Applications browser-step confirmation", () => {
     });
 
     expect(onPerformUserAction).not.toHaveBeenCalled();
+  });
+});
+
+const actionsRouteProps = vi.hoisted(() => ({
+  current: null as {
+    onCommand: (command: UserActionCommandInput) => Promise<void>;
+  } | null,
+}));
+vi.mock("@renderer/features/job-finder/screens/actions/actions-screen", () => ({
+  ActionsScreen: (props: {
+    onCommand: (command: UserActionCommandInput) => Promise<void>;
+  }) => {
+    actionsRouteProps.current = props;
+    return null;
+  },
+}));
+it("Needs you returns a rejected answer command to the form so the failure is visible", async () => {
+  const onPerformUserAction = vi.fn(() =>
+    Promise.reject(new Error("This answer changed in another view")),
+  );
+  const current = workspace();
+  current.hydration = {
+    phase: "complete",
+    deferredCollections: [],
+  };
+  current.userActionRequests = [];
+  const base = {
+    workspace: current,
+    onPerformUserAction,
+    isPending: () => false,
+  };
+  const context = new Proxy(base, {
+    get: (target, key) =>
+      key in target ? target[key as keyof typeof target] : () => undefined,
+  }) as unknown as JobFinderPageContext;
+  render(
+    <MemoryRouter initialEntries={["/job-finder/actions"]}>
+      <Routes>
+        <Route path="/job-finder" element={<Outlet context={context} />}>
+          <Route path="actions" element={<JobFinderActionsRoute />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+  const command = {
+    action: "submit_manual_answer" as const,
+    requestId: "request_a",
+    commandId: "answer_a",
+    expectedRevision: 1,
+    answer: "Yes",
+    saveForFuture: false,
+    credentialsPolicy: "browser_only" as const,
+    submitAuthorized: false as const,
+    accountCreationAuthorized: false as const,
+  };
+  await waitFor(() => expect(actionsRouteProps.current).not.toBeNull());
+  await expect(actionsRouteProps.current!.onCommand(command)).rejects.toThrow(
+    "This answer changed in another view",
+  );
+  expect(onPerformUserAction).toHaveBeenCalledWith(command, {
+    rethrowError: true,
   });
 });

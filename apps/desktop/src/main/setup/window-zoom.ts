@@ -101,6 +101,14 @@ function routeZoomCommand(
   return true;
 }
 
+/** Menu clicks use the same steps and owned factor as the keyboard. */
+export function applyMainWindowZoomCommand(
+  target: ZoomTarget,
+  command: MainWindowZoomCommand,
+): void {
+  routeZoomCommand({ preventDefault: () => undefined }, command, target);
+}
+
 export function routeMainWindowZoomShortcut(
   event: Pick<Event, "preventDefault">,
   input: MainWindowZoomShortcutInput,
@@ -119,15 +127,8 @@ export function bindMainWindowZoomShortcuts(
   platform: NodeJS.Platform = process.platform,
   options: { initialZoomFactor?: number } = {},
 ) {
-  // Chromium retains the last zoom used for an origin for the lifetime of the
-  // Electron session AND persists it into the user-data root, restoring it at
-  // navigation-commit time (after this binding runs). Product QA intentionally
-  // exercises 125% zoom, so normalize each fresh main window before accepting
-  // user zoom input and re-assert the owned factor after every completed
-  // main-frame load. Users can still change zoom for the current window and
-  // reset with Ctrl/Cmd+0; their choice survives reloads the same way.
-  // An explicit tester startup request (initialZoomFactor) becomes the owned
-  // factor so this binder never fights the startup zoom binder.
+  // Use the saved window preference unless a tester explicitly requests a
+  // startup factor. Reassert it after Chromium restores route-specific zoom.
   let desiredZoomFactor =
     options.initialZoomFactor ?? MAIN_WINDOW_DEFAULT_ZOOM_FACTOR;
 
@@ -144,17 +145,6 @@ export function bindMainWindowZoomShortcuts(
   // reused user-data root can never decide the launch zoom.
   webContents.on("did-finish-load", applyOwnedZoomFactor);
 
-  webContents.on("did-start-navigation", (details) => {
-    if (!details.isMainFrame || !details.isSameDocument) {
-      return;
-    }
-
-    const currentFactor = webContents.getZoomFactor();
-    if (Number.isFinite(currentFactor) && currentFactor > 0) {
-      desiredZoomFactor = currentFactor;
-    }
-  });
-
   webContents.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
     if (!isMainFrame) {
       return;
@@ -169,10 +159,10 @@ export function bindMainWindowZoomShortcuts(
 
   zoomControllers.set(webContents, (command) => {
     const currentFactor = webContents.getZoomFactor();
-    const nextFactor = getNextMainWindowZoomFactor(currentFactor, command);
+    const nextFactor = getNextMainWindowZoomFactor(desiredZoomFactor, command);
+    desiredZoomFactor = nextFactor;
 
     if (nextFactor !== currentFactor) {
-      desiredZoomFactor = nextFactor;
       webContents.setZoomFactor(nextFactor);
     }
   });

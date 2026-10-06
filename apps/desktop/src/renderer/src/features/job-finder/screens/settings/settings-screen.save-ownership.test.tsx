@@ -146,7 +146,7 @@ describe("Settings section nav is real navigation", () => {
     expect(currentLinks()[0]?.textContent).toBe("Tracker");
   });
 
-  it("gives the current item a fill and bar, and only the danger zone a destructive tint", () => {
+  it("underlines the current item like the Profile tabs, and gives only the danger zone a destructive tint", () => {
     renderScreen(parseSettings(), createCallbacks());
 
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
@@ -156,21 +156,19 @@ describe("Settings section nav is real navigation", () => {
       name: "Delete everything",
     });
 
-    // Colour alone never carries the current item: it has a fill and an
-    // inset bar as well.
-    expect(current.className).toContain("bg-(--nav-active-surface)");
-    expect(current.className).toContain(
-      "shadow-[inset_0_-2px_0_0_var(--nav-active-bar)]",
-    );
-    expect(inactive.className).not.toContain("bg-(--nav-active-surface)");
+    // Colour alone never carries the current item: it also gets the 2px
+    // underline the line tabs use.
+    expect(current.className).toContain("after:bg-primary");
+    expect(current.className).toContain("after:opacity-100");
+    expect(inactive.className).not.toContain("after:bg-primary");
 
     expect(dangerZone.className).toContain("text-(--destructive)");
     expect(inactive.className).not.toContain("text-(--destructive)");
 
-    // Every item keeps a border so the current item cannot nudge its
+    // The underline is an overlay, so the current item cannot nudge its
     // neighbours when the marker appears.
     for (const link of within(nav).getAllByRole("link")) {
-      expect(link.className).toContain("border");
+      expect(link.className).toContain("after:absolute");
     }
   });
 
@@ -189,10 +187,10 @@ describe("Settings section nav is real navigation", () => {
       name: APPLICATION_AUTHORITY_LABEL,
     });
     expect(
-      within(authority).getByText(/account creation pause for you/i),
+      within(authority).getAllByText(/You control account creation/i).length,
     ).toBeTruthy();
     expect(
-      within(authority).getByText(/never stores a password/i),
+      within(authority).getAllByText(/without saving them/i).length,
     ).toBeTruthy();
     expect(
       within(authority).queryByRole("button", { name: /submit/i }),
@@ -343,7 +341,7 @@ describe("Settings save ownership", () => {
     expect(unsavedBar()).toBeNull();
 
     fireEvent.change(
-      within(applying).getByLabelText("Most applications in one day"),
+      within(applying).getByLabelText("Most preparations in one day"),
       { target: { value: "5" } },
     );
     const bar = unsavedBar();

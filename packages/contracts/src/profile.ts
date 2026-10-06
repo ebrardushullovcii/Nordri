@@ -24,6 +24,12 @@ export const ResumeSourceDocumentSchema = z.object({
     .optional(),
   textContent: NonEmptyStringSchema.nullable().default(null),
   textUpdatedAt: IsoDateTimeSchema.nullable().default(null),
+  sourceIdentity: z
+    .object({
+      fullName: NonEmptyStringSchema.nullable(),
+      email: NonEmptyStringSchema.nullable(),
+    })
+    .optional(),
   extractionStatus: ResumeExtractionStatusSchema.default("not_started"),
   lastAnalyzedAt: IsoDateTimeSchema.nullable().default(null),
   analysisProviderKind: AiProviderKindSchema.nullable().default(null),
@@ -125,6 +131,15 @@ export type CandidateLanguage = z.infer<typeof CandidateLanguageSchema>;
 
 export const CandidateWorkEligibilitySchema = z.object({
   authorizedWorkCountries: z.array(NonEmptyStringSchema).default([]),
+  limitedWorkPermissions: z
+    .array(
+      z.object({
+        country: NonEmptyStringSchema,
+        conditions: NonEmptyStringSchema,
+        requiresFutureSponsorship: z.boolean().nullable().default(null),
+      }),
+    )
+    .optional(),
   requiresVisaSponsorship: z.boolean().nullable().default(null),
   willingToRelocate: z.boolean().nullable().default(null),
   preferredRelocationRegions: z.array(NonEmptyStringSchema).default([]),
@@ -189,6 +204,7 @@ export const CandidateAnswerKindSchema = z.enum(candidateAnswerKindValues);
 export type CandidateAnswerKind = z.infer<typeof CandidateAnswerKindSchema>;
 
 export const CandidateReusableAnswerSchema = z.object({
+  needsConfirmation: z.boolean().optional(),
   id: NonEmptyStringSchema,
   kind: CandidateAnswerKindSchema.default("other"),
   label: NonEmptyStringSchema,
@@ -196,10 +212,45 @@ export const CandidateReusableAnswerSchema = z.object({
   answer: NonEmptyStringSchema,
   roleFamilies: z.array(NonEmptyStringSchema).default([]),
   proofEntryIds: z.array(NonEmptyStringSchema).default([]),
+  applicationScope: z
+    .object({
+      resultId: NonEmptyStringSchema.nullable(),
+      applicationRecordId: NonEmptyStringSchema.nullable(),
+      location: NonEmptyStringSchema.nullable(),
+      hiringCountry: NonEmptyStringSchema.optional(),
+    })
+    .optional(),
 });
 export type CandidateReusableAnswer = z.infer<
   typeof CandidateReusableAnswerSchema
 >;
+
+function migrateReusableAnswerScope(
+  answer: CandidateReusableAnswer,
+): CandidateReusableAnswer {
+  // Migrate the exact suffix written by older versions; never infer a country.
+  if (
+    answer.applicationScope ||
+    (answer.kind !== "work_authorization" && answer.kind !== "visa_sponsorship")
+  )
+    return answer;
+  const legacy =
+    /^(.*) \(Application location: (.*); reuse only for the same hiring country and permit conditions\)$/u.exec(
+      answer.question,
+    );
+  if (!legacy) return answer;
+  const question = legacy[1]!;
+  return {
+    ...answer,
+    question,
+    label: question.slice(0, 120),
+    applicationScope: {
+      resultId: null,
+      applicationRecordId: null,
+      location: legacy[2] === "unspecified" ? null : legacy[2]!,
+    },
+  };
+}
 
 export const CandidateAnswerBankSchema = z.object({
   workAuthorization: NonEmptyStringSchema.nullable().default(null),
@@ -211,7 +262,10 @@ export const CandidateAnswerBankSchema = z.object({
   salaryExpectations: NonEmptyStringSchema.nullable().default(null),
   selfIntroduction: NonEmptyStringSchema.nullable().default(null),
   careerTransition: NonEmptyStringSchema.nullable().default(null),
-  customAnswers: z.array(CandidateReusableAnswerSchema).default([]),
+  customAnswers: z
+    .array(CandidateReusableAnswerSchema)
+    .transform((answers) => answers.map(migrateReusableAnswerScope))
+    .default([]),
 });
 export type CandidateAnswerBank = z.infer<typeof CandidateAnswerBankSchema>;
 
@@ -279,7 +333,7 @@ export const CandidateProfileSchema = z.object({
   currentRegion: NonEmptyStringSchema.nullable().default(null),
   currentCountry: NonEmptyStringSchema.nullable().default(null),
   timeZone: NonEmptyStringSchema.nullable().default(null),
-  yearsExperience: z.number().int().min(0),
+  yearsExperience: z.number().int().min(0).nullable(),
   email: NonEmptyStringSchema.nullable().default(null),
   secondaryEmail: NonEmptyStringSchema.nullable().default(null),
   phone: NonEmptyStringSchema.nullable().default(null),

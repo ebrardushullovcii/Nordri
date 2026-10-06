@@ -1,9 +1,15 @@
 import type {
   CandidateProfile,
+  FitJudgment,
   JobPosting,
   JobSearchPreferences,
   MatchAssessment,
 } from "@nordri/contracts";
+import {
+  applyFitJudgment,
+  readCarriedJudgment,
+  preserveCompletedAssessment,
+} from "./fit-judgment-apply";
 import {
   createMatchAssessmentPostingInput,
   type MatchAssessmentPostingInput,
@@ -41,8 +47,14 @@ import {
  * Revision 12 (scorer version 13): explicit summary language evidence and
  * customer implementation requirements now participate in assessment.
  */
-export const MATCH_ASSESSMENT_SCORER_VERSION = 13;
-const MATCH_ASSESSMENT_LOGIC_REVISION = 12;
+// Revision 13: country codes, discipline and title-level evidence, and model
+// requirement comparisons replace scores written by the previous logic.
+// Revision 14 (scorer version 15): the model decides fit (ADR 0041). Rule
+// scores written before are retired; a stored model verdict is kept.
+// Revision 15 (version 16): country eligibility, availability and full
+// listing evidence are explicit inputs; prior verdicts stay until replacement.
+export const MATCH_ASSESSMENT_SCORER_VERSION = 16;
+const MATCH_ASSESSMENT_LOGIC_REVISION = 15;
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== "object") {
@@ -78,7 +90,13 @@ export function createMatchAssessmentContextFingerprint(
     `match_context_v4_logic${MATCH_ASSESSMENT_LOGIC_REVISION}`,
     {
       profile,
-      searchPreferences,
+      searchPreferences: {
+        ...searchPreferences,
+        discovery: {
+          remoteCountsAsAnyLocation:
+            searchPreferences.discovery.remoteCountsAsAnyLocation !== false,
+        },
+      },
     },
   );
 }
@@ -90,6 +108,15 @@ export function createMatchAssessmentPostingFingerprint(
     `match_posting_v4_logic${MATCH_ASSESSMENT_LOGIC_REVISION}`,
     createMatchAssessmentPostingInput(posting),
   );
+}
+
+function assessmentCacheKey(
+  postingFingerprint: string,
+  judgment: FitJudgment | null | undefined,
+): string {
+  return judgment
+    ? `${postingFingerprint}|${judgment.source}|${judgment.judgedAt}|${judgment.contextFingerprint}|${judgment.postingFingerprint}`
+    : postingFingerprint;
 }
 
 export type MatchAssessmentCalculator = (
@@ -110,23 +137,54 @@ export function createMatchAssessmentSession(input: {
   const cache = new Map<string, MatchAssessment>();
   let computationCount = 0;
 
-  const assess = (posting: JobPosting): MatchAssessment => {
+  /**
+   * Scores a posting. A job the model already judged keeps that verdict
+   * (ADR 0041), even when the listing or the goals changed since; the next
+   * judging pass replaces a stale verdict, and until then it beats a rule
+   * guess.
+   */
+  const assess = (
+    posting: JobPosting & { matchAssessment?: MatchAssessment | null },
+    carried: FitJudgment | null = readCarriedJudgment(posting),
+  ): MatchAssessment => {
+    const previous = (posting as { matchAssessment?: MatchAssessment })
+      .matchAssessment;
+    // Keep the requirements and evidence from the completed full read too,
+    // rather than rebuilding empty requirements around its carried score.
+    if (
+      previous?.judgment &&
+      (!carried ||
+        (previous.judgment.source === "full" &&
+          carried.source !== "full" &&
+          previous.judgment.contextFingerprint === carried.contextFingerprint &&
+          previous.judgment.postingFingerprint ===
+            carried.postingFingerprint) ||
+        (previous.judgment.source === carried.source &&
+          previous.judgment.judgedAt === carried.judgedAt &&
+          previous.judgment.contextFingerprint === carried.contextFingerprint &&
+          previous.judgment.postingFingerprint === carried.postingFingerprint))
+    )
+      return previous;
     const postingInput = createMatchAssessmentPostingInput(posting);
     const postingFingerprint =
       createMatchAssessmentPostingFingerprint(postingInput);
-    const cached = cache.get(postingFingerprint);
+    const cacheKey = assessmentCacheKey(postingFingerprint, carried);
+    const cached = cache.get(cacheKey);
     if (cached) {
       return cached;
     }
 
     computationCount += 1;
-    const assessment = {
+    const calculated = {
       ...input.calculate(input.profile, input.searchPreferences, postingInput),
       scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
       contextFingerprint,
       postingFingerprint,
     };
-    cache.set(postingFingerprint, assessment);
+    const assessment = carried
+      ? applyFitJudgment(calculated, carried)
+      : calculated;
+    cache.set(cacheKey, assessment);
     return assessment;
   };
 
@@ -142,16 +200,41 @@ export function createMatchAssessmentSession(input: {
       persistedAssessment.contextFingerprint === contextFingerprint &&
       persistedAssessment.postingFingerprint === postingFingerprint
     ) {
-      cache.set(postingFingerprint, persistedAssessment);
+      cache.set(
+        assessmentCacheKey(postingFingerprint, persistedAssessment.judgment),
+        persistedAssessment,
+      );
       return persistedAssessment;
     }
 
-    return assess(posting);
+    return preserveCompletedAssessment(
+      persistedAssessment,
+      assess(
+        { ...posting, matchAssessment: persistedAssessment ?? null },
+        persistedAssessment?.judgment ?? null,
+      ),
+    );
+  };
+
+  const remember = (
+    posting: JobPosting,
+    assessment: MatchAssessment,
+  ): MatchAssessment => {
+    const postingFingerprint = createMatchAssessmentPostingFingerprint(posting);
+    const bound = {
+      ...assessment,
+      scorerVersion: MATCH_ASSESSMENT_SCORER_VERSION,
+      contextFingerprint,
+      postingFingerprint,
+    };
+    cache.set(assessmentCacheKey(postingFingerprint, bound.judgment), bound);
+    return bound;
   };
 
   return {
     assess,
     assessPersisted,
+    remember,
     contextFingerprint,
     getComputationCount: () => computationCount,
   };

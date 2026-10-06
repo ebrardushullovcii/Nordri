@@ -3,9 +3,11 @@ export const PROFILE_SETUP_STEP_HEADING_ID =
 
 export function focusProfileSetupStepHeading(
   documentRef: Document = document,
+  advancing = false,
 ): boolean {
   const activeElement = documentRef.activeElement;
   if (
+    !advancing &&
     activeElement instanceof HTMLElement &&
     activeElement !== documentRef.body &&
     activeElement.isConnected
@@ -20,5 +22,6 @@ export function focusProfileSetupStepHeading(
   }
 
   stepHeading.focus({ preventScroll: true });
+  if (advancing) stepHeading.scrollIntoView({ block: "start" });
   return true;
 }

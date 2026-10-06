@@ -2,7 +2,11 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OutcomeEventSchema } from "@nordri/contracts";
+import {
+  ApplyJobResultSchema,
+  ApplyRunSchema,
+  OutcomeEventSchema,
+} from "@nordri/contracts";
 import type {
   JobSearchCampaign,
   OutcomeAnalyticsOverview,
@@ -149,8 +153,17 @@ describe("OutcomeAnalyticsScreen", () => {
     expect(
       screen.getByRole("heading", { name: "No outcomes recorded yet" }),
     ).toBeTruthy();
-    expect(screen.getByText(/never applied automatically/i)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Response and interview rates from your recorded outcomes/i,
+      ),
+    ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Outcomes" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Response and interview rates from your recorded outcomes.",
+      ).textContent.length,
+    ).toBeLessThanOrEqual(90);
   });
 
   it("links the all-time empty state to the Applications Tracker", () => {
@@ -376,7 +389,7 @@ describe("OutcomeAnalyticsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Source" }));
 
     expect(screen.getAllByRole("article")).toHaveLength(40);
-    expect(screen.getByText(/Showing 1–40 of 10000 sources/)).toBeTruthy();
+    expect(screen.getByText(/1–40 of 10000/)).toBeTruthy();
     expect(screen.getByText("Page 1 of 250")).toBeTruthy();
     expect(bucketKeyCard("source-00000")).toBeTruthy();
     expect(bucketKeyCard("source-00040")).toBeNull();
@@ -384,7 +397,7 @@ describe("OutcomeAnalyticsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
 
     expect(screen.getAllByRole("article")).toHaveLength(40);
-    expect(screen.getByText(/Showing 41–80 of 10000 sources/)).toBeTruthy();
+    expect(screen.getByText(/41–80 of 10000/)).toBeTruthy();
     expect(screen.getByText("Page 2 of 250")).toBeTruthy();
     expect(bucketKeyCard("source-00040")).toBeTruthy();
     expect(bucketKeyCard("source-00000")).toBeNull();
@@ -481,4 +494,68 @@ describe("OutcomeAnalyticsScreen", () => {
     expect(select.className).not.toContain("focus-visible:ring");
     expect(container.innerHTML).not.toContain("border-input");
   });
+});
+
+it("shows the verified application funnel on the loaded screen for a small sample", () => {
+  const results = ["a", "b"].map((jobId) =>
+    ApplyJobResultSchema.parse({
+      id: jobId,
+      runId: "run",
+      jobId,
+      applicationRecordId: `application-${jobId}`,
+      state: "submitted",
+      summary: "Sent",
+      detail: "Local receipt",
+      startedAt: now,
+      updatedAt: now,
+      privacyReceipt: {
+        generatedAt: now,
+        lineage: { runId: "run", jobId, resultId: jobId },
+        destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+        resume: { source: "original_upload", fileName: "synthetic.pdf" },
+        finalSubmitAuthorized: true,
+        finalSubmitOccurred: true,
+      },
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <OutcomeAnalyticsScreen
+        actionMessage={null}
+        activeCampaignId="campaign-1"
+        campaigns={campaigns}
+        events={[
+          event({
+            outcome: "employer_response",
+            applicationRecordId: "application-a",
+            jobId: "a",
+          }),
+        ]}
+        generatedAt={now}
+        isSuggestionPending={() => false}
+        onSetOutcomeSuggestionEnabled={vi.fn()}
+        overview={null}
+        resumeStrategies={[]}
+        applyJobResults={results}
+        applyRuns={[
+          ApplyRunSchema.parse({
+            id: "run",
+            campaignId: "campaign-1",
+            mode: "queue_auto",
+            state: "completed",
+            jobIds: ["a", "b"],
+            createdAt: now,
+            updatedAt: now,
+            summary: "Sent two",
+            detail: "Local receipts",
+          }),
+        ]}
+      />
+    </MemoryRouter>,
+  );
+  const funnel = screen.getByLabelText("Application funnel");
+  expect(funnel.textContent).toContain("2 sent");
+  expect(funnel.textContent).toContain("1 employer response");
+  expect(funnel.textContent).toContain("50% response rate");
+  expect(funnel.textContent).toContain("small sample");
 });

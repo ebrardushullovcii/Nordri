@@ -1,3 +1,5 @@
+import { resumeProposalPreview } from "../proposal-preview";
+import type { AssistantHostPorts } from "../ports";
 import {
   NonEmptyStringSchema,
   ResumeDraftPatchOperationSchema,
@@ -17,7 +19,7 @@ import {
   json,
   type AssistantToolContext,
 } from "../tool-kit";
-import { findJob, RESUME_ROUTE, plural } from "./format";
+import { findJob, RESUME_ROUTE, plural, pausedByPersonMessage } from "./format";
 
 const Id = NonEmptyStringSchema.max(200);
 const OWNERSHIP_STATEMENT = "I confirm this content is accurate and my own.";
@@ -29,6 +31,8 @@ function compactDraft(draft: ResumeDraft, sectionId?: string | null) {
     status: draft.status,
     templateId: draft.templateId,
     targetPageCount: draft.targetPageCount,
+    language: draft.language ?? null,
+    writtenLanguage: draft.writtenLanguage ?? null,
     sections: draft.sections
       .filter((section) => !sectionId || section.id === sectionId)
       .map((section) => ({
@@ -138,7 +142,10 @@ export const readResumeTool = defineTool({
           company: workspace.job.company,
         },
         mode: resumeMode(workspace, originalDefault),
-        level: workspace.effectiveTailoringStrength,
+        level:
+          resumeMode(workspace, originalDefault) === "original"
+            ? "original"
+            : workspace.effectiveTailoringStrength,
         pageCount: workspace.validation?.pageCount ?? null,
         draft: compactDraft(workspace.draft, input.sectionId ?? null),
         issues: issues.slice(0, 30),
@@ -150,7 +157,11 @@ export const readResumeTool = defineTool({
                 "Unsupported lines cannot be kept as written. Rewrite them from the profile's evidence or remove them with edit_resume, or, if the person confirms the fact, add it to the profile first with edit_profile and then regenerate that section.",
             }
           : {}),
-        approved: workspace.draft.status === "approved",
+        approved:
+          resumeMode(workspace, originalDefault) === "editable" &&
+          workspace.draft.status === "approved",
+        approvedExportId: workspace.draft.approvedExportId,
+        approvalRevision: workspace.draft.updatedAt,
         ...(unsaved
           ? {
               unsavedInEditor:
@@ -254,7 +265,7 @@ export const editResumeTool = defineTool({
   name: "edit_resume",
   group: "resume",
   description:
-    "Makes targeted edits to one job's resume draft against the revision from read_resume: replace_section_text, replace_entry_summary, insert_bullet (text, anchorBulletId/position), update_bullet, remove_bullet, move_bullet, move_entry, toggle_include, set_lock, reset_entry_order. mode apply commits all edits as one change with Undo; mode suggest leaves a proposal. For a large rewrite use revise_resume instead. An edit on an Original job switches that job to an editable draft at its saved level by itself; say so in a sentence, don't ask first. Report what the result says was saved, not what you intended.",
+    "Makes targeted edits to one job's resume draft against the revision from read_resume: replace_section_text, replace_entry_summary, replace_entry_date_range (text restores factual date wording such as '(summers)' without changing startDate/endDate/isCurrent), insert_bullet (text, anchorBulletId/position), update_bullet, remove_bullet, move_bullet, move_entry, toggle_include, set_lock, reset_entry_order. mode apply commits all edits as one change with Undo; mode suggest leaves a proposal. Preserve seasonal qualifiers and use the person's words or saved evidence, never invent dates. For a large rewrite use revise_resume instead. An edit on an Original job switches that job to an editable draft at its saved level by itself; say so in a sentence, don't ask first. Report what the result says was saved, not what you intended.",
   parameters: json.object(
     {
       jobId: json.string(),
@@ -267,6 +278,7 @@ export const editResumeTool = defineTool({
             operation: json.enumOf([
               "replace_section_text",
               "replace_entry_summary",
+              "replace_entry_date_range",
               "insert_bullet",
               "update_bullet",
               "remove_bullet",
@@ -309,13 +321,14 @@ export const editResumeTool = defineTool({
     const at = session.now();
     const patches = input.edits.map((edit) => toPatch(edit, at));
     if (input.mode === "suggest") {
+      const workspace = await service.getResumeWorkspace(input.jobId);
       const { proposal, part } = await session.createProposal({
         kind: "resume_patches",
         targetId: input.jobId,
         summary: input.summary,
         items: input.edits.map((edit, index) => ({
           id: `item_${index + 1}`,
-          label: `${edit.operation.replaceAll("_", " ")}${edit.text ? `: ${edit.text.slice(0, 200)}` : ""}`,
+          ...resumeProposalPreview(patches[index]!, workspace.draft),
           payload: patches[index],
         })),
         baseRevision: input.revision ?? null,
@@ -421,13 +434,14 @@ export const reviseResumeTool = defineTool({
     }
     const blockers = result.approvalBlockers.map((blocker) => blocker.message);
     if (input.mode === "suggest") {
+      const workspace = await service.getResumeWorkspace(input.jobId);
       const { proposal, part } = await session.createProposal({
         kind: "resume_patches",
         targetId: input.jobId,
         summary: input.brief.slice(0, 300),
         items: result.patches.map((patch, index) => ({
           id: `item_${index + 1}`,
-          label: `${patch.operation.replaceAll("_", " ")}${patch.newText ? `: ${patch.newText.slice(0, 200)}` : ""}`,
+          ...resumeProposalPreview(patch, workspace.draft),
           payload: patch,
         })),
         baseRevision: result.baseDraftUpdatedAt,
@@ -474,7 +488,7 @@ export const setResumeLevelTool = defineTool({
   name: "set_resume_level",
   group: "resume",
   description:
-    "Sets one job's resume level: original (send the imported file unchanged), light, tailored or aggressive.",
+    "Sets only named jobs' resume level: original, light, tailored or aggressive. It does not change the default for new jobs; use set_default_resume_level for that. For overlapping resume writing, pass level to generate_resumes so the change waits for the current writer.",
   parameters: json.object(
     {
       jobIds: json.ids(),
@@ -516,17 +530,26 @@ export const generateResumesTool = defineTool({
   name: "generate_resumes",
   group: "resume",
   description:
-    "Writes missing tailored resumes for the requested jobs, two at a time, in the background. Original jobs, existing drafts (unless regenerate is requested), jobs in Applications and jobs already being written are skipped and reported. Each job keeps its saved level and settings. The conversation continues when all are done. Stop or cancel_resumes prevents further jobs from starting; active drafts finish.",
+    "Writes missing tailored resumes for the requested jobs, two at a time, in the background. Original jobs, completed drafts (unless regenerate or level is requested), and jobs in Applications are skipped and reported. Work overlapping a UI or assistant writer queues behind it; initial deterministic drafts are not completed rewrites. Pass language to translate an existing draft, headings and credentials together in one pass without regenerating it. With regenerate or level, the writer uses that language for the new draft. Pass level for a requested rewrite at a particular level; it is set only after earlier writers finish. Each job keeps its saved level and settings. The conversation continues when all are done. Stop or cancel_resumes prevents further jobs from starting; active drafts finish.",
   parameters: json.object(
     {
       jobIds: json.ids(),
       regenerate: json.boolean("Rewrite existing drafts from scratch."),
+      language: json.string(
+        "Language for the whole resume, such as German; preserves the chosen rewrite level.",
+      ),
+      level: json.enumOf(
+        ["light", "tailored", "aggressive"],
+        "Requested level for this batch; waits for earlier writers and rewrites existing drafts.",
+      ),
     },
     ["jobIds"],
   ),
   input: z.object({
-    jobIds: z.array(Id).min(1).max(30),
+    jobIds: z.array(Id).min(1).max(100),
     regenerate: z.boolean().default(false),
+    language: z.string().trim().min(1).max(120).optional(),
+    level: z.enum(["light", "tailored", "aggressive"]).optional(),
   }),
   label: (input) =>
     `Writing ${plural(Array.isArray(input.jobIds) ? input.jobIds.length : 1, "resume")}`,
@@ -534,9 +557,21 @@ export const generateResumesTool = defineTool({
   async execute(input, { service, session, ports }) {
     session.assertCurrent();
     const snapshot = await service.getWorkspaceSnapshot();
+    const paused = pausedByPersonMessage(
+      snapshot.activityControl,
+      "resume writing",
+    );
+    if (paused) throw new AssistantToolError("refused", paused);
     const skipped: ResumeBatchSkip[] = [];
-    const jobIds = [...new Set(input.jobIds)].filter((jobId) => {
-      const reason = resumeBatchSkipReason(snapshot, jobId, input.regenerate);
+    const requestedJobIds = [...new Set(input.jobIds)];
+    const jobIds = requestedJobIds.filter((jobId) => {
+      const reason = resumeBatchSkipReason(
+        snapshot,
+        jobId,
+        input.regenerate || !!input.level || input.language !== undefined,
+        undefined,
+        input.level,
+      );
       if (reason) skipped.push({ jobId, reason });
       return reason === null;
     });
@@ -549,16 +584,46 @@ export const generateResumesTool = defineTool({
     const runId = session.createId("resume_batch");
     const batch: BackgroundResumeBatch = {
       conversationId: session.conversationId,
-      jobIds,
+      jobIds: requestedJobIds,
       startedAt: session.now(),
       done: false,
       cancelled: false,
       activeJobIds: new Set(),
       completedJobIds: [],
       failures: [],
-      skipped: [],
+      skipped: [...skipped],
+      durationsMs: [],
     };
+    const predecessors = [...backgroundBatches.values()].filter(
+      (previous) => !previous.done,
+    );
     backgroundBatches.set(runId, batch);
+    const persist = () =>
+      service.saveResumeBatchCheckpoint({
+        id: runId,
+        jobIds,
+        activeJobIds: [...batch.activeJobIds],
+        completedJobIds: [
+          ...batch.completedJobIds,
+          ...batch.skipped.map((entry) => entry.jobId),
+        ],
+        done: batch.done && !batch.cancelled,
+        stopRequested: batch.cancelled,
+        requests: jobIds.map((jobId) => ({
+          jobId,
+          regenerate: input.regenerate,
+          ...(input.level ? { level: input.level } : {}),
+          ...(input.language !== undefined ? { language: input.language } : {}),
+        })),
+        durationsMs: [...batch.durationsMs],
+        running: !batch.done,
+      });
+    try {
+      await persist();
+    } catch (error) {
+      backgroundBatches.delete(runId);
+      throw error;
+    }
     const queue = [...jobIds];
     const cancel = () => {
       batch.cancelled = true;
@@ -567,7 +632,7 @@ export const generateResumesTool = defineTool({
     if (session.signal.aborted) cancel();
     try {
       await session.watchRun(
-        { kind: "resume_generation", id: runId, jobIds },
+        { kind: "resume_generation", id: runId, jobIds: requestedJobIds },
         `Writing resumes for ${plural(jobIds.length, "job")}`,
       );
       session.assertCurrent();
@@ -580,40 +645,126 @@ export const generateResumesTool = defineTool({
     const worker = async () => {
       while (queue.length > 0 && !batch.cancelled) {
         const jobId = queue.shift()!;
+        let startedAt: number | null = null;
         try {
           // Earlier drafts may take minutes; dispatch under the latest saved
           // settings and application standing rather than the initial snapshot.
+          // Only earlier writers are waited for: later batches wait for us.
+          while (!batch.cancelled) {
+            const ui = ports.readResumeBatch?.();
+            const uiOwnsJob =
+              ui &&
+              !ui.done &&
+              ui.jobIds.includes(jobId) &&
+              (ui.activeJobIds.includes(jobId) ||
+                (!ui.stopRequested && !ui.completedJobIds.includes(jobId)));
+            const earlierOwnsJob = predecessors.some(
+              (previous) =>
+                !previous.done &&
+                previous.jobIds.includes(jobId) &&
+                !previous.skipped.some((entry) => entry.jobId === jobId) &&
+                (!previous.cancelled || previous.activeJobIds.has(jobId)),
+            );
+            const latest = await service.getWorkspaceSnapshot();
+            if (latest.activityControl.paused) batch.cancelled = true;
+            const generating = latest.tailoredAssets.some(
+              (asset) => asset.jobId === jobId && asset.status === "generating",
+            );
+            if (!uiOwnsJob && !earlierOwnsJob && !generating) break;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
           const current = await service.getWorkspaceSnapshot();
+          if (current.activityControl.paused) batch.cancelled = true;
           if (batch.cancelled) return;
           const reason = resumeBatchSkipReason(
             current,
             jobId,
-            input.regenerate,
+            input.regenerate || !!input.level || input.language !== undefined,
             runId,
+            input.level,
           );
           if (reason) {
             batch.skipped.push({ jobId, reason });
             continue;
           }
           batch.activeJobIds.add(jobId);
-          if (input.regenerate) await service.regenerateResumeDraft(jobId);
-          else await service.generateResume(jobId);
+          await persist();
+          startedAt = Date.now();
+          if (input.level) {
+            await setResumeLevelTool.execute(
+              { jobIds: [jobId], level: input.level },
+              {
+                service,
+                ports,
+                session: {
+                  ...session,
+                  assertCurrent: () => {
+                    if (batch.cancelled)
+                      throw new Error("Resume writing was stopped.");
+                  },
+                },
+              },
+            );
+          }
+          let translated: JobFinderWorkspaceSnapshot | null = null;
+          if (
+            input.language !== undefined &&
+            !input.regenerate &&
+            !input.level &&
+            current.resumeDrafts.some((draft) => draft.jobId === jobId)
+          ) {
+            const workspace = await service.getResumeWorkspace(jobId);
+            translated = await service.saveResumeDraft({
+              ...workspace.draft,
+              language: input.language,
+            });
+          }
+          const generationArgs: [string, { language: string }?] =
+            input.language !== undefined
+              ? [jobId, { language: input.language }]
+              : [jobId];
+          const written =
+            translated && !input.regenerate && !input.level
+              ? translated
+              : input.regenerate ||
+                  input.level ||
+                  current.resumeDrafts.some((draft) => draft.jobId === jobId)
+                ? await service.regenerateResumeDraft(...generationArgs)
+                : await service.generateResume(...generationArgs);
+          const savedDraft = written.resumeDrafts.find(
+            (draft) => draft.jobId === jobId,
+          );
+          if (!translated && savedDraft?.generationMethod !== "ai") {
+            throw new Error(
+              "The draft was saved, but the AI rewrite did not complete. Retry with generate_resumes regenerate true; do not call it a completed rewrite.",
+            );
+          }
           batch.completedJobIds.push(jobId);
+          batch.durationsMs.push(Math.max(0, Date.now() - startedAt));
         } catch (error) {
           batch.failures.push(
             `${jobId}: ${error instanceof Error ? error.message.slice(0, 200) : "failed"}`,
           );
         } finally {
           batch.activeJobIds.delete(jobId);
+          await persist();
           ports.publishWorkspaceUpdate();
         }
       }
     };
-    void Promise.all([worker(), worker()]).finally(() => {
-      batch.done = true;
-      session.signal.removeEventListener("abort", cancel);
-      ports.publishWorkspaceUpdate();
-    });
+    void Promise.all([worker(), worker()])
+      .finally(async () => {
+        batch.done = true;
+        session.signal.removeEventListener("abort", cancel);
+        await persist();
+        ports.publishWorkspaceUpdate();
+      })
+      .catch((error: unknown) => {
+        batch.cancelled = true;
+        batch.done = true;
+        console.warn("Resume batch checkpoint could not be saved.", error);
+        ports.publishWorkspaceUpdate();
+      });
     return {
       summary: `Started writing ${plural(jobIds.length, "resume")} in the background (run ${runId}).${skipped.length ? ` ${describeResumeBatchSkips(skipped)}` : ""} This conversation continues when they are done.`,
       data: { runId, jobIds, skipped },
@@ -635,43 +786,38 @@ interface BackgroundResumeBatch {
   completedJobIds: string[];
   failures: string[];
   skipped: ResumeBatchSkip[];
+  durationsMs: number[];
 }
-/** Batches survive the originating turn, but never an app restart. */
+/** Live scheduling state; durable checkpoints are saved by the service. */
 const backgroundBatches = new Map<string, BackgroundResumeBatch>();
 
 function resumeBatchSkipReason(
   snapshot: JobFinderWorkspaceSnapshot,
   jobId: string,
   regenerate: boolean,
-  ownRunId?: string,
+  _ownRunId?: string,
+  requestedLevel?: string,
 ): string | null {
   const job = findJob(snapshot, jobId);
   if (!job) return "job not found";
   if (
+    !requestedLevel &&
     (job.resumeApplicationMode ?? snapshot.settings.resumeApplicationMode) ===
-    "original_resume"
+      "original_resume"
   )
     return "Original resume is unchanged";
   if (snapshot.applicationRecords.some((record) => record.jobId === jobId))
     return "already in Applications";
   if (
     !regenerate &&
-    snapshot.resumeDrafts.some((draft) => draft.jobId === jobId)
-  )
-    return "resume already exists";
-  if (
-    snapshot.tailoredAssets.some(
-      (asset) => asset.jobId === jobId && asset.status === "generating",
-    ) ||
-    [...backgroundBatches].some(
-      ([runId, batch]) =>
-        runId !== ownRunId &&
-        !batch.done &&
-        (!batch.cancelled || batch.activeJobIds.has(jobId)) &&
-        batch.jobIds.includes(jobId),
+    snapshot.resumeDrafts.some(
+      (draft) =>
+        draft.jobId === jobId &&
+        (draft.generationMethod === "ai" ||
+          draft.generationMethod === "manual"),
     )
   )
-    return "resume is already being written";
+    return "resume already exists";
   return null;
 }
 
@@ -692,33 +838,52 @@ export function cancelBackgroundBatch(id: string): void {
   if (batch) batch.cancelled = true;
 }
 
+export function listBackgroundResumeBatches() {
+  return [...backgroundBatches.entries()]
+    .filter(([, batch]) => !batch.done)
+    .map(([id, batch]) => ({
+      id,
+      jobIds: batch.jobIds,
+      activeJobIds: [...batch.activeJobIds],
+      completedJobIds: batch.completedJobIds,
+      done: batch.done,
+      stopRequested: batch.cancelled,
+    }));
+}
+
+export function stopResumeWork(ports: AssistantHostPorts) {
+  const batches = [...backgroundBatches.values()].filter(
+    (batch) => !batch.done,
+  );
+  for (const batch of batches) batch.cancelled = true;
+  const uiBatch = ports.stopResumeBatch?.() ?? null;
+  const active =
+    batches.reduce((count, batch) => count + batch.activeJobIds.size, 0) +
+    (uiBatch?.activeJobIds.length ?? 0);
+  return {
+    summary: `No further resume jobs will start. Completed drafts are kept.${active ? ` ${plural(active, "active draft")} will finish.` : ""}${!ports.stopResumeBatch ? " The UI resume queue could not be checked or stopped." : ""}`,
+    data: {
+      stoppedBatches: batches.length + (uiBatch ? 1 : 0),
+      activeDrafts: active,
+      uncheckedWork: ports.stopResumeBatch ? [] : ["UI resume queue"],
+    },
+  };
+}
+
 export const cancelResumesTool = defineTool({
   name: "cancel_resumes",
   group: "resume",
   description:
-    "Stops this conversation's resume batches from starting more jobs. Completed drafts are kept and active drafts finish. Reports how many drafts still finish; does not stop searches or applications.",
+    "Stops all resume batches, including batches started from the UI, from starting more jobs. Completed drafts are kept and active drafts finish. Reports any work it could not stop; does not stop searches or applications.",
   parameters: json.object({}),
   input: z.object({}).passthrough(),
   label: () => "Stopping new resume drafts",
   effect: "local_write",
   execute(_input, { session, ports }) {
     session.assertCurrent();
-    const batches = [...backgroundBatches.values()].filter(
-      (batch) => batch.conversationId === session.conversationId && !batch.done,
-    );
-    for (const batch of batches) batch.cancelled = true;
-    const active = batches.reduce(
-      (count, batch) => count + batch.activeJobIds.size,
-      0,
-    );
+    const result = stopResumeWork(ports);
     ports.publishWorkspaceUpdate();
-    return Promise.resolve({
-      summary:
-        batches.length === 0
-          ? "No resume batch is running in this conversation."
-          : `No further resume jobs will start. Completed drafts are kept.${active ? ` ${plural(active, "active draft")} will finish.` : ""}`,
-      data: { stoppedBatches: batches.length, activeDrafts: active },
-    });
+    return Promise.resolve(result);
   },
 });
 

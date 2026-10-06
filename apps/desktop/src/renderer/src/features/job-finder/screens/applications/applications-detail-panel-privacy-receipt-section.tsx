@@ -26,6 +26,14 @@ function formatReceiptDestination(origin: string, safePath: string): string {
     : normalizedOrigin;
 }
 
+function formatReceiptDataCategory(
+  category: ApplicationPrivacyReceipt["stayedLocal"][number],
+): string {
+  return category === "resume_content"
+    ? "Resume text"
+    : formatStatusLabel(category);
+}
+
 function ReceiptGroup(props: {
   icon: typeof Monitor;
   label: string;
@@ -115,14 +123,11 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
               {heading}
             </h3>
             <p className="text-(length:--text-small) leading-6 text-foreground-soft">
-              {/* The generated artifact basename is an epoch-prefixed internal
-                  name, not something the user chose or can act on. It stays
-                  inside the expanded details. */}
               {formatReceiptDestination(
                 receipt.destination.origin,
                 receipt.destination.safePath,
               )}{" "}
-              · Your approved resume (
+              · Resume: {receipt.resume.fileName} (
               {describeReceiptResumeFileType(receipt.resume.fileName)})
             </p>
           </div>
@@ -152,11 +157,13 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
         onResolveOutcome ? (
           <section
             aria-label="Verify submission outcome"
-            className="grid gap-3 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-3"
+            // The amber alert above already says the outcome is uncertain;
+            // this is the form that settles it, so it is not a second alert.
+            className="grid gap-3 rounded-(--radius-field) border border-(--surface-panel-border) px-3 py-3"
           >
             <div className="grid gap-1">
               <strong>Verify on the employer site</strong>
-              <p className="text-(length:--text-small) leading-6 text-(--warning-text)">
+              <p className="text-(length:--text-small) leading-6 text-foreground-soft">
                 Open the employer site yourself and check this exact
                 application. Recording the result changes durable history and
                 cannot be undone from this screen.
@@ -263,10 +270,10 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
         ) : null}
 
         <div className="grid gap-2 sm:grid-cols-2">
-          <ReceiptGroup icon={Monitor} label="Stayed local">
+          <ReceiptGroup icon={Monitor} label="Stored on this device">
             {receipt.stayedLocal.length > 0
-              ? receipt.stayedLocal.map(formatStatusLabel).join(", ")
-              : "No local-only data was recorded for this preparation."}
+              ? receipt.stayedLocal.map(formatReceiptDataCategory).join(", ")
+              : "No local data was recorded for this preparation."}
           </ReceiptGroup>
 
           <ReceiptGroup icon={Send} label="Sent to a model">
@@ -274,7 +281,7 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
               ? receipt.modelUse
                   .map(
                     (entry) =>
-                      `${formatStatusLabel(entry.purpose)} via ${entry.providerLabel}`,
+                      `${entry.dataCategories.map(formatReceiptDataCategory).join(", ")} for ${formatStatusLabel(entry.purpose)} via ${entry.providerLabel}`,
                   )
                   .join(", ")
               : "Nothing was sent to a model during application preparation."}
@@ -300,9 +307,16 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
                   {receipt.resume.sha256.slice(-12)}
                 </code>
                 <span>
-                  This is the exact{" "}
-                  {describeReceiptResumeFileType(receipt.resume.fileName)} you
-                  approved — unchanged.
+                  {receipt.resume.source === "original_upload" &&
+                  /\.txt$/iu.test(receipt.resume.fileName) ? (
+                    "This is a plain-text copy of your original, unchanged."
+                  ) : (
+                    <>
+                      This is the exact{" "}
+                      {describeReceiptResumeFileType(receipt.resume.fileName)}{" "}
+                      you approved — unchanged.
+                    </>
+                  )}
                 </span>
               </span>
             ) : (
@@ -318,9 +332,11 @@ export function ApplicationsDetailPanelPrivacyReceiptSection(props: {
           <ReceiptGroup icon={CheckCircle2} label="Written to the site">
             {receipt.externalWrites.length > 0 ? (
               <>
-                {receipt.externalWrites
-                  .map((entry) => entry.fieldLabel)
-                  .join(", ")}
+                {[
+                  ...new Set(
+                    receipt.externalWrites.map((entry) => entry.fieldLabel),
+                  ),
+                ].join(", ")}
                 <span className="mt-1 block">
                   Preparation writes Job Finder observed on this run. They do
                   not confirm how the site stored the data or what it did next.

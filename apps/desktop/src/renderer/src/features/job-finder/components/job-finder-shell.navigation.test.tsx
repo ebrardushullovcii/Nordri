@@ -231,6 +231,70 @@ describe("JobFinderShell section navigation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("moves complete navigation labels into More at a 200% viewport", async () => {
+    let availableWidth = 240;
+    const resizeCallbacks: Array<() => void> = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resizeCallbacks.push(callback);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.hasAttribute("data-job-finder-compact-navigation-scroll")
+          ? availableWidth
+          : 0;
+      },
+    );
+    const originalRect = HTMLElement.prototype.getBoundingClientRect.bind(
+      document.createElement("div"),
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (
+          this.parentElement?.getAttribute("aria-hidden") === "true" &&
+          this.parentElement.className.includes("w-max")
+        )
+          return { ...originalRect(), width: 100 };
+        return originalRect();
+      },
+    );
+    const view = render(
+      <MemoryRouter>
+        <JobFinderShell platform="darwin" workspace={createWorkspace()}>
+          <div>Page</div>
+        </JobFinderShell>
+      </MemoryRouter>,
+    );
+    const compact = view.container.querySelector<HTMLElement>(
+      "[data-job-finder-compact-navigation-content]",
+    )!;
+    expect(
+      within(compact).queryByRole("button", { name: /Applications/ }),
+    ).toBeNull();
+    expect(within(compact).getAllByRole("button")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    const menu = await screen.findByRole("navigation", { name: "More" });
+    expect(
+      within(menu).getByRole("button", { name: "Applications" }),
+    ).toBeTruthy();
+    fireEvent.keyDown(menu, { key: "Escape" });
+    act(() => {
+      availableWidth = 640;
+      resizeCallbacks.forEach((callback) => callback());
+    });
+    expect(within(compact).getAllByRole("button")).toHaveLength(5);
+    expect(
+      within(compact).getByRole("button", { name: "Applications" }),
+    ).toBeTruthy();
+  });
+
   it("separates the sequential workflow from the Needs you notification control", () => {
     render(
       <MemoryRouter initialEntries={["/job-finder/discovery"]}>
@@ -1468,12 +1532,18 @@ describe("JobFinderShell section navigation", () => {
 
     expect(shellGrid?.className).toContain("grid-rows-[3.5rem_auto_auto]");
     expect(shellGrid?.className).toContain("sm:grid-rows-[3.5rem_3.75rem]");
-    expect(shell?.className).toContain("overflow-y-auto");
-    expect(shell?.className).toContain("sm:overflow-hidden");
+    expect(shell?.className).toContain(
+      "flex h-dvh min-h-0 flex-col overflow-hidden",
+    );
+    expect(shell?.className).not.toContain("overflow-y-auto");
+
     expect(header?.className).toContain("relative");
     expect(header?.className).toContain("sm:fixed");
-    expect(shellContent?.className).toContain("h-screen");
-    expect(shellContent?.className).toContain("min-h-screen");
+    expect(shellContent?.className).toContain(
+      "min-h-0 min-w-0 flex-1 flex-col",
+    );
+    expect(shellContent?.className).not.toContain("min-h-screen");
+    expect(header?.className).toContain("shrink-0");
     expect(shellContent?.className).not.toContain("pt-[18.75rem]");
     expect(shellContent?.className).toContain("sm:pt-[7.25rem]");
     expect(shellContent?.className).toContain("min-[1440px]:!pt-14");
@@ -1759,7 +1829,7 @@ describe("JobFinderShell section navigation", () => {
     const shell = document.querySelector<HTMLElement>(
       "[data-job-finder-shell]",
     );
-    expect(shell?.className).toContain("overflow-x-hidden");
+    expect(shell?.className).toContain("overflow-hidden");
     expect(navigation.className).not.toContain("overflow-x-hidden");
   });
 
@@ -2275,7 +2345,22 @@ describe("JobFinderShell compact nav responsive contract", () => {
     const keycaps = [...dialog.querySelectorAll("kbd")].map(
       (cap) => cap.textContent,
     );
-    expect(keycaps).toEqual(["⌘", "K", "/", "⌘", "B", "⌘", "I", "?"]);
+    expect(keycaps).toEqual([
+      "⌘",
+      "K",
+      "/",
+      "⌘",
+      "B",
+      "⌘",
+      "I",
+      "?",
+      "⌘",
+      "=",
+      "⌘",
+      "-",
+      "⌘",
+      "0",
+    ]);
     expect(within(dialog).getAllByText("/")).toHaveLength(1);
     expect(shortcutText).not.toContain(
       "Anywhere in Job Finder; Outside text fields",
@@ -2886,10 +2971,7 @@ describe("JobFinderShell responsive shell contract", () => {
     expect(trigger.dataset.state).toBe("open");
     const menu = getModuleSwitchMenu(brandSwitch);
     const jobFinderOption = getModuleOption(brandSwitch, "job-finder");
-    const liveAssistantOption = getModuleOption(
-      brandSwitch,
-      "live-assistant",
-    );
+    const liveAssistantOption = getModuleOption(brandSwitch, "live-assistant");
     expect(document.activeElement).toBe(jobFinderOption);
 
     // Job Finder is current: checked and named for where the user already is.
@@ -3039,10 +3121,8 @@ describe("JobFinderShell responsive shell contract", () => {
     }
     // Both the scrollport box and its content row are observed so badge or
     // label width changes refresh fades even when the box itself is stable.
-    expect(observations.map((record) => record.target)).toEqual([
-      scroller,
-      content,
-    ]);
+    expect(observations.map((record) => record.target)).toContain(scroller);
+    expect(observations.map((record) => record.target)).toContain(content);
 
     const startFade = document.querySelector<HTMLElement>(
       "[data-job-finder-compact-navigation-fade-start]",

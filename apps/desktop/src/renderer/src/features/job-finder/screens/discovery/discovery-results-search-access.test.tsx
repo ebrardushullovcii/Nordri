@@ -318,3 +318,30 @@ describe("DiscoveryResultsPanel narrow search access", () => {
     expect(screen.queryByRole("button", { name: /Saved views/u })).toBeNull();
   });
 });
+
+it("offers hidden weaker matches that fit the text instead of saying they were found elsewhere", () => {
+  const onToggleAlsoFound = vi.fn();
+  render(
+    <DiscoveryResultsPanel
+      browserSession={browserSession}
+      jobs={[resultJob]}
+      hiddenAlsoFoundJobs={[
+        { ...resultJob, id: "weaker", title: "Backend Engineer" },
+      ]}
+      alsoFoundCount={1}
+      hiddenAlsoFoundCount={1}
+      onToggleAlsoFound={onToggleAlsoFound}
+      onSelectJob={vi.fn()}
+      selectedJob={null}
+    />,
+  );
+  fireEvent.change(screen.getByRole("searchbox", { name: "Find a job" }), {
+    target: { value: "Backend" },
+  });
+  expect(
+    screen.getByText("1 hidden weaker match fits this text."),
+  ).toBeTruthy();
+  expect(document.body.textContent).not.toContain("found elsewhere");
+  fireEvent.click(screen.getByRole("button", { name: "Show weaker matches" }));
+  expect(onToggleAlsoFound).toHaveBeenCalledOnce();
+});

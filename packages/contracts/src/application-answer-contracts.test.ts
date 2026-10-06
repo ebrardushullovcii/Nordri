@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ApplicationAnswerRecordSchema,
+  ApplicationReviewAnswerSchema,
+  ApplicationReviewAttachmentSchema,
   ApplicationAnswerValueSchema,
   ClearApplicationAnswerCommandSchema,
   SaveApplicationAnswerCommandSchema,
@@ -76,4 +78,28 @@ describe("application answer contracts", () => {
       false,
     );
   });
+});
+
+it("review fields can retain identity without breaking older records", () => {
+  const answer = {
+    question: "Description",
+    answer: "Synthetic role description.",
+    source: "your profile",
+    written: false,
+  };
+  expect(ApplicationReviewAnswerSchema.parse(answer).fieldKey).toBeUndefined();
+  expect(
+    ApplicationReviewAnswerSchema.parse({
+      ...answer,
+      fieldKey: "step_2_role_1",
+    }).fieldKey,
+  ).toBe("step_2_role_1");
+  expect(
+    ApplicationReviewAttachmentSchema.parse({
+      field: "Resume",
+      fileName: "approved.pdf",
+      label: "Your CV",
+      fieldKey: "step_1_resume",
+    }).fieldKey,
+  ).toBe("step_1_resume");
 });

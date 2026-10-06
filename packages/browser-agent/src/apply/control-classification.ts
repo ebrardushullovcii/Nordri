@@ -97,12 +97,14 @@ const QUESTION_KIND_SIGNALS: ReadonlyArray<
       "desired salary",
       "rate expectation",
       "remuneration",
+      "currency",
+      "current pay",
+      "past pay",
+      "pay history",
+      "hourly rate",
     ],
   ],
-  [
-    "notice_period",
-    ["notice period", "notice", "how much notice", "resignation period"],
-  ],
+  ["notice_period", ["notice period", "how much notice", "resignation period"]],
   [
     "availability",
     [
@@ -185,6 +187,7 @@ export function inferQuestionKind(
   >,
 ): ApplicationQuestionKind {
   const signal = controlSignalText(control);
+  if (inferAttestationKind(control) !== null) return "other";
   // Choice labels are sometimes observed together with every option. A
   // job-source question can therefore contain "Company website" even though
   // it is not asking for the candidate's portfolio URL. Keep that question

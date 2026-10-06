@@ -2,6 +2,7 @@ import type {
   ApplicationAutomationMode,
   ApplyRawPageHands,
   CandidateAsset,
+  AssistantResumeBatchState,
   JobFinderSearchRequest,
 } from "@nordri/contracts";
 
@@ -13,6 +14,11 @@ import type {
  * IPC routes call, so the assistant and the buttons take one path.
  */
 export interface AssistantHostPorts {
+  /** Includes reading the file before the domain import run is stored. */
+  isResumeImportActive?(): boolean;
+  /** The UI-owned queue uses this same stop flag before dispatching a draft. */
+  readResumeBatch?(): AssistantResumeBatchState | null;
+  stopResumeBatch?(): AssistantResumeBatchState | null;
   /** Starts a search as Find jobs does and returns once the run exists. */
   startSearch(input: {
     searchRequest: JobFinderSearchRequest;
@@ -57,6 +63,8 @@ export interface AssistantHostPorts {
   exportTracker?(format: "csv" | "json"): Promise<string | null>;
   /** The browser, when the host has one. */
   browser?: AssistantBrowserPort;
+  /** Makes app navigation visible while preserving every browser tab. */
+  prepareAppNavigation?(): Promise<void>;
   /** Tells mounted screens to refresh after the assistant changed something. */
   publishWorkspaceUpdate(): void;
 }
@@ -68,6 +76,12 @@ export interface AssistantHostPorts {
  */
 export interface AssistantBrowserLease {
   leaseId: string;
+  /** True for a tab the person lent, rather than one this task opened. */
+  borrowed?: boolean;
+  /** Rechecks whether the current page retains a saved application. */
+  isApplicationBound(): Promise<boolean>;
+  /** Exact retained result this turn may edit; navigation and send stay closed. */
+  applicationResultId?: string;
   tabId: string;
   /** Aborted when the lease is revoked. */
   revoked: AbortSignal;
@@ -82,12 +96,17 @@ export interface AssistantBrowserLease {
 }
 
 export interface AssistantBrowserPort {
+  /** Shows the focused tab without lending it or taking it over. */
+  show?(): Promise<void>;
   /** The tab on screen now, if the browser is open. */
   visibleTab(): { tabId: string; url: string; title: string | null } | null;
   lease(input: {
     tabId: string | null;
+    applicationResultId?: string;
+    onApplicationChange?: (recordId: string, field: string) => Promise<void>;
     conversationId: string;
     turnId: string;
+    signal?: AbortSignal;
     /** When no tab is lent, the task may open its own at this address. */
     openUrl?: string | null;
   }): Promise<AssistantBrowserLease>;

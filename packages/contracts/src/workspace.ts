@@ -34,6 +34,7 @@ import {
 import {
   ApplicationAttestationKindSchema,
   ApplicationAutomationModeSchema,
+  ApplicationSalaryDisclosureRuleSchema,
   ApplicationAuthorityEnvelopeSchema,
   SubmissionArmedMarkerSchema,
   SubmissionExecutionGrantSchema,
@@ -170,7 +171,7 @@ export type JobFinderJobResumeApplicationModeInput = z.infer<
 export const JobFinderDismissDiscoveryJobInputSchema = z
   .object({
     jobId: NonEmptyStringSchema,
-    reasons: z.array(DiscoveryFeedbackReasonSchema).min(1).max(9),
+    reasons: z.array(DiscoveryFeedbackReasonSchema).max(9),
     action: z.enum(["hide_job", "hide_and_exclude_employer"]).optional(),
     expectedNormalizedCompanyName: NonEmptyStringSchema.nullish(),
   })
@@ -307,6 +308,7 @@ export type JobFinderApplyCopilotActionInput = z.infer<
 export const JobFinderApplyQueueActionInputSchema = z.object({
   jobIds: z.array(NonEmptyStringSchema).min(1),
   applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
+  salaryDisclosure: ApplicationSalaryDisclosureRuleSchema.optional(),
 });
 export type JobFinderApplyQueueActionInput = z.infer<
   typeof JobFinderApplyQueueActionInputSchema
@@ -896,6 +898,7 @@ export const JobFinderSettingsSchema = z.object({
   allowAutoSubmitOverride: z.boolean(),
   /** The person's ordinary default for new application runs. */
   applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
+  salaryDisclosure: ApplicationSalaryDisclosureRuleSchema.optional(),
   maxApplicationsPerLocalDay: z.number().int().min(1).optional(),
   keepSessionAlive: z.boolean(),
   discoveryOnly: z.boolean().default(false),
@@ -935,6 +938,20 @@ export const JobFinderDiscoveryStateSchema = z.object({
 export type JobFinderDiscoveryState = z.infer<
   typeof JobFinderDiscoveryStateSchema
 >;
+
+// Keep repository schema declarations small as application receipt fields grow.
+const PersistedApplicationRecordSchema: z.ZodType<
+  z.output<typeof ApplicationRecordSchema>,
+  z.ZodTypeDef,
+  z.input<typeof ApplicationRecordSchema>
+> = ApplicationRecordSchema;
+
+// Keep repository inference bounded as discovery accounting grows.
+const PersistedDiscoveryStateSchema: z.ZodType<
+  JobFinderDiscoveryState,
+  z.ZodTypeDef,
+  z.input<typeof JobFinderDiscoveryStateSchema>
+> = JobFinderDiscoveryStateSchema;
 
 const JobFinderRepositoryStateShape = {
   profile: CandidateProfileSchema,
@@ -981,7 +998,7 @@ const JobFinderRepositoryStateShape = {
   submissionOutcomeRecords: z.array(SubmissionOutcomeRecordSchema).default([]),
   userActionRequests: z.array(UserActionRequestSchema).default([]),
   userActionEvents: z.array(UserActionEventSchema).default([]),
-  applicationRecords: z.array(ApplicationRecordSchema).default([]),
+  applicationRecords: z.array(PersistedApplicationRecordSchema).default([]),
   applicationAttempts: z.array(ApplicationAttemptSchema).default([]),
   sourceDebugRuns: z.array(SourceDebugRunRecordSchema).default([]),
   sourceDebugAttempts: z.array(SourceDebugWorkerAttemptSchema).default([]),
@@ -995,13 +1012,13 @@ const JobFinderRepositoryStateShape = {
     .array(ResumeImportFieldCandidateSchema)
     .default([]),
   settings: JobFinderSettingsSchema,
-  discovery: JobFinderDiscoveryStateSchema.default({}),
+  discovery: PersistedDiscoveryStateSchema.default({}),
   campaigns: z.array(JobSearchCampaignSchema).default([]),
   activeCampaignId: NonEmptyStringSchema.nullable().default(null),
   campaignNotifications: z.array(CampaignNotificationSchema).default([]),
   activityControl: JobFinderActivityControlSchema.default({}),
   intelligence: JobFinderIntelligenceStateSchema.default({}),
-} satisfies z.ZodRawShape;
+};
 
 const JobFinderRepositoryStateObjectSchema: z.ZodObject<
   typeof JobFinderRepositoryStateShape
@@ -1126,6 +1143,7 @@ export type JobFinderResumeWorkspaceStrategyContext = z.infer<
 >;
 
 export const JobFinderResumeWorkspaceSchema = z.object({
+  listingCheckState: z.enum(["checking", "failed"]).nullable().optional(),
   job: SavedJobSchema,
   draft: ResumeDraftSchema,
   validation: ResumeValidationResultSchema.nullable().default(null),
@@ -1418,7 +1436,7 @@ export const JobFinderWorkspaceSnapshotSchema = z.object({
     .default([]),
   applyRuns: z.array(ApplyRunSummarySchema).default([]),
   applyJobResults: z.array(ApplyJobResultSummarySchema).default([]),
-  applicationRecords: z.array(ApplicationRecordSchema).default([]),
+  applicationRecords: z.array(PersistedApplicationRecordSchema).default([]),
   applicationAttempts: z.array(ApplicationAttemptSchema).default([]),
   userActionRequests: z.array(UserActionRequestSchema).default([]),
   userActionEvents: z.array(UserActionEventSchema).default([]),
@@ -1426,6 +1444,7 @@ export const JobFinderWorkspaceSnapshotSchema = z.object({
     .array(SourceInstructionArtifactSchema)
     .default([]),
   latestResumeImportRun: ResumeImportRunSchema.nullable().default(null),
+  resumeImportActive: z.boolean().default(false),
   latestResumeImportReviewCandidates: z
     .array(ResumeImportFieldCandidateSummarySchema)
     .default([]),
@@ -1519,6 +1538,12 @@ export const JobFinderWorkspaceEntityMutationSchema = z.discriminatedUnion(
   [
     z
       .object({
+        type: z.literal("assess_job_listing"),
+        jobId: NonEmptyStringSchema,
+      })
+      .strict(),
+    z
+      .object({
         type: z.literal("queue_job_for_review"),
         jobId: NonEmptyStringSchema,
       })
@@ -1541,7 +1566,7 @@ export const JobFinderWorkspaceEntityMutationSchema = z.discriminatedUnion(
       .object({
         type: z.literal("dismiss_discovery_job"),
         jobId: NonEmptyStringSchema,
-        reasons: z.array(DiscoveryFeedbackReasonSchema).min(1).max(9),
+        reasons: z.array(DiscoveryFeedbackReasonSchema).max(9),
         action: z.enum(["hide_job", "hide_and_exclude_employer"]).optional(),
         expectedNormalizedCompanyName: NonEmptyStringSchema.nullish(),
       })
@@ -1651,7 +1676,7 @@ export const JobFinderWorkspaceDeltaSchema = z
       .strict(),
     applicationRecords: z
       .object({
-        upserts: z.array(ApplicationRecordSchema).default([]),
+        upserts: z.array(PersistedApplicationRecordSchema).default([]),
         removedIds: WorkspaceDeltaRemovalIdsSchema,
       })
       .strict(),
@@ -1765,6 +1790,7 @@ export const UpdateApplicationDefaultsInputSchema = z.object({
   /** How a letter Job Finder writes should read. */
   coverLetter: CoverLetterPreferenceSchema.optional(),
   applicationAutomationMode: ApplicationAutomationModeSchema.optional(),
+  salaryDisclosure: ApplicationSalaryDisclosureRuleSchema.optional(),
   maxApplicationsPerLocalDay: z.number().int().min(1).optional(),
 });
 export type UpdateApplicationDefaultsInput = z.infer<
@@ -1795,8 +1821,15 @@ export const ResumeApproachSchema = z.union([
 export type ResumeApproach = z.infer<typeof ResumeApproachSchema>;
 
 export const UpdateAiBehaviorInputSchema = z.object({
-  aiBehavior: AiBehaviorPreferenceSchema.optional(),
-  coverLetter: CoverLetterPreferenceSchema.optional(),
+  aiBehavior: z
+    .object({
+      profileAssistant: AiProfileAssistantBehaviorSchema.partial().optional(),
+      jobSearch: AiJobSearchBehaviorSchema.partial().optional(),
+      applying: AiApplyingBehaviorSchema.partial().optional(),
+    })
+    .strict()
+    .optional(),
+  coverLetter: CoverLetterPreferenceSchema.partial().optional(),
   resumeApproach: ResumeApproachSchema.optional(),
 });
 export type UpdateAiBehaviorInput = z.infer<typeof UpdateAiBehaviorInputSchema>;

@@ -6,6 +6,8 @@ import {
 import { browserBridge } from "./browser";
 import { createAssistantBridge } from "./assistant";
 import type {
+  PersonalWorkspaceRestorePreview,
+  PersonalWorkspaceRestoreResult,
   ApplicationCrmBulkStageMutationInput,
   ApplicationCrmExportInput,
   ApplicationCrmFileExportResult,
@@ -148,6 +150,7 @@ import type {
   UpdateAiBehaviorInput,
   WorkspaceRevision,
   WriteClipboardTextResult,
+  SaveUserActionAnswerDraftInput,
   UserActionCommandInput,
 } from "@nordri/contracts";
 import { SYSTEM_THEME_CHANGE_EVENT } from "../shared/system-theme";
@@ -689,6 +692,11 @@ const desktopApi = {
       ipcRenderer.invoke(
         "job-finder:check-browser-session",
       ) as Promise<JobFinderWorkspaceSnapshot>,
+    saveUserActionAnswerDraft: (input: SaveUserActionAnswerDraftInput) =>
+      ipcRenderer.invoke(
+        "job-finder:save-user-action-answer-draft",
+        input,
+      ) as Promise<void>,
     performUserAction: (command: UserActionCommandInput) =>
       ipcRenderer.invoke(
         "job-finder:perform-user-action",
@@ -967,7 +975,7 @@ const desktopApi = {
         );
       }
     },
-    cancelImportResume: () => {
+    cancelImportResume: (stopProcessing = false) => {
       const requestId = activeResumeImportRequestId;
       if (!requestId) {
         return;
@@ -977,7 +985,10 @@ const desktopApi = {
       // native file choice. Release the renderer single-flight lock after the
       // send; the main handler will discard that old choice if the picker
       // returns later, and its finally cannot clear a newer request.
-      ipcRenderer.send("job-finder:cancel-import-resume", { requestId });
+      ipcRenderer.send("job-finder:cancel-import-resume", {
+        requestId,
+        ...(stopProcessing ? { stopProcessing: true } : {}),
+      });
       if (activeResumeImportRequestId === requestId) {
         activeResumeImportRequestId = null;
       }
@@ -1118,6 +1129,19 @@ const desktopApi = {
         "job-finder:snooze-grouped-decision",
         input,
       ) as Promise<JobFinderWorkspaceSnapshot>,
+    previewPersonalWorkspaceRestore: () =>
+      ipcRenderer.invoke(
+        "job-finder:preview-personal-workspace-restore",
+      ) as Promise<PersonalWorkspaceRestorePreview | null>,
+    confirmPersonalWorkspaceRestore: (input: { token: string }) =>
+      ipcRenderer.invoke(
+        "job-finder:confirm-personal-workspace-restore",
+        input,
+      ) as Promise<PersonalWorkspaceRestoreResult>,
+    exportPersonalWorkspace: () =>
+      ipcRenderer.invoke(
+        "job-finder:export-personal-workspace",
+      ) as Promise<ApplicationCrmFileExportResult>,
     exportDiagnostics: () =>
       ipcRenderer.invoke(
         "job-finder:export-diagnostics",
@@ -1157,6 +1181,10 @@ const desktopApi = {
       ipcRenderer.invoke(
         "job-finder:cancel-discovery-run",
         input,
+      ) as Promise<JobFinderWorkspaceSnapshot>,
+    resetBrowser: () =>
+      ipcRenderer.invoke(
+        "job-finder:reset-browser",
       ) as Promise<JobFinderWorkspaceSnapshot>,
     resetWorkspace: () =>
       ipcRenderer.invoke(

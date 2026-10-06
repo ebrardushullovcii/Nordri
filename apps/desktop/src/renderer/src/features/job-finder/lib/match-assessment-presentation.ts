@@ -9,7 +9,7 @@ import type {
 import type { BadgeTone } from "./job-finder-types";
 import { isProvisionalMatchAssessment } from "@nordri/job-finder/discovery-ordering";
 import {
-  FIT_TITLE_ONLY_REASON,
+  FIT_NOT_JUDGED_REASON,
   getFitEvidenceDepth,
   type FitEvidenceDepth,
 } from "@nordri/job-finder/discovery-result-bands";
@@ -24,17 +24,17 @@ export const fitRecommendationCopy: Record<
     label: "Review before applying",
     tone: "neutral",
   },
-  skip: { label: "Skip — hard conflict", tone: "critical" },
+  skip: { label: "Probably skip", tone: "critical" },
 };
 
 /**
- * Evidence depth and the title-only reason now live in
+ * Evidence depth and the not-judged reason now live in
  * `@nordri/job-finder/discovery-result-bands`, so a finished run's frozen
  * counts and this screen apply one rule. Re-exported because the renderer
  * already imports both from here.
  */
 export {
-  FIT_TITLE_ONLY_REASON,
+  FIT_NOT_JUDGED_REASON,
   getFitEvidenceDepth,
   type FitEvidenceDepth,
 };
@@ -46,8 +46,8 @@ export interface MatchAssessmentPresentation {
    * world.
    */
   isProvisional: boolean;
-  /** Nothing beyond the listing title was checkable. */
-  isTitleOnly: boolean;
+  /** The model has not judged this job yet (ADR 0041). */
+  isNotJudged: boolean;
   /**
    * No percentage may be printed as a headline. True for both of the states
    * above; every surface reads this one flag rather than re-deriving it.
@@ -76,14 +76,11 @@ export const FIT_UNASSESSED_REASON =
   "This listing has not been checked against your current profile and the current listing text yet.";
 
 /**
- * The one label a title-only row is allowed to use, everywhere it appears.
- *
- * The list line used to read "title match only, not scored" while the
- * inspector read "Title-only estimate: 64%" for the same job — one screen
- * saying the job was not scored above a screen printing its score. Both lines
- * are built from this label now, so they name the same estimate.
+ * The one label a row the model has not judged yet uses, everywhere it
+ * appears (ADR 0041). There is no number to show until the model has read the
+ * listing against the profile.
  */
-export const FIT_TITLE_ONLY_LABEL = "Title-only estimate";
+export const FIT_NOT_JUDGED_LABEL = "Not judged yet";
 
 /**
  * Why several unrelated jobs can print the same number. The score stopped at
@@ -114,13 +111,13 @@ export function getMatchAssessmentPresentation(
   // fingerprints is never presented as an authoritative current assessment.
   const isProvisional =
     isProvisionalMatchAssessment(job) || !hasAssessmentBinding;
-  const isTitleOnly = getFitEvidenceDepth(job.matchAssessment).isTitleOnly;
-  const isScoreWithheld = isProvisional || isTitleOnly;
+  const isNotJudged = getFitEvidenceDepth(job.matchAssessment).isNotJudged;
+  const isScoreWithheld = isProvisional || isNotJudged;
 
   if (isProvisional) {
     return {
       isProvisional,
-      isTitleOnly,
+      isNotJudged,
       isScoreWithheld,
       headlineScoreAriaLabel: "Overall fit: not assessed",
       headlineScoreLabel: "Fit not assessed",
@@ -131,15 +128,15 @@ export function getMatchAssessmentPresentation(
     };
   }
 
-  if (isTitleOnly) {
+  if (isNotJudged) {
     return {
       isProvisional,
-      isTitleOnly,
+      isNotJudged,
       isScoreWithheld,
-      headlineScoreAriaLabel: `Overall fit: ${FIT_TITLE_ONLY_LABEL.toLowerCase()}`,
-      headlineScoreLabel: FIT_TITLE_ONLY_LABEL,
-      withheldReason: FIT_TITLE_ONLY_REASON,
-      breakdownScoreLabel: `${FIT_TITLE_ONLY_LABEL}: ${job.matchAssessment.score}%`,
+      headlineScoreAriaLabel: `Overall fit: ${FIT_NOT_JUDGED_LABEL.toLowerCase()}`,
+      headlineScoreLabel: FIT_NOT_JUDGED_LABEL,
+      withheldReason: FIT_NOT_JUDGED_REASON,
+      breakdownScoreLabel: null,
     };
   }
 
@@ -149,7 +146,7 @@ export function getMatchAssessmentPresentation(
   if (job.matchAssessment.scoreIsUpperBound) {
     return {
       isProvisional,
-      isTitleOnly,
+      isNotJudged,
       isScoreWithheld,
       headlineScoreAriaLabel: `Overall fit: up to ${job.matchAssessment.score} percent`,
       headlineScoreLabel: `Up to ${job.matchAssessment.score}% fit`,
@@ -160,7 +157,7 @@ export function getMatchAssessmentPresentation(
 
   return {
     isProvisional,
-    isTitleOnly,
+    isNotJudged,
     isScoreWithheld,
     headlineScoreAriaLabel: `Overall fit: ${job.matchAssessment.score} percent`,
     headlineScoreLabel: `${job.matchAssessment.score}% fit`,

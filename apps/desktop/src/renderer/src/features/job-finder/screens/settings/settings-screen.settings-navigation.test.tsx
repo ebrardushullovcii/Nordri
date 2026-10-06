@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 
-import type {
-  BrowserSessionState,
-  JobFinderSettings,
-} from "@nordri/contracts";
+import type { BrowserSessionState, JobFinderSettings } from "@nordri/contracts";
 import { ApplicationCrmSettingsSchema } from "@nordri/contracts";
 import {
   act,
@@ -15,7 +12,6 @@ import {
 } from "@testing-library/react";
 import { HashRouter, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { JOB_FINDER_ROUTE_PATHS } from "@renderer/features/job-finder/lib/job-finder-route-hrefs";
 import {
   SETTINGS_SUBNAV_BOTTOM_GAP_PX,
   SETTINGS_SUBNAV_SCROLL_OFFSET_FALLBACK_PX,
@@ -50,12 +46,20 @@ vi.mock("./settings-apply-mode-section", () => ({
   // instead of an sr-only h2 repeating the same sentence above it.
   SettingsApplyModeSection: ({
     headingId,
+    onSaveSalaryDisclosure,
   }: {
+    onSaveSalaryDisclosure?: (value: "answer_from_profile") => Promise<void>;
     headingId?: string;
   }) => (
     <section data-testid="panel-application-authority">
       <h3 id={headingId}>Applying</h3>
       Apply mode panel
+      <button
+        type="button"
+        onClick={() => void onSaveSalaryDisclosure?.("answer_from_profile")}
+      >
+        Change pay choice
+      </button>
     </section>
   ),
 }));
@@ -229,7 +233,32 @@ describe("SettingsScreen information architecture", () => {
     ).toBe(`${SETTINGS_SUBNAV_SCROLL_OFFSET_FALLBACK_PX}px`);
   });
 
-  it("keeps the subnav sticky and wrap-capable, and raises the fallback clearance above the old fixed offset", () => {
+  it("styles the section links like the Profile tabs: an icon each and an underline on the current one", () => {
+    render(
+      <MemoryRouter>
+        <SettingsScreen {...baseProps} />
+      </MemoryRouter>,
+    );
+
+    const nav = screen.getByRole("navigation", {
+      name: "Settings sections",
+    });
+    const links = within(nav).getAllByRole("link");
+    for (const link of links) {
+      expect(link.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+      expect(link.className).toContain("text-(length:--text-body)");
+      // No filled box for the current section any more.
+      expect(link.className).not.toContain("bg-(--nav-active-surface)");
+    }
+    const current = links.find(
+      (link) => link.getAttribute("aria-current") === "location",
+    );
+    expect(current?.textContent).toBe("App & device");
+    expect(current?.className).toContain("after:bg-primary");
+    expect(current?.className).toContain("after:opacity-100");
+  });
+
+  it("keeps the subnav sticky as one sideways-scrolling row, and raises the fallback clearance above the old fixed offset", () => {
     render(
       <MemoryRouter>
         <SettingsScreen {...baseProps} />
@@ -242,7 +271,6 @@ describe("SettingsScreen information architecture", () => {
     for (const token of [
       "sticky",
       "top-0",
-      "flex-wrap",
       "z-30",
       // Opaque, with an edge: content must never be visible through the
       // sticky band or appear sliced by it.
@@ -251,6 +279,12 @@ describe("SettingsScreen information architecture", () => {
     ]) {
       expect(nav.className).toContain(token);
     }
+    // One row like the Profile section tabs: it scrolls sideways rather than
+    // wrapping, without a scrollbar drawn under the tabs.
+    const row = nav.querySelector("[data-settings-subnav-row]");
+    expect(row?.className).toContain("overflow-x-auto");
+    expect(row?.className).toContain("[scrollbar-width:none]");
+    expect(row?.className).not.toContain("flex-wrap");
     expect(nav.className).not.toContain("bg-(--background)/95");
     expect(nav.className).not.toContain("backdrop-blur");
 
@@ -427,15 +461,13 @@ describe("SettingsScreen information architecture", () => {
       </MemoryRouter>,
     );
 
-    // The standing bordered Documents notice is now one line of header meta
-    // with an inline link, so Settings does not spend a band of a short window
-    // on chrome before its first setting.
-    // The imported resume lives in Profile; Documents never showed it, so the
-    // pointer names the screen that actually has it.
-    const profileLink = screen.getByRole("link", { name: "Profile" });
-    expect(profileLink.getAttribute("href")).toBe(
-      JOB_FINDER_ROUTE_PATHS.profile,
-    );
+    // The pointer to Profile lives in the Resume look section it concerns
+    // (covered by that section's own test), not in a header meta line, so
+    // the header stays one row.
+    expect(document.querySelector("[data-page-header-meta]")).toBeNull();
+    expect(
+      document.querySelector("[data-page-header-stack]")?.querySelector("a"),
+    ).toBeNull();
 
     expect(screen.queryByText("Add a file")).toBeNull();
     expect(
@@ -577,9 +609,7 @@ describe("SettingsScreen section anchor navigation", () => {
     });
     render(
       <MemoryRouter
-        initialEntries={[
-          "/job-finder/settings#settings-application-authority",
-        ]}
+        initialEntries={["/job-finder/settings#settings-application-authority"]}
       >
         <SettingsScreen {...baseProps} />
       </MemoryRouter>,
@@ -652,4 +682,61 @@ describe("SettingsScreen section anchor navigation", () => {
       Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     }
   });
+});
+
+it("puts pay privacy in the Applying section", () => {
+  render(
+    <MemoryRouter>
+      <SettingsScreen {...baseProps} />
+    </MemoryRouter>,
+  );
+  fireEvent.click(
+    within(screen.getByRole("region", { name: "Applying" })).getByRole(
+      "button",
+      {
+        name: "Change pay choice",
+      },
+    ),
+  );
+  expect(baseProps.onUpdateApplicationDefaults).toHaveBeenCalledWith({
+    salaryDisclosure: "answer_from_profile",
+  });
+});
+
+it("places workflow timing below both diagnostics columns", () => {
+  const view = render(
+    <MemoryRouter>
+      <SettingsScreen {...baseProps} />
+    </MemoryRouter>,
+  );
+  const timing = view.container.querySelector("[data-settings-timing]");
+  expect(timing?.parentElement?.id).toBe("settings-diagnostics");
+  expect(timing?.previousElementSibling?.className).toContain("xl:grid-cols-");
+  expect(timing?.textContent).toContain("Workflow timing evidence");
+});
+
+it("scrolls the last focused tab fully into view with edge clearance", () => {
+  cleanup();
+  render(
+    <MemoryRouter>
+      <SettingsScreen {...baseProps} />
+    </MemoryRouter>,
+  );
+  const row = document.querySelector<HTMLElement>(
+    "[data-settings-subnav-row]",
+  )!;
+  const link = screen.getByRole("link", { name: "Delete everything" });
+  Object.defineProperties(row, {
+    clientWidth: { configurable: true, value: 300 },
+    scrollWidth: { configurable: true, value: 1012 },
+    offsetLeft: { configurable: true, value: 0 },
+  });
+  Object.defineProperties(link, {
+    offsetLeft: { configurable: true, value: 800 },
+    offsetWidth: { configurable: true, value: 200 },
+  });
+  fireEvent.focus(link);
+  expect(row.scrollLeft).toBe(712);
+  expect(row.className).toContain("px-3");
+  expect(row.dataset.moreAfter).toBeUndefined();
 });

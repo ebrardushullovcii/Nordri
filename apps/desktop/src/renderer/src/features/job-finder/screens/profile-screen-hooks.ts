@@ -300,6 +300,14 @@ export function buildCanonicalAwareProfilePayload(input: {
   latestResumeImportReviewCandidates: readonly ResumeImportFieldCandidateSummary[];
   profile: CandidateProfile;
 }) {
+  // Saving only sources must preserve the profile's exact saved values.
+  // Round-tripping untouched editor fields can normalize resume inputs.
+  const hasDirtyField = (value: unknown): boolean =>
+    value === true ||
+    (typeof value === "object" &&
+      value !== null &&
+      Object.values(value).some(hasDirtyField));
+  if (!hasDirtyField(input.dirtyFields)) return { payload: input.profile };
   const mergeOutcome = mergeDirtyEditorValues(
     createProfileEditorValues(
       input.profile,
@@ -711,6 +719,21 @@ export function useProfileScreenForms(input: {
           ),
         ),
       );
+      // Incomplete added rows are omitted by the save payload. They are still
+      // the person's draft and must survive the response to that save.
+      const canonicalLanguageIds = new Set(
+        createProfileEditorValues(
+          input.profile,
+          input.latestResumeImportReviewCandidates,
+        ).languages.map((row) => row.id),
+      );
+      if (
+        draftValues.languages.some((row) => !canonicalLanguageIds.has(row.id))
+      ) {
+        runWithoutDraftEditSignal(() =>
+          languageArray.replace(draftValues.languages),
+        );
+      }
       applyBackgroundConflictSurface("profile", false);
       setValidationMessage(null);
       setBackgroundMergeNotice(
@@ -792,6 +815,7 @@ export function useProfileScreenForms(input: {
     applyBackgroundConflictSurface,
     input.latestResumeImportReviewCandidates,
     input.profile,
+    languageArray.replace,
     profileForm,
   ]);
 

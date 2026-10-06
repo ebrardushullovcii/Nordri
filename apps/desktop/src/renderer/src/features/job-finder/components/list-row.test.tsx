@@ -51,7 +51,7 @@ function createSavedJob(): SavedJob {
 
 /**
  * The worst real badge load a Find jobs row can carry: a non-default
- * recommendation, a provisional assessment, a non-active listing, an
+ * recommendation, a model judgment, a non-active listing, an
  * application status and a posting-date badge.
  */
 function createBadgeHeavyJob(): SavedJob {
@@ -59,7 +59,7 @@ function createBadgeHeavyJob(): SavedJob {
     ...createSavedJob(),
     id: "list_row_badge_heavy_01",
     sourceJobId: "list_row_badge_heavy_source_01",
-    status: "shortlisted",
+    status: "drafting",
     listingActivity: {
       status: "inactive",
       observedAt: "2026-07-30T10:00:00.000Z",
@@ -71,6 +71,12 @@ function createBadgeHeavyJob(): SavedJob {
       gaps: [],
       contextFingerprint: "match_context_v4_candidate",
       postingFingerprint: "match_posting_v4_listing_heavy",
+      judgment: {
+        source: "batch",
+        judgedAt: "2026-07-30T10:00:00.000Z",
+        score: 91,
+        recommendation: "strong_fit",
+      },
     },
   });
 }

@@ -52,9 +52,23 @@ export interface ApplicationLetterDependencies {
   renderLetter?: (
     input: ApplicationLetterRenderRequest,
   ) => Promise<ApplicationLetterRenderResult>;
+  getApprovedText?: (
+    jobId: string,
+    applicationRecordId?: string,
+  ) => Promise<string | null>;
   preference: CoverLetterPreference;
   application: { jobId: string; applicationId: string };
   signal?: AbortSignal;
+}
+
+export class ApplicationLetterGroundingError extends Error {
+  constructor(
+    reason: string,
+    readonly draftText: string,
+  ) {
+    super(`The letter needs your review: ${reason}`);
+    this.name = "ApplicationLetterGroundingError";
+  }
 }
 
 export function createApplicationLetterProvider(
@@ -76,18 +90,36 @@ export function createApplicationLetterProvider(
     preference: dependencies.preference,
     provide: async (request) => {
       const purpose = request.purpose ?? "cover_letter";
-      const requestKey = `${purpose}\n${request.prompt.trim()}`;
+      const requestKey = `${purpose}\n${request.prompt.trim()}\n${request.approvedText ?? ""}`;
       let writtenVersion = versionsByRequest.get(requestKey) ?? null;
       if (!writtenVersion) {
-        const written = await dependencies.writeLetter({
-          prompt: request.prompt,
-          purpose,
-          groundedIn: request.groundedIn,
-          language: request.language,
-          preference: dependencies.preference,
-          priorText: latestByPurpose.get(purpose)?.text ?? null,
-          ...(dependencies.signal ? { signal: dependencies.signal } : {}),
-        });
+        let written: string | null;
+        try {
+          written =
+            request.approvedText ??
+            (await dependencies.writeLetter({
+              prompt: request.prompt,
+              purpose,
+              groundedIn: request.groundedIn,
+              language: request.language,
+              preference: dependencies.preference,
+              priorText: latestByPurpose.get(purpose)?.text ?? null,
+              ...(dependencies.signal ? { signal: dependencies.signal } : {}),
+            }));
+        } catch (error) {
+          if (error instanceof ApplicationLetterGroundingError) {
+            return {
+              ok: false,
+              reason: error.message,
+              draftText: error.draftText,
+            };
+          }
+          return {
+            ok: false,
+            reason:
+              "Job Finder could not write this draft right now. Try again.",
+          };
+        }
         if (!written?.trim()) {
           return {
             ok: false,
@@ -100,7 +132,7 @@ export function createApplicationLetterProvider(
         writtenVersion = {
           purpose,
           version,
-          text: written.trim(),
+          text: request.approvedText ?? written.trim(),
           renderedByType: new Map(),
         };
         versionsByRequest.set(requestKey, writtenVersion);
@@ -140,7 +172,13 @@ export function createApplicationLetterProvider(
         id: `document_${writtenVersion.purpose}_${dependencies.application.jobId}_v${writtenVersion.version}_${typeKey}`,
         fileName: rendered.fileName,
         mimeType: rendered.mimeType,
-        label: `${purposeLabel.charAt(0).toUpperCase()}${purposeLabel.slice(1)} v${writtenVersion.version}`,
+        // A version number counts letters written in this run; the letter
+        // the person approved is named as theirs, never "v1" again.
+        label: `${purposeLabel.charAt(0).toUpperCase()}${purposeLabel.slice(1)}${
+          request.approvedText !== undefined
+            ? " you approved"
+            : ` v${writtenVersion.version}`
+        }`,
         kind: "cover_letter",
         loadBytes: rendered.loadBytes,
       };

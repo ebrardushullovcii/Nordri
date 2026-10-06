@@ -21,8 +21,6 @@ import {
   type TailoredAsset,
 } from "@nordri/contracts";
 import {
-  filterDiscoveryInstructionLines,
-  filterSourceInstructionLines,
   prefixedLines,
 } from "./source-instructions";
 import { normalizeResumeDraftEntryOrdering } from "./resume-entry-ordering";
@@ -345,30 +343,23 @@ export function buildSourceInstructionVersionInfo(adapterKind: JobSource) {
   };
 }
 
+/**
+ * What a site's learned instruction tells the agent, as the review wrote it
+ * (ADR 0041). No keyword list second-guesses which lines are worth reading.
+ */
 export function buildInstructionGuidance(
   artifact: SourceInstructionArtifact | null,
-): string[] {
-  return buildGuidanceLines(artifact, filterSourceInstructionLines);
-}
-
-export function buildDiscoveryInstructionGuidance(
-  artifact: SourceInstructionArtifact | null,
-): string[] {
-  return buildGuidanceLines(artifact, filterDiscoveryInstructionLines);
-}
-
-function buildGuidanceLines(
-  artifact: SourceInstructionArtifact | null,
-  filterLines: (values: readonly string[]) => string[],
 ): string[] {
   if (!artifact) {
     return [];
   }
 
-  const navigationLines = filterLines(artifact.navigationGuidance);
-  const searchLines = filterLines(artifact.searchGuidance);
-  const detailLines = filterLines(artifact.detailGuidance);
-  const applyLines = filterLines(artifact.applyGuidance);
+  const lines = (values: readonly string[]) =>
+    values.map((value) => value.replace(/\s+/gu, " ").trim()).filter(Boolean);
+  const navigationLines = lines(artifact.navigationGuidance);
+  const searchLines = lines(artifact.searchGuidance);
+  const detailLines = lines(artifact.detailGuidance);
+  const applyLines = lines(artifact.applyGuidance);
 
   return uniqueStrings([
     ...prefixedLines("[Navigation] ", navigationLines),

@@ -3,7 +3,6 @@ export * from './types'
 // Re-export commonly used types
 export type {
   AgentConfig,
-  AgentState,
   AgentResult,
   AgentMessage,
   ToolCall,
@@ -26,14 +25,11 @@ export {
   type CatalogSessionRuntimePrimitives,
 } from './catalog-session-agent'
 
-export {
-  captureCompactDiscoveryObservation,
-  type CaptureCompactDiscoveryObservationInput,
-  type CompactDiscoveryObserverOptions,
-} from './compact-discovery-observer'
 
 export * from './apply'
 export { createPageTools, type PageTools, type PageToolPolicy } from './page-tools'
 export { runJobSearchAgent, type JobSearchAgentInput } from './search/job-search-agent'
 export { createJobSearchPrompts } from './search/job-search-prompts'
 export { createMoveReviewer, describeSearchGoal, type MoveReview } from './search/move-reviewer'
+
+export { createSearchResultCache } from "./search/search-result-cache";

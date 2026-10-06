@@ -1,3 +1,6 @@
+import { FAILURE_SENTENCES } from "../../lib/describe-failure";
+import { ResumeWorkspaceLanguagePicker } from "./resume-workspace-language-picker";
+import { OriginalResumeFilePanel } from "./original-resume-file-panel";
 import {
   useCallback,
   useEffect,
@@ -14,6 +17,7 @@ import type {
 } from "@nordri/contracts";
 import {
   getResumePreviewTargetContext,
+  resumeComparisonNeedsRefresh,
   buildResumeIssueApprovalContentHash,
   isBlockingResumeClaimAssessment,
   isResumeClaimAssessmentApprovable,
@@ -97,6 +101,9 @@ function draftContentKey(draft: ResumeDraft): string {
     id: draft.id,
     jobId: draft.jobId,
     templateId: draft.templateId,
+    language: draft.language ?? null,
+    writtenLanguage: draft.writtenLanguage ?? null,
+    listingLanguage: draft.listingLanguage ?? null,
     identity: draft.identity,
     sections: draft.sections,
     targetPageCount: draft.targetPageCount,
@@ -146,6 +153,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   // An approval freezes one exact artifact. A Guided edits proposal that is
   // still pending at that moment would silently invalidate the approval the
   // moment it were accepted, so approval sets it aside and says so.
+  const [languageRequest, setLanguageRequest] = useState<{
+    language: string | null;
+  } | null>(null);
   const [setAsideProposalNote, setSetAsideProposalNote] = useState<
     string | null
   >(null);
@@ -350,7 +360,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
         bulletId = bulletMatch[1];
       }
     }
-    const hasSelection = Boolean(selectedSectionId || selectedEntryId || bulletId);
+    const hasSelection = Boolean(
+      selectedSectionId || selectedEntryId || bulletId,
+    );
     return {
       focus: {
         kind: "job",
@@ -505,11 +517,13 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       // before this edit. Signalling first lets this patch's own save capture
       // its post-edit epoch and keep a truthful Retry if it fails.
       props.onDraftEdited?.();
-      props.onApplyPatch(scopedPatch, revisionReason);
+      if (scopedPatch.operation !== "toggle_include")
+        props.onApplyPatch(scopedPatch, revisionReason);
 
       if (
         scopedPatch.operation !== "move_entry" &&
-        scopedPatch.operation !== "reset_entry_order"
+        scopedPatch.operation !== "reset_entry_order" &&
+        scopedPatch.operation !== "toggle_include"
       ) {
         return;
       }
@@ -524,6 +538,52 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           sections: currentDraft.sections.map((section) => {
             if (section.id !== scopedPatch.targetSectionId) {
               return section;
+            }
+
+            if (scopedPatch.operation === "toggle_include") {
+              const entries = section.entries.map((entry) => {
+                if (entry.id !== scopedPatch.targetEntryId) return entry;
+                if (scopedPatch.targetBulletId)
+                  return {
+                    ...entry,
+                    bullets: entry.bullets.map((bullet) =>
+                      bullet.id === scopedPatch.targetBulletId
+                        ? {
+                            ...bullet,
+                            included:
+                              scopedPatch.newIncluded ?? !bullet.included,
+                          }
+                        : bullet,
+                    ),
+                  };
+                return {
+                  ...entry,
+                  included: scopedPatch.newIncluded ?? !entry.included,
+                  origin: "user_edited" as const,
+                };
+              });
+              return {
+                ...section,
+                entries,
+                included:
+                  scopedPatch.targetEntryId || scopedPatch.targetBulletId
+                    ? entries.some(
+                        (entry) =>
+                          entry.id === scopedPatch.targetEntryId &&
+                          entry.included,
+                      )
+                      ? true
+                      : section.included
+                    : (scopedPatch.newIncluded ?? !section.included),
+                bullets: section.bullets.map((bullet) =>
+                  bullet.id === scopedPatch.targetBulletId
+                    ? {
+                        ...bullet,
+                        included: scopedPatch.newIncluded ?? !bullet.included,
+                      }
+                    : bullet,
+                ),
+              };
             }
 
             if (scopedPatch.operation === "reset_entry_order") {
@@ -574,7 +634,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
 
   const { preview, previewError, previewStatus, refreshPreview } =
     useResumeWorkspacePreview({
-      draft,
+      draft: props.originalResumeRoute ? null : draft,
       hasUnsavedChanges,
       onPreviewDraft: props.onPreviewDraft,
     });
@@ -952,9 +1012,35 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
     assistant?.openWith();
   };
 
+  const writeLanguage = (language: string | null) => {
+    const nextDraft = { ...draft, language };
+    setLanguageRequest({ language });
+    props.onDraftEdited?.();
+    props.onSaveDraftAndThen(
+      nextDraft,
+      () => undefined,
+      null,
+      (updatedAt) => {
+        setLanguageRequest(null);
+        setDraft(nextDraft);
+        acknowledgeSave(nextDraft, updatedAt);
+      },
+    );
+  };
+
+  const rewriteFailed =
+    !props.isWorkspacePending &&
+    !!(
+      (languageRequest && props.actionMessage) ||
+      props.workspace.tailoredAsset?.failureMessage
+    );
+  const comparisonNeedsRefresh = resumeComparisonNeedsRefresh(draft);
+
   const editorPanel = (
     <ResumeWorkspaceEditorPanel
-      actionMessage={props.actionMessage}
+      actionMessage={
+        rewriteFailed || languageRequest ? null : (props.actionMessage ?? null)
+      }
       actionSavedFilePath={props.actionSavedFilePath ?? null}
       {...(props.onRevealSavedFile
         ? { onOpenSavedFolder: props.onRevealSavedFile }
@@ -963,7 +1049,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       {...(undoAiEditAction ? { undoAiEditAction } : {})}
       onOpenAssistant={openAssistant}
       coverageComparison={
-        props.workspace.validation?.coverageComparison ?? null
+        comparisonNeedsRefresh
+          ? null
+          : (props.workspace.validation?.coverageComparison ?? null)
       }
       draft={draft}
       hasUnsavedChanges={hasUnsavedChanges}
@@ -1093,34 +1181,34 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
   const claimConfirmationPanel =
     props.onSetResumeClaimConfirmation &&
     listDecidableClaimAssessments(claimAssessments).length > 0 ? (
-    <ResumeClaimConfirmationPanel
-      claimAssessments={props.workspace.validation?.claimAssessments ?? []}
-      draft={props.workspace.draft}
-      hasUnsavedChanges={hasUnsavedChanges}
-      isWorkspacePending={props.isWorkspacePending}
-      jobId={props.jobId}
-      onRejectClaim={(assessment) => {
-        if (!assessment.bulletId) {
-          return;
-        }
+      <ResumeClaimConfirmationPanel
+        claimAssessments={props.workspace.validation?.claimAssessments ?? []}
+        draft={props.workspace.draft}
+        hasUnsavedChanges={hasUnsavedChanges}
+        isWorkspacePending={props.isWorkspacePending}
+        jobId={props.jobId}
+        onRejectClaim={(assessment) => {
+          if (!assessment.bulletId) {
+            return;
+          }
 
-        // Rejecting is the same reversible draft edit the bullet row's own
-        // delete makes, so it is logged and undoable like any other.
-        handleApplyPatch(
-          createResumeDraftPatch({
-            bulletId: assessment.bulletId,
-            entryId: assessment.entryId,
-            idPrefix: `resume_patch_claim_reject_${assessment.bulletId}`,
-            operation: "remove_bullet",
-            sectionId: assessment.sectionId,
-          }),
-          "Removed a line you did not confirm",
-        );
-      }}
-      onEditClaim={editClaimWording}
-      onSetResumeClaimConfirmation={props.onSetResumeClaimConfirmation}
-    />
-  ) : null;
+          // Rejecting is the same reversible draft edit the bullet row's own
+          // delete makes, so it is logged and undoable like any other.
+          handleApplyPatch(
+            createResumeDraftPatch({
+              bulletId: assessment.bulletId,
+              entryId: assessment.entryId,
+              idPrefix: `resume_patch_claim_reject_${assessment.bulletId}`,
+              operation: "remove_bullet",
+              sectionId: assessment.sectionId,
+            }),
+            "Removed a line you did not confirm",
+          );
+        }}
+        onEditClaim={editClaimWording}
+        onSetResumeClaimConfirmation={props.onSetResumeClaimConfirmation}
+      />
+    ) : null;
   const { approvalStateLabel, studioStatusMessage } = buildWorkspaceStatusCopy({
     approvalBlockedReason,
     availableExportToApprove,
@@ -1145,6 +1233,62 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
             jobTitle={job.title}
             onBack={props.onBack}
           />
+          {!props.originalResumeRoute ? (
+            <ResumeWorkspaceLanguagePicker
+              key={props.jobId}
+              language={
+                languageRequest
+                  ? languageRequest.language
+                  : (draft.language ?? null)
+              }
+              writtenLanguage={draft.writtenLanguage ?? null}
+              listingLanguage={draft.listingLanguage ?? null}
+              disabled={props.isWorkspacePending || backgroundDraft !== null}
+              onWrite={writeLanguage}
+            />
+          ) : null}
+          {rewriteFailed ? (
+            <div
+              role="alert"
+              data-resume-rewrite-failure
+              className="mt-2 flex flex-wrap items-center gap-2 px-5 text-sm"
+            >
+              <p>{FAILURE_SENTENCES.assistant_unavailable}</p>
+              <Button
+                size="compact"
+                variant="outline"
+                type="button"
+                onClick={() =>
+                  languageRequest
+                    ? writeLanguage(languageRequest.language)
+                    : props.onRegenerateDraft(props.jobId)
+                }
+              >
+                Try again
+              </Button>
+            </div>
+          ) : languageRequest && props.isWorkspacePending ? (
+            <p role="status" className="mt-2 px-5 text-sm">
+              {props.actionMessage}
+            </p>
+          ) : null}
+          {comparisonNeedsRefresh && !languageRequest && !rewriteFailed ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 px-5 text-sm">
+              <p>
+                This older draft needs a rewrite to compare it with your saved
+                facts.
+              </p>
+              <Button
+                disabled={props.isWorkspacePending}
+                size="compact"
+                variant="outline"
+                type="button"
+                onClick={() => props.onRegenerateDraft(props.jobId)}
+              >
+                Rewrite to refresh the comparison
+              </Button>
+            </div>
+          ) : null}
           {backgroundDraft ? (
             <div
               className="mt-2 flex flex-wrap items-center gap-3 rounded-(--radius-field) border border-(--control-border) bg-(--surface-panel) px-3 py-2 text-(length:--text-small)"
@@ -1314,6 +1458,11 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           {...(props.originalResumeRoute || writingEditableLevel
             ? {
                 originalResume: {
+                  filePanel: (
+                    <OriginalResumeFilePanel
+                      source={props.originalResumeRoute?.source}
+                    />
+                  ),
                   levelLabel:
                     writingEditableLevel ??
                     props.originalResumeRoute?.levelLabel ??
@@ -1341,7 +1490,15 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
               />
             </ResumeWorkspaceContextDisclosure>
           }
-          studioStatusMessage={studioStatusMessage}
+          studioStatusMessage={
+            props.workspace.listingCheckState === "checking"
+              ? "Checking listing fit in the background. You can edit your resume now."
+              : props.workspace.listingCheckState === "failed"
+                ? "Listing fit could not be checked. Your saved resume is available."
+                : rewriteFailed
+                  ? ""
+                  : studioStatusMessage
+          }
           templatePanel={templatePanel}
           validationIssues={visibleValidationIssues}
         />

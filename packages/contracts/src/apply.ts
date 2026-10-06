@@ -1,3 +1,4 @@
+import { ApplyAgentTimingSchema } from "./agent-timing";
 import { z } from "zod";
 
 import { SubmissionOutcomeRecordSchema } from "./application-authority";
@@ -13,6 +14,7 @@ import {
   ApplicationAttemptSuggestedAnswerSchema,
   ApplicationConsentKindSchema,
   ApplicationQuestionControlTypeSchema,
+  ApplicationQuestionInputConstraintsSchema,
   ApplicationQuestionKindSchema,
   ApplicationQuestionStatusSchema,
 } from "./discovery";
@@ -86,6 +88,13 @@ export type ApplyRunState = z.infer<typeof ApplyRunStateSchema>;
 export const PREPARED_PAGE_CLOSED_SUMMARY =
   "The prepared application page is no longer open.";
 
+/** The summary of an application the person marked withdrawn in the tracker. */
+export const WITHDRAWN_BY_PERSON_SUMMARY =
+  "You marked this application withdrawn.";
+
+/** The summary after Undo restored a withdrawn application's tracker stage. */
+export const WITHDRAWAL_UNDONE_SUMMARY = "Withdrawal undone. Prepare again.";
+
 export const applyJobStateValues = [
   "planned",
   "question_capture",
@@ -102,6 +111,7 @@ export const ApplyJobStateSchema = z.enum(applyJobStateValues);
 export type ApplyJobState = z.infer<typeof ApplyJobStateSchema>;
 
 export const applyBlockerReasonValues = [
+  "application_closed",
   "resume_missing",
   "resume_stale",
   "auth_required",
@@ -582,8 +592,7 @@ export const ApplicationPacketSchema = z
       });
     }
 
-    const submissionOutcome =
-      value.privacyReceipt?.submissionOutcome ?? null;
+    const submissionOutcome = value.privacyReceipt?.submissionOutcome ?? null;
     if (
       submissionOutcome?.outcome === "outcome_uncertain" &&
       value.submissionOccurred
@@ -702,6 +711,7 @@ export const ApplicationQuestionRecordSchema = z.object({
   note: NonEmptyStringSchema.nullable().optional(),
   kind: ApplicationQuestionKindSchema.default("other"),
   answerControlType: ApplicationQuestionControlTypeSchema.default("text"),
+  inputConstraints: ApplicationQuestionInputConstraintsSchema.optional(),
   isRequired: z.boolean().default(true),
   detectedAt: IsoDateTimeSchema,
   answerOptions: z.array(NonEmptyStringSchema).default([]),
@@ -722,6 +732,7 @@ export type ApplicationQuestionRecordInput = z.input<
 >;
 
 export const ApplicationAnswerRecordSchema = z.object({
+  hiringCountry: NonEmptyStringSchema.optional(),
   id: NonEmptyStringSchema,
   runId: NonEmptyStringSchema,
   jobId: NonEmptyStringSchema,
@@ -744,6 +755,18 @@ export const ApplicationAnswerRecordSchema = z.object({
 export type ApplicationAnswerRecord = z.infer<
   typeof ApplicationAnswerRecordSchema
 >;
+
+/** Newest first, including deterministic ordering for legacy revision ties. */
+export function compareApplicationAnswerRecency(
+  left: ApplicationAnswerRecord,
+  right: ApplicationAnswerRecord,
+): number {
+  return (
+    right.revision - left.revision ||
+    Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+    right.id.localeCompare(left.id)
+  );
+}
 
 const ApplicationAnswerMutationSafetySchema = {
   submitAuthorized: z.literal(false).default(false),
@@ -872,6 +895,9 @@ const ApplicationPreparationStartedLocalDateSchema = z
  */
 export const ApplicationReviewAnswerSchema = z
   .object({
+    fieldKey: NonEmptyStringSchema.max(2_000).optional(),
+    /** The run's stored fact or saved answer; observed values use observed.*. */
+    sourceId: NonEmptyStringSchema.optional(),
     question: NonEmptyStringSchema.max(2_000),
     answer: NonEmptyStringSchema.max(12_000),
     source: NonEmptyStringSchema.max(240),
@@ -887,6 +913,7 @@ export type ApplicationReviewAnswer = z.infer<
 
 export const ApplicationReviewAttachmentSchema = z
   .object({
+    fieldKey: NonEmptyStringSchema.max(2_000).optional(),
     label: NonEmptyStringSchema.max(240),
     fileName: NonEmptyStringSchema.max(240),
     field: NonEmptyStringSchema.max(2_000),
@@ -908,13 +935,23 @@ export const ApplicationReviewCardSchema = z
     siteLabel: NonEmptyStringSchema.max(240),
     pageUrl: UrlStringSchema.nullable().default(null),
     answers: z.array(ApplicationReviewAnswerSchema).max(200).default([]),
-    attachments: z
-      .array(ApplicationReviewAttachmentSchema)
-      .max(20)
-      .default([]),
+    /** Fields checked on the live form, including values the person cleared. */
+    observedFieldKeys: z
+      .array(NonEmptyStringSchema.max(2_000))
+      .max(500)
+      .optional(),
+    attachments: z.array(ApplicationReviewAttachmentSchema).max(20).default([]),
     letter: z
       .object({
-        text: NonEmptyStringSchema.max(12_000),
+        text: z
+          .string()
+          .min(1)
+          .max(12_000)
+          .refine((text) => text.trim().length > 0),
+        reviewReason: NonEmptyStringSchema.max(2_000).optional(),
+        /** The form still holds the previous letter; prepare again before sending. */
+        needsRefresh: z.boolean().optional(),
+        fields: z.array(NonEmptyStringSchema.max(2_000)).max(20).optional(),
         groundedIn: z.array(NonEmptyStringSchema.max(240)).max(8).default([]),
       })
       .strict()
@@ -929,12 +966,14 @@ export type ApplicationReviewCard = z.infer<typeof ApplicationReviewCardSchema>;
 
 export const ApplyJobResultSchema = z
   .object({
+    agentTiming: ApplyAgentTimingSchema.optional(),
     id: NonEmptyStringSchema,
     runId: NonEmptyStringSchema,
     jobId: NonEmptyStringSchema,
     applicationRecordId: NonEmptyStringSchema.nullable().default(null),
     queuePosition: z.number().int().nonnegative().default(0),
     state: ApplyJobStateSchema.default("planned"),
+    automaticSendPending: z.boolean().optional(),
     summary: NonEmptyStringSchema,
     detail: NonEmptyStringSchema,
     startedAt: IsoDateTimeSchema,

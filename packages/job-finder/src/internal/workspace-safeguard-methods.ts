@@ -1,3 +1,4 @@
+import { sendPairKey } from "./same-company-sends";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -57,6 +58,38 @@ export function createWorkspaceSafeguardMethods(input: {
       let nextSafeguards = state.safeguards;
 
       switch (mutation.type) {
+        case "decide_same_company_send_pair": {
+          const group = nextSafeguards.simultaneousApplicationConflicts.find(
+            (entry) => entry.id === mutation.conflictId,
+          );
+          if (
+            !group?.jobIds ||
+            !mutation.jobIds.every((id) => group.jobIds!.includes(id))
+          )
+            throw new Error(
+              "This pair is no longer in the company group. Review Safeguards again.",
+            );
+          const key = sendPairKey(mutation.jobIds);
+          const pairs = (group.allowedPairs ?? []).filter(
+            (pair) => sendPairKey(pair.jobIds) !== key,
+          );
+          pairs.push({
+            jobIds: mutation.jobIds,
+            decidedAt: now,
+            revokedAt: mutation.allow ? null : now,
+          });
+          nextSafeguards = {
+            ...nextSafeguards,
+            simultaneousApplicationConflicts:
+              nextSafeguards.simultaneousApplicationConflicts.map((entry) =>
+                entry.id === group.id
+                  ? { ...entry, allowedPairs: pairs }
+                  : entry,
+              ),
+            updatedAt: now,
+          };
+          break;
+        }
         case "apply_company_application_evidence": {
           const result = applyCompanyApplicationEvidence({
             safeguards: nextSafeguards,

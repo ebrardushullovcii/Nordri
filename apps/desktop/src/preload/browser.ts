@@ -1,5 +1,7 @@
 import { ipcRenderer } from "electron";
 import {
+  AddBrowserJobInputSchema,
+  AddBrowserJobResultSchema,
   DesktopBrowserCommandSchema,
   DesktopBrowserImportInputSchema,
   DesktopBrowserImportResultSchema,
@@ -11,6 +13,13 @@ import {
 } from "@nordri/contracts";
 
 export const browserBridge: DesktopBrowserBridge = {
+  addCurrentJob: async (input) =>
+    AddBrowserJobResultSchema.parse(
+      await ipcRenderer.invoke(
+        "browser:add-job",
+        AddBrowserJobInputSchema.parse(input),
+      ),
+    ),
   getState: async () =>
     DesktopBrowserStateSchema.parse(
       await ipcRenderer.invoke("browser:get-state"),

@@ -74,6 +74,7 @@ export const ApplicationDocumentRevisionSchema = z.object({
     .enum(["system_grounded", "user_edited"])
     .default("system_grounded"),
   requiresGroundingReview: z.boolean().default(false),
+  reviewReason: NonEmptyStringSchema.max(2_000).nullable().default(null),
   approvedAt: IsoDateTimeSchema.nullable().default(null),
   outputAsset: CandidateAssetSchema.nullable().default(null),
   lastExportedAt: IsoDateTimeSchema.nullable().default(null),
@@ -159,6 +160,8 @@ export type ListApplicationDocumentsInput = z.infer<
 
 export const ApplicationDocumentListResultSchema = z.object({
   documents: z.array(ApplicationDocumentRevisionSchema),
+  /** The latest approved revision behind each newer proposed revision. */
+  approvedRevisions: z.array(ApplicationDocumentRevisionSchema).default([]),
 });
 export type ApplicationDocumentListResult = z.infer<
   typeof ApplicationDocumentListResultSchema
@@ -180,3 +183,10 @@ export const ApplicationDocumentExportResultSchema = z.discriminatedUnion(
 export type ApplicationDocumentExportResult = z.infer<
   typeof ApplicationDocumentExportResultSchema
 >;
+
+/** Names for the original resume and its byte-identical Markdown text copy. */
+export function resumeFormFileNames(fileName: string): readonly string[] {
+  return /\.md$/iu.test(fileName)
+    ? [fileName, fileName.replace(/\.md$/iu, ".txt")]
+    : [fileName];
+}

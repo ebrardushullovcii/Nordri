@@ -121,239 +121,258 @@ const defaultBenchmarkCases = [
     },
   },
   {
-    id: "ebrar_pdf",
-    label: "Ebrar PDF",
-    resumePath: "docs/resume-tests/Ebrar.pdf",
-    canary: true,
-    tags: ["pdf", "canary", "baseline"],
-    expected: {
-      literalFields: {
-        fullName: "Ebrar Dushullovci",
-        currentLocation: "Prishtina, Kosovo",
-        email: "ebrar.dushullovci@gmail.com",
-        phone: "(+383) 44283970",
-      },
-      summaryContains: ["6+ years of full-stack experience"],
-      experienceRecords: [
-        {
-          title: "Senior Full-Stack Software Engineer",
-          companyName: "AUTOMATEDPROS",
-        },
-        {
-          title: "Chief Experience Officer",
-          companyName: "AUTOMATEDPROS",
-        },
-        {
-          title: ".NET Consultant",
-          companyName: "INFOTECH L.L.C",
-        },
-        {
-          title: ".NET Developer",
-          companyName: "INFOTECH L.L.C",
-        },
-        {
-          title: ".NET Developer",
-          companyName: "CREA-KO",
-        },
-        {
-          title: "Project Manager",
-          companyName: "BEAUTYQUE",
-        },
-        {
-          title: "Digital Marketing Manager",
-          companyName: "BEAUTYQUE",
-        },
-        {
-          title: "Technical Support Agent",
-          companyName: "BIT BY BIT",
-        },
-        {
-          title: "Call Center Agent",
-          companyName: "TREGI KOSOVO",
-        },
-      ],
-      educationRecords: [
-        {
-          schoolName: "Kolegji Riinvest (Riinvest College)",
-          degree: "BACHELOR'S DEGREE",
-        },
-      ],
-    },
-  },
-  {
-    id: "ebrar_new_pdf",
-    label: "Ebrar New PDF",
-    resumePath: "docs/resume-tests/Ebrar new.pdf",
+    id: "persona_lina_txt",
+    label: "Lina, data student (txt)",
+    resumePath:
+      "apps/desktop/test-fixtures/job-finder/resume-import-personas/lina-haddad.txt",
     canary: false,
-    tags: ["pdf", "alternate-format", "baseline"],
+    tags: ["txt"],
     expected: {
       literalFields: {
-        fullName: "Ebrar Dushullovci",
-        currentLocation: "Prishtina, Kosovo",
-        email: "ebrar.dushullovci@gmail.com",
-        phone: "(+383) 44283970",
+        fullName: "Lina Haddad",
+        currentLocation: "Berlin, Germany",
+        email: "lina.haddad@example.com",
+        phone: "+49 151 5550 1234",
       },
-      summaryContains: ["full-stack developer"],
+      summaryContains: [],
       experienceRecords: [
         {
-          title: "Senior Full-Stack Software Engineer",
-          companyName: "AUTOMATEDPROS",
+          title: "Working Student, Data Analytics",
+          companyName: "Mobilo GmbH",
+          startDate: "2024-10",
+          isCurrent: true,
         },
         {
-          title: "Chief Experience Officer",
-          companyName: "AUTOMATEDPROS",
+          title: "Research Assistant",
+          companyName: "TU Berlin",
+          startDate: "2024-04",
+          endDate: "2024-09",
         },
         {
-          title: "Senior Full-Stack Software Engineer (Part-Time Consultant)",
-          companyName: "INFOTECH L.L.C",
-        },
-        {
-          title: "Full-Stack Software Engineer",
-          companyName: "INFOTECH L.L.C",
-        },
-        {
-          title: "Full-Stack Software Engineer",
-          companyName: "CREA-KO",
-        },
-        {
-          title: "Project Manager",
-          companyName: "BEAUTYQUE",
-        },
-        {
-          title: "Digital Marketing Manager",
-          companyName: "BEAUTYQUE",
-        },
-        {
-          title: "Technical Support Agent",
-          companyName: "BIT BY BIT",
-        },
-        {
-          title: "Call Center Agent",
-          companyName: "TREGI KOSOVO",
+          title: "Intern, Business Intelligence",
+          companyName: "Byblos Retail Group",
+          startDate: "2022-06",
+          endDate: "2022-09",
         },
       ],
       educationRecords: [
         {
-          schoolName: "Kolegji Riinvest (Riinvest College)",
-          degree: "BACHELOR'S DEGREE",
+          schoolName: "Technische Universität Berlin",
+          degree: "M.Sc. Data Science",
+        },
+        {
+          schoolName: "American University of Beirut",
+          degree: "B.Sc. Statistics",
         },
       ],
+      languageRecords: [
+        {
+          language: "English",
+        },
+        {
+          language: "Arabic",
+        },
+        {
+          language: "German",
+        },
+      ],
+      forbiddenProfileText: ["University of Beirut, Beirut"],
     },
   },
   {
-    id: "aaron_murphy_pdf",
-    label: "Aaron Murphy PDF",
-    resumePath: "docs/resume-tests/Aaron Murphy Resume.pdf",
+    id: "persona_priya_pdf",
+    label: "Priya, product designer (pdf)",
+    resumePath:
+      "apps/desktop/test-fixtures/job-finder/resume-import-personas/priya-raman.pdf",
     canary: true,
-    tags: ["pdf", "multi-column", "name-failure"],
+    tags: ["pdf"],
     expected: {
       literalFields: {
-        fullName: "Aaron Murphy",
-        currentLocation: "Tampa, FL",
-        email: "murphyaron12@gmail.com",
-        phone: "+1 615-378-5538",
+        fullName: "Priya Raman",
+        currentLocation: "London, UK",
+        email: "priya.raman@example.com",
+        phone: "+44 20 7946 0958",
       },
-      summaryContains: ["Experienced Staff Engineer"],
+      summaryContains: ["8 years"],
       experienceRecords: [
         {
-          title: "Staff/Senior Software Engineer",
-          companyName: "EdSights",
+          title: "Freelance Product Designer",
+          companyName: "Raman Studio",
+          startDate: "2023",
+          isCurrent: true,
         },
         {
-          title: "Senior Software Developer",
-          companyName: "Agile Thought",
+          title: "Senior Product Designer",
+          companyName: "Penny Bank",
+          startDate: "2019",
+          endDate: "2023",
         },
         {
-          title: "Software Developer",
-          companyName: "Agile Thought",
-        },
-        {
-          title: "Software Developer",
-          companyName: "Three Five Two",
+          title: "Product Designer",
+          companyName: "CareLoop Health",
+          startDate: "2016",
+          endDate: "2019",
         },
       ],
       educationRecords: [
         {
-          schoolName: "Florida State University",
-          degree: "Bachelor’s Degree",
+          schoolName: "Central Saint Martins",
+          degree: "BA (Hons) Graphic Communication Design",
         },
       ],
     },
   },
   {
-    id: "paul_asselin_pdf",
-    label: "Paul Asselin PDF",
-    resumePath: "docs/resume-tests/Paul Asselin CV.pdf",
-    canary: false,
-    tags: ["pdf", "location-failure"],
+    id: "persona_dev_pdf",
+    label: "Dev, backend engineer (pdf, wrapped lines)",
+    resumePath:
+      "apps/desktop/test-fixtures/job-finder/resume-import-personas/dev-castellano.pdf",
+    canary: true,
+    tags: ["pdf"],
     expected: {
       literalFields: {
-        fullName: "Paul Asselin",
-        currentLocation: "Philadelphia, PA",
-        email: "paul.asselin454@outlook.com",
-        phone: "(530) 213-3550",
+        fullName: "Dev Castellano",
+        currentLocation: "Austin, TX",
+        email: "dev.castellano@example.com",
+        phone: "+1 512 555 0199",
       },
-      summaryContains: ["Senior Software Engineer with 7+ years"],
+      summaryContains: ["11 years"],
       experienceRecords: [
         {
-          title: "Senior Software Engineer",
-          companyName: "Mercury",
+          title: "Senior Software Engineer, Payments Platform",
+          companyName: "Lattice Pay",
+          startDate: "2021-03",
+          isCurrent: true,
         },
         {
-          title: "Senior Software Engineer",
-          companyName: "Leif",
+          title: "Software Engineer II",
+          companyName: "Corvid Logistics",
+          startDate: "2017-06",
+          endDate: "2021-02",
         },
         {
           title: "Software Engineer",
-          companyName: "Leif",
-        },
-        {
-          title: "Summer Analyst",
-          companyName: "IK Investment Partners",
+          companyName: "Brightwater Labs",
+          startDate: "2014-07",
+          endDate: "2017-05",
         },
       ],
       educationRecords: [
         {
-          schoolName: "University of Pennsylvania",
-          degree: "Bachelor of Computer Science, 2014",
+          schoolName: "Texas A&M University",
+          degree: "B.S. Computer Science",
         },
       ],
+      forbiddenProfileText: ["Kubern", "dev-caste"],
     },
   },
   {
-    id: "ryan_holstien_pdf",
-    label: "Ryan Holstien PDF",
-    resumePath: "docs/resume-tests/Ryan Holstien Resume.pdf",
+    id: "persona_maya_docx",
+    label: "Maya, teacher to instructional design (docx)",
+    resumePath:
+      "apps/desktop/test-fixtures/job-finder/resume-import-personas/maya-okafor.docx",
     canary: false,
-    tags: ["pdf", "name-failure", "location-failure"],
+    tags: ["docx"],
     expected: {
       literalFields: {
-        fullName: "Ryan Holstien",
-        currentLocation: "Cedar Park, TX 78613",
-        email: "ryanholstien993@outlook.com",
-        phone: "+1 650-353-7911",
+        fullName: "Maya Okafor",
+        email: "maya.okafor@example.com",
+        phone: "(614) 555-0142",
       },
-      summaryContains: ["10+ years of experience"],
+      summaryContains: ["9 years"],
       experienceRecords: [
         {
-          title: "Senior Software Engineer",
-          companyName: "DataHub",
+          title: "Science Teacher, Grade 7-8",
+          companyName: "Riverbend Middle School",
+          startDate: "2016-08",
+          isCurrent: true,
         },
         {
-          title: "Senior Software Engineer",
-          companyName: "Vrbo",
+          title: "Summer Program Coordinator",
+          companyName: "Ohio STEM Camps",
+          startDate: "2019-06",
+          endDate: "2022-08",
         },
         {
-          title: "Software Engineer",
-          companyName: "Infor",
+          title: "Student Teacher",
+          companyName: "Lincoln Elementary",
+          startDate: "2015-01",
+          endDate: "2015-05",
         },
       ],
       educationRecords: [
         {
-          schoolName: "The University of Texas at Austin",
+          schoolName: "Ohio State University",
+          degree: "Master of Education",
+        },
+        {
+          schoolName: "University of Dayton",
           degree: "Bachelor of Science",
         },
       ],
+      certificationRecords: [
+        {
+          name: "Ohio Professional Teaching License (Grades 4-9 Science)",
+        },
+        {
+          name: "Articulate Storyline Essentials",
+        },
+      ],
+    },
+  },
+  {
+    id: "persona_roberto_md",
+    label: "Roberto, operations manager (markdown)",
+    resumePath:
+      "apps/desktop/test-fixtures/job-finder/resume-import-personas/roberto-almeida.md",
+    canary: false,
+    tags: ["md"],
+    expected: {
+      literalFields: {
+        fullName: "Roberto Almeida",
+        currentLocation: "Porto, Portugal",
+        email: "roberto.almeida@example.com",
+        phone: "+351 912 555 017",
+      },
+      summaryContains: ["14 years"],
+      experienceRecords: [
+        {
+          title: "Operations Manager",
+          companyName: "Atlântico Logística",
+          startDate: "2019-01",
+          isCurrent: true,
+        },
+        {
+          title: "Shift Supervisor",
+          companyName: "Norte Express",
+          startDate: "2013-03",
+          endDate: "2018-12",
+        },
+        {
+          title: "Warehouse Associate",
+          companyName: "Norte Express",
+          startDate: "2010-06",
+          endDate: "2013-02",
+        },
+      ],
+      educationRecords: [
+        {
+          schoolName: "Universidade do Porto",
+          degree: "Licenciatura in Management",
+        },
+      ],
+      languageRecords: [
+        {
+          language: "Portuguese",
+        },
+        {
+          language: "English",
+        },
+        {
+          language: "Spanish",
+        },
+      ],
+      forbiddenProfileText: ["**"],
     },
   },
 ] satisfies ResumeImportBenchmarkCase[];

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  submissionConfirmationSummary,
   ApplicationAuthorityOriginSchema,
   SubmissionFinalControlIdentitySchema,
   SubmissionObservationIdentitySchema,
@@ -23,6 +24,49 @@ const SUBMISSION_CONFIRMATION_SIGNALS = [
   "successfully applied",
   "application complete",
 ] as const;
+
+/** Read the site's explicit field feedback; do not infer rejection from page prose. */
+async function readApplicationValidationErrors(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const errors = new Set<string>();
+    for (const control of document.querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >("form input, form select, form textarea")) {
+      if (
+        control.disabled ||
+        control.type === "hidden" ||
+        control.getClientRects().length === 0
+      )
+        continue;
+      if (
+        control.willValidate &&
+        !control.validity.valid &&
+        control.validationMessage
+      ) {
+        const label = control.labels?.[0]?.textContent?.trim();
+        errors.add(
+          label
+            ? `${label}: ${control.validationMessage}`
+            : control.validationMessage,
+        );
+      }
+      for (const id of (control.getAttribute("aria-describedby") ?? "").split(
+        /\s+/u,
+      )) {
+        const feedback = document.getElementById(id);
+        if (
+          !feedback ||
+          feedback.getAttribute("role") !== "alert" ||
+          feedback.getClientRects().length === 0
+        )
+          continue;
+        const message = feedback.textContent?.trim();
+        if (message) errors.add(message);
+      }
+    }
+    return [...errors];
+  });
+}
 
 function hasEmployerSubmissionConfirmation(pageText: string): boolean {
   const normalized = pageText.toLowerCase().replace(/\s+/gu, " ").trim();
@@ -83,7 +127,8 @@ export type ApplicationFinalActionBlockReason =
    * The click went out, but the site refused the connection (or could not be
    * found) and no response of any kind came back: nothing reached it.
    */
-  | "site_unreachable";
+  | "site_unreachable"
+  | "form_validation_failed";
 
 export interface ApplicationExternalActionFacts {
   /** True once the one-shot action boundary was attempted, even if Playwright
@@ -103,6 +148,7 @@ export type ApplicationFinalActionResult =
   | {
       readonly outcome: "not_submitted";
       readonly reason: ApplicationFinalActionBlockReason;
+      readonly validationErrors?: readonly string[];
       readonly observation: ApplicationFormObservation | null;
       readonly control: ApplicationFinalControl | null;
       readonly facts: ApplicationExternalActionFacts;
@@ -114,7 +160,10 @@ export type ApplicationFinalActionResult =
        * obtain independent external evidence before any terminal resolution.
        */
       readonly outcome: "outcome_uncertain";
-      readonly reason: "action_issued" | "action_error";
+      readonly reason:
+        | "action_issued"
+        | "action_error"
+        | "confirmation_timeout";
       readonly observation: ApplicationFormObservation;
       readonly control: ApplicationFinalControl;
       readonly facts: ApplicationExternalActionFacts;
@@ -155,6 +204,7 @@ export interface ExecuteExactlyOneFinalActionInput {
   }) => boolean | Promise<boolean>;
   readonly signal?: AbortSignal;
   readonly clickTimeoutMs?: number;
+  readonly confirmationTimeoutMs?: number;
 }
 
 interface RawApplicationControl {
@@ -1115,7 +1165,9 @@ export async function executeExactlyOneFinalAction(
         pageBefore.safePath !== pageAfter.safePath,
       requestsObservedDuringAction,
     };
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    const confirmationDeadline =
+      Date.now() + (input.confirmationTimeoutMs ?? 15_000);
+    do {
       if (input.signal?.aborted) break;
       if (siteNeverReached()) break;
       try {
@@ -1130,8 +1182,7 @@ export async function executeExactlyOneFinalAction(
             confirmation: {
               observedAt: new Date().toISOString(),
               destination: readSafePageUrl(page.url()),
-              summary:
-                "The employer site showed an application-received confirmation after the final action.",
+              summary: submissionConfirmationSummary(bodyText),
             },
             facts: {
               ...facts,
@@ -1142,11 +1193,25 @@ export async function executeExactlyOneFinalAction(
             },
           };
         }
+        const validationErrors = await readApplicationValidationErrors(page);
+        if (validationErrors.length > 0) {
+          stopWatchingNetwork();
+          await closePrepareOnlyFinalActionWindow(page);
+          forgetIssuedAction(page, key);
+          return {
+            outcome: "not_submitted",
+            reason: "form_validation_failed",
+            observation: finalObservation,
+            control: finalControl,
+            validationErrors,
+            facts: { ...facts, pageAfter: readSafePageUrl(page.url()) },
+          };
+        }
       } catch {
         // Navigation can briefly replace the body. Keep the bounded check.
       }
       await page.waitForTimeout(100);
-    }
+    } while (Date.now() < confirmationDeadline);
     stopWatchingNetwork();
     await closePrepareOnlyFinalActionWindow(page);
     if (siteNeverReached()) {
@@ -1159,7 +1224,7 @@ export async function executeExactlyOneFinalAction(
     }
     return {
       outcome: "outcome_uncertain",
-      reason: "action_issued",
+      reason: "confirmation_timeout",
       observation: finalObservation,
       control: finalControl,
       facts,

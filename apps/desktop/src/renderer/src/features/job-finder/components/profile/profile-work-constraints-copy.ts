@@ -7,14 +7,15 @@
  */
 export const PROFILE_WORK_CONSTRAINT_COPY = {
   authorizedWorkCountries: {
-    description: "Where you already have the right to work.",
+    description:
+      "Where you have unrestricted permission to work. Save limited permits in Profile under Work eligibility.",
     label: "Countries where you can work",
     placeholder: "Example: United States, Germany",
   },
   preferredRelocationRegions: {
     description: "A preference, not a work-authorization answer.",
     label: "Places you would consider relocating to",
-    placeholder: "Example: Austin, TX, Berlin",
+    placeholder: "Example: Austin, TX; Berlin",
   },
   requiresVisaSponsorship: {
     description: "Yes only if an employer must sponsor you.",

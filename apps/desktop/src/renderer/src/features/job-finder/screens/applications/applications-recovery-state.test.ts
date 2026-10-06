@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  ApplicationPrivacyReceiptSchema,
   APPLICATION_SKIPPED_BY_PERSON_LABEL,
+  PREPARED_PAGE_CLOSED_SUMMARY,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import {
@@ -119,6 +121,7 @@ describe("resolveApplicationRecoveryPresentation", () => {
         summary: "Application submitted",
         detail: "The employer site confirmed that it received the application.",
         privacyReceipt: {
+          finalSubmitOccurred: true,
           submissionOutcome: { outcome: "submitted" },
         } as ApplyResult["privacyReceipt"],
       }),
@@ -130,7 +133,7 @@ describe("resolveApplicationRecoveryPresentation", () => {
     expect(presentation.primaryActionLabel).toBeNull();
   });
 
-  it("shows an application the person sent on the site as sent, with no Try again", () => {
+  it("keeps an old person-send claim unconfirmed without a receipt", () => {
     const presentation = resolve(
       buildResult({
         state: "submitted",
@@ -142,7 +145,8 @@ describe("resolveApplicationRecoveryPresentation", () => {
     );
 
     expect(presentation).toMatchObject({
-      state: "submitted",
+      state: "verify_outcome",
+      statusLine: "Not confirmed",
       primaryAction: "none",
       primaryActionLabel: null,
     });
@@ -245,7 +249,7 @@ describe("resolveApplicationRecoveryPresentation", () => {
     ).toBe(false);
   });
 
-  it("offers Try again when the exact prepared browser page was lost", () => {
+  it("offers Prepare again when the exact prepared browser page was lost", () => {
     const presentation = resolve(
       buildResult({
         state: "failed",
@@ -255,7 +259,7 @@ describe("resolveApplicationRecoveryPresentation", () => {
     );
 
     expect(presentation.state).toBe("retry");
-    expect(presentation.primaryActionLabel).toBe("Try again");
+    expect(presentation.primaryActionLabel).toBe("Prepare again");
   });
 
   it("always carries a reason sentence for a stopped run", () => {
@@ -485,7 +489,7 @@ describe("resolveApplicationRecoveryPresentation", () => {
     expect(presentation.primaryActionLabel).toBe("Try again");
   });
 
-  it("does not reuse the previous attempt's age while a retry is starting", () => {
+  it("keeps the saved outcome until this application's retry actually starts", () => {
     const presentation = resolveApplicationRecoveryPresentation({
       canOpenSafeguards: true,
       isApplyPending: true,
@@ -493,8 +497,8 @@ describe("resolveApplicationRecoveryPresentation", () => {
       visibleApplyResult: buildResult({ state: "blocked" }),
     });
 
-    expect(presentation.state).toBe("preparing");
-    expect(presentation.statusLine).toBe("Job Finder is filling in the form");
+    expect(presentation.state).toBe("retry");
+    expect(presentation.statusLine).not.toContain("37 min");
   });
 
   it("keeps saying it is working for as long as the run record is running", () => {
@@ -590,7 +594,7 @@ describe("a planned job's standing in its batch", () => {
         visibleApplyResult: planned,
       }),
     ).toMatchObject({
-      statusLine: "Waiting its turn in this batch",
+      statusLine: "Waiting its turn",
       primaryAction: "none",
     });
   });
@@ -626,5 +630,172 @@ it("names cancellation before interpreting any retained security-check evidence"
     statusLine: "Cancelled by you",
     reasonSentence: "Nothing was sent.",
     primaryAction: "try_again",
+  });
+});
+
+it.each(["planned", "awaiting_review", "failed"] as const)(
+  "another job's pending work does not replace selected %s state",
+  (state) => {
+    const result = buildResult({
+      state,
+      completedAt: state === "planned" ? null : "2026-09-01T10:01:00.000Z",
+    });
+    const presentation = resolveApplicationRecoveryPresentation({
+      canOpenSafeguards: false,
+      isApplyPending: true,
+      visibleApplyResult: result,
+      run: { state: "running", activityPaused: false, started: true },
+    });
+    expect(presentation.statusLine).not.toContain("Filling");
+    if (state === "planned")
+      expect(presentation.statusLine).toBe("Waiting its turn");
+    if (state === "awaiting_review")
+      expect(presentation.state).toBe("finish_in_browser");
+    if (state === "failed") expect(presentation.state).toBe("retry");
+  },
+);
+
+it("waiting automatic send offers no competing manual send", () => {
+  expect(
+    resolve(
+      buildResult({
+        state: "awaiting_review",
+        summary: "The copy can change without changing the state.",
+        automaticSendPending: true,
+        detail: "Job Finder will send this application next.",
+      }),
+    ),
+  ).toMatchObject({
+    statusLine: "Waiting for automatic send",
+    primaryAction: "none",
+  });
+});
+
+it("does not call a contradictory submitted state a send", () => {
+  const result = buildResult({
+    state: "submitted",
+    privacyReceipt: ApplicationPrivacyReceiptSchema.parse({
+      generatedAt: "2026-09-14T10:00:00.000Z",
+      lineage: {
+        runId: "run_1",
+        jobId: "job_1",
+        resultId: "result_1",
+        applicationRecordId: "application_1",
+      },
+      destination: { origin: "http://127.0.0.1:47950", safePath: "/apply" },
+      resume: {
+        source: "original_upload",
+        sourceDocumentId: "synthetic",
+        exportArtifactId: null,
+        fileName: "synthetic.pdf",
+        sha256: "a".repeat(64),
+      },
+      finalSubmitOccurred: false,
+    }),
+  });
+  expect(resolve(result)).toMatchObject({
+    statusLine: "Not confirmed",
+    primaryAction: "none",
+  });
+});
+
+it("offers Prepare again for a lost prepared form", () => {
+  const result = buildResult({
+    state: "failed",
+    summary: PREPARED_PAGE_CLOSED_SUMMARY,
+    blockerReason: "unexpected_navigation",
+    latestQuestionCount: 2,
+  });
+  expect(resolve(result)).toMatchObject({
+    statusLine: "Prepare again",
+    primaryActionLabel: "Prepare again",
+  });
+});
+
+it.each(["Waiting for a free browser tab", "Waiting its turn"])(
+  "a planned result with a preparation timestamp stays queued: %s",
+  (summary) => {
+    const result = buildResult({
+      state: "planned",
+      summary,
+      applicationPreparationStartedAt: "2026-09-01T10:00:00.000Z",
+    });
+    const presentation = resolveApplicationRecoveryPresentation({
+      canOpenSafeguards: false,
+      isApplyPending: true,
+      visibleApplyResult: result,
+      run: { state: "running", activityPaused: false, started: true },
+    });
+    expect(presentation.statusLine).toBe(
+      summary.startsWith("Waiting for")
+        ? "Waiting for a browser tab"
+        : "Waiting its turn",
+    );
+  },
+);
+
+it("shows the exact validation rejection ahead of stale ready wording", () => {
+  const result = buildResult({
+    state: "awaiting_review",
+    detail: "Ready for you to read over and send",
+    privacyReceipt: {
+      submissionOutcome: {
+        outcome: "not_submitted",
+        browserAction: {
+          reason: "form_validation_failed",
+          detail: "Select at least one skill.",
+        },
+      },
+    } as unknown as ApplyResult["privacyReceipt"],
+  });
+  expect(resolve(result)).toMatchObject({
+    statusLine: "Not sent",
+    reasonSentence: "Select at least one skill.",
+    primaryAction: "open_browser",
+    primaryActionLabel: "Correct the fields in the browser",
+  });
+});
+
+it("shows a repeated stop sentence only once in Next step", () => {
+  const result = buildResult({
+    state: "failed",
+    summary: "Could not finish",
+    detail:
+      "The listing has no application form. The listing has no application form.",
+    startedAt: "2026-10-05T10:00:00.000Z",
+    updatedAt: "2026-10-05T10:00:00.000Z",
+  });
+  expect(getApplicationStopReasonSentence(result)).toBe(
+    "The listing has no application form.",
+  );
+});
+
+it("shows a saved person-send receipt and its reference without claiming automation sent it", () => {
+  const presentation = resolveApplicationRecoveryPresentation({
+    visibleApplyResult: null,
+    canOpenSafeguards: false,
+    isApplyPending: false,
+    personSendReceiptSummary: "The site confirmed receipt. Reference: SYN-25.",
+  });
+  expect(presentation).toMatchObject({
+    state: "submitted",
+    reasonSentence: "The site confirmed receipt. Reference: SYN-25.",
+    primaryAction: "none",
+  });
+});
+
+it("offers Prepare again after Tracker Undo instead of the withdrawn summary", () => {
+  expect(
+    resolve(
+      buildResult({
+        state: "skipped",
+        summary: "Withdrawal undone. Prepare again.",
+        detail: "Your previous tracker stage is restored.",
+      }),
+    ),
+  ).toMatchObject({
+    statusLine: "Prepare again",
+    primaryActionLabel: "Prepare again",
+    reasonSentence: "Your previous tracker stage is restored.",
   });
 });

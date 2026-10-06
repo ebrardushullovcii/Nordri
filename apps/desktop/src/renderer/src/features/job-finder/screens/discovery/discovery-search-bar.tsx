@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type {
   BrowserSessionState,
   JobFinderSearchRequest,
@@ -163,6 +164,7 @@ export function DiscoverySearchBar(props: {
    */
   searchStartedAt?: string | null;
   /** Live "n new jobs saved" style progress for the run in progress. */
+  backgroundPlanName?: string | null;
   searchProgressLabel?: string | null;
   isStopPending?: boolean;
   /**
@@ -179,6 +181,7 @@ export function DiscoverySearchBar(props: {
   onToggleSetup: (chipId: string | null) => void;
   searchActionDescribedBy?: string | undefined;
   searchPreferences: JobSearchPreferences;
+  profileSourceEnabled?: Readonly<Record<string, boolean>>;
   isSearchRunning: boolean;
   resultScope?: "focused" | "wide";
   hiddenResultCount?: number;
@@ -191,6 +194,7 @@ export function DiscoverySearchBar(props: {
     isSearchRunning,
     isSetupOpen,
     searchStartedAt = null,
+    backgroundPlanName = null,
     searchProgressLabel = null,
     isStopPending = false,
     stoppedNotice = null,
@@ -238,19 +242,9 @@ export function DiscoverySearchBar(props: {
     availableSources.map((source) => source.id).sort(),
   );
   useEffect(() => {
-    const enabledIds = new Set(JSON.parse(availableSourceIdsKey) as string[]);
-    setSelectedSourceIds((current) => {
-      if (current === "all") return current;
-      // A single source has no picker. Keep it searchable when setup edits
-      // or a plan change remove the previously selected sources.
-      if (enabledIds.size <= 1) return "all";
-      const retained = current.filter((id) => enabledIds.has(id));
-      if (current.length > 0 && retained.length === 0) return "all";
-      if (retained.length === enabledIds.size) return "all";
-      return retained.length === current.length ? current : retained;
-    });
+    setSelectedSourceIds("all");
     setIsSourcePickerOpen(false);
-  }, [availableSourceIdsKey]);
+  }, [availableSourceIdsKey, props.activeCampaignId]);
   const selectedSourceCount =
     selectedSourceIds === "all"
       ? availableSources.length
@@ -357,6 +351,12 @@ export function DiscoverySearchBar(props: {
       >
         Prefer recent
       </button>
+      {availableSources.length === 1 &&
+      props.profileSourceEnabled?.[availableSources[0]!.id] === false ? (
+        <span className="text-xs text-foreground-muted">
+          Off in Profile; this plan still searches it
+        </span>
+      ) : null}
       {/* With one enabled source there is nothing to choose; the picker
           returns as soon as a second source is on. */}
       {availableSources.length > 1 ? (
@@ -391,7 +391,7 @@ export function DiscoverySearchBar(props: {
             onClick={() => setSelectedSourceIds("all")}
             type="button"
           >
-            All enabled sources
+            All sources in this plan
           </button>
           {availableSources.map((source) => {
             const checked =
@@ -408,7 +408,14 @@ export function DiscoverySearchBar(props: {
                   onChange={() => toggleSource(source.id)}
                   type="checkbox"
                 />
-                <span className="truncate">{source.label}</span>
+                <span className="min-w-0">
+                  <span className="block truncate">{source.label}</span>
+                  {props.profileSourceEnabled?.[source.id] === false ? (
+                    <span className="block text-xs text-foreground-muted">
+                      Off in Profile; this plan still searches it
+                    </span>
+                  ) : null}
+                </span>
               </label>
             );
           })}
@@ -431,6 +438,12 @@ export function DiscoverySearchBar(props: {
         <SlidersHorizontal aria-hidden="true" className="size-3.5 shrink-0" />
         Roles, places & sources
       </button>
+      <Link
+        className="inline-flex min-h-7 shrink-0 items-center rounded-(--radius-small) px-2 text-xs text-foreground-muted underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/30"
+        to="/job-finder/campaigns"
+      >
+        Search plans
+      </Link>
       {browserChipLabel === null ? null : (
         <button
           className="inline-flex min-h-7 shrink-0 items-center rounded-(--radius-small) px-2 text-xs text-foreground-muted underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/30"
@@ -451,7 +464,11 @@ export function DiscoverySearchBar(props: {
             type="button"
             variant="outline"
           >
-            {isStopPending ? "Stopping" : "Stop search"}
+            {isStopPending
+              ? "Stopping"
+              : backgroundPlanName
+                ? `Stop ${backgroundPlanName} search`
+                : "Stop search"}
           </Button>
         ) : null}
         {!isSearchRunning && stoppedNotice ? (

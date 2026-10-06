@@ -153,6 +153,12 @@ function withJobs(
       discoveryMethod: "browser_agent",
       matchAssessment: {
         score: index < count ? 70 : 10,
+        judgment: {
+          source: "batch",
+          judgedAt: "2026-10-02T10:00:00.000Z",
+          score: index < count ? 70 : 10,
+          recommendation: "review_before_applying",
+        },
         recommendation: index < count ? "apply" : "consider",
         dimensions: {
           roleSuitability: { state: "exact" },
@@ -439,7 +445,7 @@ describe("buildJobSearchHomeModel · while something runs", () => {
       count: 3,
       // The running batch writes the two not started yet; they are not
       // waiting on the person.
-      detail: "3 being written",
+      detail: "2 need a resume · 1 being written",
     });
   });
 
@@ -539,7 +545,8 @@ describe("buildJobSearchHomeModel · while something runs", () => {
     expect(model.now[0]).toMatchObject({
       title: "Waiting to apply: Employer · Job 0",
     });
-    expect(model.now[0]?.detail).toContain("Waiting for a free browser tab");
+    expect(model.now[0]?.detail).toContain("Browser tab limit reached");
+    expect(model.now[0]?.detail).toContain("prepared, unsent forms stay open");
   });
 
   it("reports a paused workspace before anything else", () => {
@@ -1073,6 +1080,36 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
     );
   });
 
+  it("does not recommend retrying a listing the application observed closed", () => {
+    const ws = withJobs(workspace(), 1);
+    ws.applicationRecords = [
+      {
+        id: "record-0",
+        jobId: "job_0",
+        title: "Job 0",
+        company: "Employer",
+        status: "shortlisted",
+        lastAttemptState: "failed",
+        automationMode: "prepare_only",
+        questionSummary: { total: 0, answered: 0 },
+        lastUpdatedAt: "2026-08-15T11:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applicationRecords"];
+    ws.applyJobResults = [
+      {
+        id: "result-0",
+        runId: "apply-1",
+        jobId: "job_0",
+        applicationRecordId: "record-0",
+        state: "failed",
+        blockerReason: "application_closed",
+        summary: "This job is no longer taking applications.",
+        updatedAt: "2026-08-15T11:00:00.000Z",
+      },
+    ] as unknown as JobFinderWorkspaceSnapshot["applyJobResults"];
+    expect(build(ws).next.id).not.toBe("retry");
+  });
+
   it("offers to try failed applications again with the jobs Applications would retry", () => {
     const ws = withShortlist(withJobs(workspace(), 2), [
       queueItem("job_0", {
@@ -1342,7 +1379,7 @@ describe("buildJobSearchHomeModel · shortlist and applications", () => {
     });
     expect(build(withDailyPreparationRemaining(ws, 0)).next).toMatchObject({
       id: "daily_limit",
-      title: "Today's application limit is reached",
+      title: "Today's preparation limit is reached",
       primary: {
         label: "Open Applying settings",
         action: {
@@ -1810,7 +1847,7 @@ describe("buildJobSearchHomeModel · round 2 matrix fixes", () => {
       },
     ]);
     expect(model.stages?.[1]?.detail).toBe(
-      "2 being written · 1 ready to apply",
+      "1 need a resume · 1 being written · 1 ready to apply",
     );
   });
 
@@ -2073,6 +2110,82 @@ describe("buildJobSearchHomeModel · tracker dates", () => {
     } as JobFinderWorkspaceSnapshot;
   }
 
+  it.each(["search", "limit"])(
+    "names a due reminder while %s holds other work",
+    (mode) => {
+      const state = withTrackedApplication(withJobs(workspace(), 1));
+      if (mode === "search") {
+        state.activeDiscoveryRun = {
+          ...state.recentDiscoveryRuns[0],
+          state: "running",
+        } as JobFinderWorkspaceSnapshot["activeDiscoveryRun"];
+      }
+      if (mode === "limit") {
+        state.dashboard.globalDailyApplicationPreparationCapacity = {
+          localDate: "2026-08-15",
+          limit: 20,
+          used: 20,
+          remaining: 0,
+          resetsAt: "2026-08-16T00:00:00Z",
+          legacyUncertain: 0,
+        };
+      }
+      const model = build(state);
+      expect(model.next.id).toBe("tracker_due");
+      expect(model.next.title).toContain("Send a thank-you note");
+      expect(model.next.primary.action.kind).toBe("navigate");
+      if (model.next.primary.action.kind === "navigate") {
+        expect(model.next.primary.action.route).toContain("application_0");
+      }
+    },
+  );
+
+  it.each(["paused", "safeguards", "needs_you"])(
+    "keeps %s before a due reminder and names the reminder second",
+    (mode) => {
+      const state = withTrackedApplication(withJobs(workspace(), 1));
+      if (mode === "paused")
+        state.activityControl = {
+          paused: true,
+          reason: null,
+          pausedAt: "2026-08-15T10:00:00Z",
+        };
+      if (mode === "safeguards")
+        state.intelligence.safeguards.abnormalFailurePauses = [
+          AbnormalFailurePauseSchema.parse({
+            id: "pause",
+            windowStartedAt: "2026-08-01T10:00:00Z",
+            failuresInWindow: 4,
+            sampleSize: 5,
+            failureRatePercent: 80,
+            failureRateThresholdPercent: 50,
+            minimumSample: 5,
+            paused: true,
+            explanation: "Review failures",
+            recoveryGuidance: "Review this hold",
+          }),
+        ];
+      if (mode === "needs_you")
+        state.userActionRequests = [
+          {
+            id: "request",
+            kind: "login",
+            state: "pending",
+            scope: { type: "discovery_source", targetId: "source-1" },
+            summary: "Sign in",
+          },
+        ] as unknown as JobFinderWorkspaceSnapshot["userActionRequests"];
+      const model = build(state);
+      expect(model.next.id).toBe(mode);
+      expect(model.next.detail).toContain("Send a thank-you note");
+      expect(
+        model.next.secondary.some(
+          (button) => button.label === "Open due follow-up",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("counts an overdue follow-up and a near interview on the Applications tile", () => {
     const model = build(withTrackedApplication(withJobs(workspace(), 1)));
     const applications = model.stages?.find(
@@ -2097,9 +2210,7 @@ describe("buildJobSearchHomeModel · tracker dates", () => {
       ),
     );
     expect(model.next.id).toBe("tracker_due");
-    expect(model.next.title).toBe(
-      "1 follow-up is overdue · 1 interview in the next two days",
-    );
+    expect(model.next.title).toBe("Send a thank-you note · Job 0 at Employer");
   });
 });
 
@@ -2164,5 +2275,67 @@ describe("buildJobSearchHomeModel · applications the person stopped or may have
       title: "Check 1 application whose page closed",
       primary: { action: { kind: "navigate" } },
     });
+    expect(model.next.detail).toContain("Prepare again");
+    expect(model.stages?.[2]?.detail).toBe("1 needs Prepare again");
+
   });
+});
+it("separates untouched jobs, queued drafts and active writers in a ten-job batch", () => {
+  const ws = withShortlist(
+    withJobs(workspace(), 32),
+    Array.from({ length: 32 }, (_, index) =>
+      queueItem(
+        `job_${index}`,
+        index < 8
+          ? {
+              assetStatus: "ready",
+              resumeAssetId: `asset_${index}`,
+              resumeReview: { status: "needs_review" },
+            }
+          : {},
+      ),
+    ),
+  );
+  ws.intelligence.resumeBatchCheckpoint = {
+    id: "batch",
+    jobIds: Array.from({ length: 10 }, (_, index) => `job_${index + 2}`),
+    activeJobIds: ["job_8", "job_9"],
+    completedJobIds: Array.from(
+      { length: 6 },
+      (_, index) => `job_${index + 2}`,
+    ),
+    done: false,
+    stopRequested: false,
+  };
+  const model = build(ws, {
+    tailoredDraftPreparation: {
+      status: "running",
+      totalCount: 10,
+      attemptedCount: 8,
+      completedCount: 6,
+      failedCount: 0,
+      eligibleRemainingCount: 20,
+      currentIndex: 8,
+    },
+  });
+  expect(
+    model.stages?.find((stage) => stage.label === "Shortlisted")?.detail,
+  ).toContain("20 need a resume · 2 queued · 2 being written");
+});
+
+it("Home counts the selected plan's sources rather than every saved source", () => {
+  const ws = workspace();
+  const target = ws.searchPreferences.discovery.targets[0]!;
+  ws.searchPreferences.discovery.targets = Array.from(
+    { length: 7 },
+    (_, index) => ({ ...target, id: `source-${index}` }),
+  );
+  ws.campaigns[0]!.searchPreferences = ws.searchPreferences;
+  ws.campaigns[0]!.sourceTargetIds = ["source-0"];
+  ws.campaigns[0]!.sourceSelectionMode = "selected";
+  const model = build(ws);
+  expect(model.statusLine).toBe(
+    "Ready to search 1 source. Nothing has been searched yet.",
+  );
+  expect(JSON.stringify(model)).toContain("Job Finder searches 1 source");
 });

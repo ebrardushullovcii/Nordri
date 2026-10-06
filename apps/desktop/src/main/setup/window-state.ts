@@ -21,6 +21,7 @@ export type MainWindowDisplayMode = "normal" | "maximized" | "fullscreen";
 
 export type MainWindowState = Rectangle & {
   displayMode: MainWindowDisplayMode;
+  zoomFactor?: number;
 };
 
 export type RestoredMainWindowBounds = Pick<Rectangle, "width" | "height"> &
@@ -80,7 +81,7 @@ export function parseMainWindowState(value: unknown): MainWindowState | null {
     return null;
   }
 
-  const { x, y, width, height, displayMode } = value;
+  const { x, y, width, height, displayMode, zoomFactor } = value;
 
   if (
     !isFiniteNumber(x) ||
@@ -100,6 +101,7 @@ export function parseMainWindowState(value: unknown): MainWindowState | null {
     width,
     height,
     displayMode,
+    ...(isFiniteNumber(zoomFactor) && zoomFactor > 0 ? { zoomFactor } : {}),
   };
 }
 
@@ -228,6 +230,7 @@ export function bindMainWindowStatePersistence(window: BrowserWindow) {
     saveMainWindowState({
       ...normalBounds,
       displayMode: getMainWindowDisplayMode(window),
+      zoomFactor: window.webContents.getZoomFactor(),
     });
   };
 

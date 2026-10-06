@@ -1,4 +1,6 @@
+import { assertPersonAnswerAuthority } from "../person-answer-authority";
 import {
+  isApplicationTrackedAsSentByPerson,
   ApplicationAnswerValueSchema,
   ApplicationCrmMutationSchema,
   ApplicationCrmStageSchema,
@@ -18,6 +20,7 @@ import { AssistantToolError, defineTool, json } from "../tool-kit";
 import {
   applicationRowsPart,
   compactApplication,
+  interviewForModel,
   createJobCaveats,
   findJob,
   pausedByPersonMessage,
@@ -108,7 +111,7 @@ export const recordInstructionTool = defineTool({
     if (check.accepted.length === 0) {
       throw new AssistantToolError(
         "refused",
-        "None of those jobs came from the person's message, the screen it was sent from, or a list shown in this conversation.",
+        "None of those jobs were in your message, on the screen you sent it from, or in a list shown in this conversation.",
         { rejected: check.rejected },
       );
     }
@@ -264,8 +267,8 @@ export const applyToJobsTool = defineTool({
           jobId,
           reason:
             inFlight.jobState === "awaiting_review"
-              ? `This application is already prepared and waiting (run ${inFlight.runId}). Answer its Needs you step with resolve_needs_you, or send it with send_applications; a new run would only pile up behind it.`
-              : `This application is already in progress (run ${inFlight.runId}, ${inFlight.runState.replaceAll("_", " ")}, job ${inFlight.jobState.replaceAll("_", " ")}). Let it finish, or stop it with cancel_applications first.`,
+              ? `This application is already prepared and waiting. Answer its Needs you step with resolve_needs_you, or send it with send_applications; a new run would only pile up behind it.`
+              : `This application is already in progress. Let it finish, or stop it with cancel_applications first.`,
         });
         return false;
       }
@@ -275,7 +278,7 @@ export const applyToJobsTool = defineTool({
       if (caveats.excludedEmployer) {
         cautioned.push({
           jobId,
-          reason: `The person excluded ${job.company}.`,
+          reason: `You excluded ${job.company}.`,
         });
         return false;
       }
@@ -285,7 +288,7 @@ export const applyToJobsTool = defineTool({
       ) {
         cautioned.push({
           jobId,
-          reason: `Same posting as job ${caveats.alreadyAppliedAs.jobId}, already applied (${caveats.alreadyAppliedAs.status}).`,
+          reason: `You already applied to this posting.`,
         });
         return false;
       }
@@ -294,7 +297,12 @@ export const applyToJobsTool = defineTool({
     if (candidates.length === 0) {
       throw new AssistantToolError(
         "refused",
-        cautioned.map((entry) => `${entry.jobId}: ${entry.reason}`).join(" "),
+        cautioned
+          .map((entry) => {
+            const job = findJob(snapshot, entry.jobId);
+            return `${job ? [job.title, job.location, job.company].filter(Boolean).join(" · ") : "This application"}: ${entry.reason}`;
+          })
+          .join(" "),
       );
     }
     const decisions = decideUnderGrants({
@@ -387,6 +395,7 @@ export const sendApplicationsTool = defineTool({
       );
     }
     session.assertCurrent();
+    await session.releaseBrowserLease?.();
     const result = await ports.sendPreparedApplications({ jobIds: allowed });
     ports.publishWorkspaceUpdate();
     const after = await service.getWorkspaceSnapshot();
@@ -396,16 +405,33 @@ export const sendApplicationsTool = defineTool({
         ...result.failed.map((entry) => entry.jobId),
       ].includes(record.jobId),
     );
+    const latestResults = new Map<
+      string,
+      (typeof after.applyJobResults)[number]
+    >();
+    for (const entry of after.applyJobResults) {
+      const previous = latestResults.get(entry.jobId);
+      if (!previous || entry.updatedAt >= previous.updatedAt)
+        latestResults.set(entry.jobId, entry);
+    }
+    const unconfirmed = result.failed
+      .filter(
+        (entry) =>
+          latestResults.get(entry.jobId)?.privacyReceipt?.submissionOutcome
+            ?.outcome === "outcome_uncertain",
+      )
+      .map((entry) => entry.jobId);
     return {
-      summary: `Sent ${plural(result.sentJobIds.length, "application")}${result.failed.length ? `, ${result.failed.length} not sent` : ""}${refused.length ? `, ${refused.length} refused` : ""}.`,
+      summary: `Sent ${plural(result.sentJobIds.length, "application")}${unconfirmed.length ? `, ${unconfirmed.length} send unconfirmed; check the site before trying again` : ""}${result.failed.length > unconfirmed.length ? `, ${result.failed.length - unconfirmed.length} not sent` : ""}${refused.length ? `, ${refused.length} refused` : ""}.`,
       data: {
         sent: result.sentJobIds,
+        unconfirmed,
         failed: result.failed,
         refused: refused.map(({ jobId, reason }) => ({ jobId, reason })),
         records: records.map(compactApplication),
       },
       parts: records.length
-        ? [applicationRowsPart({ records, title: "Sent" })]
+        ? [applicationRowsPart({ records, title: "Sending results" })]
         : [],
     };
   },
@@ -423,6 +449,12 @@ export const listApplicationsTool = defineTool({
     ),
     stage: json.enumOf(applicationCrmStageValues),
     needsAttention: json.boolean("Only ones blocked or waiting on the person."),
+    olderThanDays: json.number(
+      "Sent more than this many days ago, using crm.appliedAt; unknown sent dates do not match.",
+    ),
+    unansweredOnly: json.boolean(
+      "Applied or no_response with no recorded employer response since sending.",
+    ),
     limit: json.number(),
     show: json.boolean(
       "False when you are only checking facts for your answer; the rows then are not shown as cards.",
@@ -433,6 +465,8 @@ export const listApplicationsTool = defineTool({
     status: z.string().trim().max(60).optional(),
     stage: ApplicationCrmStageSchema.optional(),
     needsAttention: z.boolean().default(false),
+    olderThanDays: z.number().int().min(0).max(3650).optional(),
+    unansweredOnly: z.boolean().optional(),
     limit: z.number().int().min(1).max(25).default(10),
     show: z.boolean().default(true),
   }),
@@ -440,6 +474,7 @@ export const listApplicationsTool = defineTool({
   effect: "read",
   async execute(input, { service, session }) {
     const snapshot = await service.getWorkspaceSnapshot();
+    const now = Date.parse(session.now());
     const words = (input.text ?? "")
       .toLowerCase()
       .split(/\s+/u)
@@ -447,6 +482,23 @@ export const listApplicationsTool = defineTool({
     const records = snapshot.applicationRecords
       .filter((record) => !input.status || record.status === input.status)
       .filter((record) => !input.stage || record.crm?.stage === input.stage)
+      .filter(
+        (record) =>
+          input.olderThanDays === undefined ||
+          (record.crm?.appliedAt &&
+            now - Date.parse(record.crm.appliedAt) >
+              input.olderThanDays * 86_400_000),
+      )
+      .filter(
+        (record) =>
+          !input.unansweredOnly ||
+          (record.crm &&
+            ["applied", "no_response"].includes(record.crm.stage) &&
+            (!record.crm.lastEmployerActivityAt ||
+              (record.crm.appliedAt &&
+                Date.parse(record.crm.lastEmployerActivityAt) <=
+                  Date.parse(record.crm.appliedAt)))),
+      )
       .filter(
         (record) =>
           !input.needsAttention ||
@@ -472,6 +524,9 @@ export const listApplicationsTool = defineTool({
       data: {
         resultSetId: resultSet.id,
         applications: shown.map(compactApplication),
+        missingAppliedDateCount: snapshot.applicationRecords.filter(
+          (record) => !record.crm?.appliedAt,
+        ).length,
       },
       parts:
         input.show && shown.length
@@ -586,6 +641,11 @@ export const getApplicationTool = defineTool({
       )
       .slice(0, 10);
     const verifying = steps.some((step) => step.state === "verifying");
+    const unconfirmedLegacy =
+      result?.state === "submitted" &&
+      result.privacyReceipt?.finalSubmitOccurred !== true &&
+      !record?.personSendReceipt &&
+      !isApplicationTrackedAsSentByPerson(record?.crm);
     return {
       summary: [
         record
@@ -599,13 +659,26 @@ export const getApplicationTool = defineTool({
         .join(" "),
       data: {
         record: record ? compactApplication(record) : null,
+        submission:
+          result?.privacyReceipt?.submissionOutcome ??
+          record?.personSendReceipt ??
+          null,
+        recovery:
+          result?.privacyReceipt?.submissionOutcome?.outcome ===
+          "outcome_uncertain"
+            ? "Check the site and ask the person to record the outcome. Do not send again or change permission settings."
+            : null,
         needsYouSteps: steps.map((step) => ({
           id: step.id,
           title: step.title,
           state: step.state,
         })),
         run: result
-          ? { runId: result.runId, resultId: result.id, state: result.state }
+          ? {
+              runId: result.runId,
+              resultId: result.id,
+              state: unconfirmedLegacy ? "not_confirmed" : result.state,
+            }
           : null,
         questions: (details?.questionRecords ?? [])
           .slice(0, 30)
@@ -641,7 +714,9 @@ export const getApplicationTool = defineTool({
               stage: record.crm.stage,
               revision: record.crm.revision,
               reminders: record.crm.reminders.slice(0, 5),
-              interviews: record.crm.interviews.slice(0, 5),
+              appliedAt: record.crm.appliedAt,
+              lastEmployerActivityAt: record.crm.lastEmployerActivityAt,
+              interviews: record.crm.interviews.map(interviewForModel),
               notes: record.crm.notes.slice(-5),
             }
           : null,
@@ -689,6 +764,24 @@ export const answerApplicationQuestionTool = defineTool({
     const current = details.answerRecords
       .filter((answer) => answer.questionId === input.questionId)
       .sort((left, right) => right.revision - left.revision)[0];
+    const question = details.questionRecords.find(
+      (entry) => entry.id === input.questionId,
+    );
+    if (!question)
+      throw new AssistantToolError(
+        "not_found",
+        "That application question is no longer available.",
+      );
+    const answer =
+      input.answer.type === "multi_choice"
+        ? input.answer.values.join(", ")
+        : input.answer.type === "asset_ref"
+          ? input.answer.assetId
+          : String(input.answer.value);
+    await assertPersonAnswerAuthority(session, {
+      answers: [{ question: question.prompt, answer }],
+      saveForFuture: input.saveForLater,
+    });
     session.assertCurrent();
     await service.saveApplicationAnswer({
       commandId: session.createId("assistant_answer"),
@@ -727,13 +820,32 @@ export const continueApplicationTool = defineTool({
     if (input.openPage) {
       if (!result || !record)
         throw new AssistantToolError("not_found", "No kept page for this job.");
+      await service.inspectPreparedApplicationPage({
+        runId: result.runId,
+        jobId: input.jobId,
+        resultId: result.id,
+        applicationRecordId: record.id,
+      });
       await service.focusPreparedApplicationPage({
         runId: result.runId,
         jobId: input.jobId,
         resultId: result.id,
         applicationRecordId: record.id,
       });
-      return { summary: "The application page is open in the browser." };
+      if (!ports.browser?.show) {
+        return {
+          summary:
+            "The application tab is selected. Open the Job Finder browser to see it.",
+        };
+      }
+      // The same retained tab is now the target of later browser tools in
+      // this turn, even when the message was sent with the browser minimized.
+      await session.browserLease({ applicationResultId: result.id });
+      await ports.browser.show();
+      return {
+        summary:
+          "The application page is open in the browser. Browser tools now use this filled form; sending still uses send_applications.",
+      };
     }
     const outcome = await applyToJobsTool.execute(
       { jobIds: [input.jobId], evenIfExcludedOrApplied: true },
@@ -774,7 +886,7 @@ export const updateTrackingTool = defineTool({
   name: "update_tracking",
   group: "tracking",
   description:
-    "Changes one application's tracking: set_stage, add_note, upsert_reminder (with a dueAt date), set_tags, upsert_interview, set_compensation and their removals. The revision comes from get_application. A tracking stage never counts as sending anything.",
+    "Changes one application's tracking: set_stage, add_note, upsert_reminder (with a dueAt date), set_tags, upsert_interview, set_compensation, set_archived (archived:true to hide finished records, false to restore) and their removals. The revision comes from get_application. A tracking stage never counts as sending anything.",
   parameters: json.object(
     {
       applicationRecordId: json.string(),
@@ -794,7 +906,7 @@ export const updateTrackingTool = defineTool({
   effect: "local_write",
   async execute(input, { service, session, ports }) {
     session.assertCurrent();
-    await service.mutateApplicationCrm({
+    const saved = await service.mutateApplicationCrm({
       applicationRecordId: input.applicationRecordId,
       expectedRevision: input.revision,
       mutation: input.mutation,
@@ -803,6 +915,19 @@ export const updateTrackingTool = defineTool({
     ports.publishWorkspaceUpdate();
     return {
       summary: `Tracking updated (${input.mutation.type.replaceAll("_", " ")}).`,
+      data: (() => {
+        const record = saved.applicationRecords.find(
+          (entry) => entry.id === input.applicationRecordId,
+        );
+        return {
+          tracking: record?.crm
+            ? {
+                ...record.crm,
+                interviews: record.crm.interviews.map(interviewForModel),
+              }
+            : null,
+        };
+      })(),
     };
   },
 });
@@ -810,11 +935,14 @@ export const updateTrackingTool = defineTool({
 export const setStageForManyTool = defineTool({
   name: "set_stage_for_applications",
   group: "tracking",
-  description: "Moves several applications to one tracking stage at once.",
+  description:
+    "Updates a selected group of applications: any stage, adds tags without removing existing tags, archives without changing outcomes or dates, or restores. Read the exact saved dates before selecting old applications; never guess dates.",
   parameters: json.object(
     {
       applicationRecordIds: json.ids(),
       stage: json.enumOf(applicationCrmStageValues),
+      action: json.enumOf(["stage", "tags", "archive", "restore"]),
+      tags: json.ids(),
       note: json.string(),
     },
     ["applicationRecordIds", "stage"],
@@ -822,6 +950,8 @@ export const setStageForManyTool = defineTool({
   input: z.object({
     applicationRecordIds: z.array(Id).min(1).max(500),
     stage: ApplicationCrmStageSchema,
+    action: z.enum(["stage", "tags", "archive", "restore"]).optional(),
+    tags: z.array(Id).max(50).optional(),
     note: z.string().trim().min(1).max(1_000).optional(),
   }),
   label: () => "Updating application stages",
@@ -843,13 +973,18 @@ export const setStageForManyTool = defineTool({
     await service.mutateApplicationCrmBulkStage({
       items,
       stage: input.stage,
+      ...(input.action ? { action: input.action } : {}),
+      ...(input.tags ? { tags: input.tags } : {}),
       customStageId: null,
       note: input.note ?? null,
       actor: "assistant",
     });
     ports.publishWorkspaceUpdate();
     return {
-      summary: `Moved ${plural(items.length, "application")} to ${input.stage}.`,
+      summary:
+        input.action && input.action !== "stage"
+          ? `Updated ${plural(items.length, "application")}: ${input.action}.`
+          : `Moved ${plural(items.length, "application")} to ${input.stage}.`,
     };
   },
 });

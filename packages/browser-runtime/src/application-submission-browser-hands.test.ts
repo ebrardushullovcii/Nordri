@@ -35,7 +35,7 @@ function startFixtureServer(): Promise<FixtureServer> {
       response.writeHead(200, { "content-type": "text/html" });
       response.end(
         requestUrl.pathname === "/submit-confirmed"
-          ? "<main>Thank you for applying. We have received your application.</main>"
+          ? "<main>Thank you for applying. We have received your application. Reference: SYN-42.</main>"
           : "<main>fixture submitted page</main>",
       );
       return;
@@ -151,6 +151,7 @@ describe("source-generic application browser hands", () => {
       },
       expectedPageOrigin: expectedOrigin(zero.page),
       allowedOrigins: [expectedOrigin(zero.page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     });
     expect(zeroResult).toMatchObject({
@@ -168,6 +169,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: multipleObservation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(multiple.page),
       allowedOrigins: [expectedOrigin(multiple.page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     });
     expect(multipleResult).toMatchObject({
@@ -191,6 +193,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     });
     expect(result).toMatchObject({
@@ -210,6 +213,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: "https://other.example.com",
       allowedOrigins: ["https://other.example.com"],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     });
     expect(result).toMatchObject({
@@ -233,6 +237,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     });
 
@@ -256,6 +261,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => false,
     });
     expect(result).toMatchObject({
@@ -301,12 +307,13 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     });
 
     expect(result).toMatchObject({
       outcome: "outcome_uncertain",
-      reason: "action_issued",
+      reason: "confirmation_timeout",
       facts: {
         actionIssued: true,
         actionCompleted: true,
@@ -333,6 +340,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page), `http://127.0.0.1:${closedPort}`],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     });
 
@@ -353,6 +361,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
       clickTimeoutMs: 500,
     };
@@ -365,7 +374,7 @@ describe("source-generic application browser hands", () => {
     await page.evaluate(() => document.getElementById("cover")?.remove());
     expect(await executeExactlyOneFinalAction(page, input)).toMatchObject({
       outcome: "outcome_uncertain",
-      reason: "action_issued",
+      reason: "confirmation_timeout",
       facts: { actionIssued: true },
     });
     await page.waitForTimeout(100);
@@ -384,6 +393,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     });
 
@@ -392,6 +402,7 @@ describe("source-generic application browser hands", () => {
       reason: "employer_confirmation",
       confirmation: {
         destination: { safePath: "/submit-confirmed" },
+        summary: "The site confirmed receipt. Reference: SYN-42.",
       },
       facts: { actionIssued: true, actionCompleted: true },
     });
@@ -416,6 +427,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
       clickTimeoutMs: 50,
     });
@@ -447,6 +459,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: async () => {
         vetoCalls += 1;
         if (vetoCalls === 2) {
@@ -479,6 +492,7 @@ describe("source-generic application browser hands", () => {
       expectedControl: observation.controls[0]!.identity,
       expectedPageOrigin: expectedOrigin(page),
       allowedOrigins: [expectedOrigin(page)],
+      confirmationTimeoutMs: 1_000,
       veto: () => true,
     } as const;
     const results = await Promise.all([
@@ -498,4 +512,80 @@ describe("source-generic application browser hands", () => {
       reason: "stale_observation",
     });
   });
+});
+
+test.each([
+  { error: "Select at least one skill.", label: "Skills" },
+  { error: "Upload a nonempty TXT, PDF, DOC or DOCX file.", label: "Resume" },
+])(
+  "records explicit field rejection as not submitted: $label",
+  async ({ error, label }) => {
+    const { page, server } =
+      await createPage(`<form novalidate action="/submit">
+    <label>${label}<input name="answer" aria-describedby="field-error"></label>
+    <span id="field-error" role="alert"></span><button type="submit">Send application</button></form>
+    <script>document.querySelector('form').onsubmit = event => {
+      event.preventDefault(); document.getElementById('field-error').textContent = ${JSON.stringify(error)};
+    };</script>`);
+    const observation = await observeApplicationForm(page);
+    const input = {
+      expectedObservation: observation.identity,
+      expectedControl: observation.controls[0]!.identity,
+      expectedPageOrigin: expectedOrigin(page),
+      allowedOrigins: [expectedOrigin(page)],
+      veto: () => true,
+    };
+    const result = await executeExactlyOneFinalAction(page, input);
+    expect(result).toMatchObject({
+      outcome: "not_submitted",
+      reason: "form_validation_failed",
+      validationErrors: [error],
+      facts: {
+        actionAttempted: true,
+        actionIssued: true,
+        actionCompleted: true,
+      },
+    });
+    expect(server.requests.some((request) => request.startsWith("POST"))).toBe(
+      false,
+    );
+    // Fixing the field permits another deliberate attempt on the same form.
+    await page.evaluate(() => {
+      document.querySelector<HTMLFormElement>("form")!.onsubmit = (event) => {
+        event.preventDefault();
+        document.body.textContent = "We have received your application";
+      };
+      document.getElementById("field-error")!.textContent = "";
+    });
+    const corrected = await observeApplicationForm(page);
+    expect(
+      (
+        await executeExactlyOneFinalAction(page, {
+          ...input,
+          expectedObservation: corrected.identity,
+          expectedControl: corrected.controls[0]!.identity,
+        })
+      ).outcome,
+    ).toBe("submitted");
+  },
+);
+
+test("waits for a delayed receipt before calling a final send uncertain", async () => {
+  const { page } =
+    await createPage(`<form><button type="submit">Send application</button></form>
+    <script>document.querySelector('form').onsubmit = event => {event.preventDefault();
+      setTimeout(() => {document.body.textContent = 'We have received your application';}, 1_300);};</script>`);
+  const observation = await observeApplicationForm(page);
+  expect(
+    (
+      await executeExactlyOneFinalAction(page, {
+        expectedObservation: observation.identity,
+        expectedControl: observation.controls[0]!.identity,
+        expectedPageOrigin: expectedOrigin(page),
+        allowedOrigins: [expectedOrigin(page)],
+        veto: () => true,
+        confirmationTimeoutMs: 2_000,
+      })
+    ).outcome,
+  ).toBe("submitted");
 });

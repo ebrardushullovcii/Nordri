@@ -131,12 +131,6 @@ export function createConfig(): AgentConfig {
         strategyLabel: "Search Filter Probe",
       },
     },
-    compaction: {
-      messageCountFallbackThreshold: 5,
-      preserveRecentMessages: 2,
-      minimumPreserveRecentMessages: 1,
-      maxToolPayloadChars: 48,
-    },
   };
 }
 

@@ -739,4 +739,75 @@ describe("openai compatible request compaction for grounded resume generation", 
     expect(grounded.groundingEvidence?.items).toHaveLength(32);
     expect(grounded.groundingEvidence?.compaction).toBeUndefined();
   });
+
+  test("sends every job, claim and evidence entry of a pre-sized call that fits", () => {
+    const jobs = Array.from({ length: 20 }, (_, index) => ({
+      jobId: `job_${index + 1}`,
+      title: `Role ${index + 1}`,
+    }));
+    const judged = compactOpenAiCompatibleUserPayload({
+      operation: "judgeJobFits",
+      modelContextWindowTokens: 128_000,
+      systemPrompt: SYSTEM_PROMPT,
+      userPayload: { jobs },
+    }) as { jobs: unknown[] };
+    expect(judged.jobs).toHaveLength(20);
+
+    const evidence = Array.from({ length: 42 }, (_, index) => ({
+      id: `evidence_${index + 1}`,
+      text: `Saved fact ${index + 1}.`,
+    }));
+    const claims = Array.from({ length: 30 }, (_, index) => ({
+      id: `line_${index + 1}`,
+      text: `Resume line ${index + 1}.`,
+    }));
+    const checked = compactOpenAiCompatibleUserPayload({
+      operation: "checkResumeClaims",
+      modelContextWindowTokens: 128_000,
+      systemPrompt: SYSTEM_PROMPT,
+      userPayload: { evidence, claims },
+    }) as { evidence: unknown[]; claims: unknown[] };
+    expect(checked.evidence).toHaveLength(42);
+    expect(checked.claims).toHaveLength(30);
+  });
+});
+
+describe("full fit evidence", () => {
+  test("keeps a middle requirement and all qualification entries when within budget", () => {
+    const payload = {
+      profile: {
+        baseResume: {
+          textContent: "Full imported resume evidence ".repeat(1500),
+        },
+      },
+      job: {
+        description:
+          "a".repeat(10000) +
+          "Java and Dutch C1 are required" +
+          "z".repeat(10000),
+        minimumQualifications: Array.from(
+          { length: 20 },
+          (_, i) => `Requirement ${i}`,
+        ),
+      },
+    };
+    expect(
+      compactOpenAiCompatibleUserPayload({
+        operation: "assessJobFit",
+        modelContextWindowTokens: 196000,
+        systemPrompt: "Read the full listing",
+        userPayload: payload,
+      }),
+    ).toEqual(payload);
+  });
+  test("reports an oversized full read instead of silently omitting evidence", () => {
+    expect(() =>
+      compactOpenAiCompatibleUserPayload({
+        operation: "assessJobFit",
+        modelContextWindowTokens: 16000,
+        systemPrompt: "Read the full listing",
+        userPayload: { job: { description: "requirement ".repeat(10000) } },
+      }),
+    ).toThrow("exceed the model's input limit");
+  });
 });

@@ -13,43 +13,100 @@ export type ApplySubmitPreflightResult =
   | { ok: true }
   | { ok: false; reason: string };
 
-function unansweredRequiredLabels(observation: ApplyFormObservation): string[] {
-  return observation.controls
-    .filter(
+export function unresolvedRequiredControls(observation: ApplyFormObservation) {
+  return observation.controls.filter((control, _index, controls) => {
+    if (control.disabled || (!control.visible && control.kind !== "file"))
+      return false;
+    if (
+      control.kind === "radio" ||
+      (control.kind === "checkbox" && control.choiceGroupKey)
+    ) {
+      const group = controls.filter(
+        (candidate) =>
+          candidate.kind === control.kind &&
+          !candidate.disabled &&
+          candidate.visible &&
+          (control.choiceGroupKey
+            ? candidate.choiceGroupKey === control.choiceGroupKey
+            : candidate.ref === control.ref),
+      );
+      return (
+        group.some((candidate) => candidate.required) &&
+        !group.some((candidate) => candidate.checked) &&
+        group[0] === control
+      );
+    }
+    return control.required && (!control.answered || control.invalid);
+  });
+}
+
+/** Readiness is the same form check in every mode, including Prepare for me. */
+export function checkFormReadiness(
+  observation: ApplyFormObservation,
+): ApplySubmitPreflightResult {
+  if (observation.loading)
+    return {
+      ok: false,
+      reason: "The form is still loading. Check it again once it finishes.",
+    };
+  if (observation.blocker)
+    return { ok: false, reason: observation.blocker.summary };
+  const missing = unresolvedRequiredControls(observation);
+  const missingFile = missing.find((control) => control.kind === "file");
+  if (missingFile)
+    return {
+      ok: false,
+      reason: `${missingFile.label || "A required file"} is not attached or was rejected by the form.`,
+    };
+  if (missing.length) {
+    const labels = missing.map(
       (control) =>
-        control.required &&
-        control.visible &&
-        !control.disabled &&
-        !control.answered &&
-        control.kind !== "file",
-    )
-    .map((control) =>
-      [control.groupLabel, control.label]
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0)
-        .join(" — "),
-    )
-    .filter((label) => label.length > 0);
-}
-
-function hasUnattachedRequiredFile(observation: ApplyFormObservation): boolean {
-  return observation.controls.some(
-    (control) =>
-      control.kind === "file" &&
-      control.visible &&
-      control.required &&
-      !control.answered,
-  );
-}
-
-function looksLikeTheLastScreen(observation: ApplyFormObservation): boolean {
-  const { index, total } = observation.step;
-  if (index !== null && total !== null) {
-    return index >= total;
+        control.groupLabel ||
+        control.label ||
+        control.placeholder ||
+        "an unnamed field",
+    );
+    return {
+      ok: false,
+      reason: `Complete these required fields: ${labels.join(", ")}.`,
+    };
   }
-  return !observation.actions.some(
-    (action) => action.kind === "advance" && action.visible && !action.disabled,
+  const invalid = observation.controls.find(
+    (control) =>
+      !control.disabled &&
+      control.invalid &&
+      (control.visible || control.kind === "file"),
   );
+  if (invalid || observation.validationErrors.length)
+    return {
+      ok: false,
+      reason: `The page is still showing a problem: ${invalid?.validationMessage || observation.validationErrors[0] || invalid?.label}`,
+    };
+  const { index, total } = observation.step;
+  if (
+    (index !== null && total !== null && index < total) ||
+    observation.actions.some(
+      (action) => action.kind === "advance" && action.visible,
+    )
+  ) {
+    return {
+      ok: false,
+      reason:
+        "This form has another step. Continue to the final review before sending.",
+    };
+  }
+  if (
+    !observation.actions.some(
+      (action) => action.kind === "final" && action.visible && !action.disabled,
+    )
+  ) {
+    return {
+      ok: false,
+      reason:
+        "The form's send button is not available yet. Open the form to complete the remaining step.",
+    };
+  }
+  return { ok: true };
 }
 
 function canonicalOrigin(value: string): string | null {
@@ -104,39 +161,5 @@ export function runSubmitPreflight(input: {
     return { ok: false, reason: `"${action.label}" cannot be used right now.` };
   }
 
-  if (observation.blocker) {
-    return { ok: false, reason: observation.blocker.summary };
-  }
-
-  if (hasUnattachedRequiredFile(observation)) {
-    return { ok: false, reason: "A file the form asks for is not attached yet." };
-  }
-
-  const missing = unansweredRequiredLabels(observation);
-  if (missing.length > 0) {
-    const first = missing.slice(0, 3).join(", ");
-    return {
-      ok: false,
-      reason:
-        missing.length > 3
-          ? `${missing.length} required answers are still empty, starting with ${first}.`
-          : `These required answers are still empty: ${first}.`,
-    };
-  }
-
-  if (observation.validationErrors.length > 0) {
-    return {
-      ok: false,
-      reason: `The page is still showing a problem: ${observation.validationErrors[0]}`,
-    };
-  }
-
-  if (!looksLikeTheLastScreen(observation)) {
-    return {
-      ok: false,
-      reason: "There is still another step after this one, so nothing was sent.",
-    };
-  }
-
-  return { ok: true };
+  return checkFormReadiness(observation);
 }

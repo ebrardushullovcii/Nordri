@@ -205,6 +205,12 @@ export function buildCampaignDigest(
     id: `digest_${run.id}`,
     campaignId,
     discoveryRunId: run.id,
+    outcome:
+      run.runPhase === "interrupted"
+        ? "interrupted"
+        : run.state === "cancelled"
+          ? "stopped"
+          : run.state,
     generatedAt,
     counts: {
       new: run.summary.changeDigest.new,

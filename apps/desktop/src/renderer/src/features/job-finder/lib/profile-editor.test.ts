@@ -604,9 +604,9 @@ describe("profile editor application identity defaults", () => {
           key: "record",
           recordId: "experience_candidate_1",
         },
-        label: "React Developer at AUTOMATEDPROS",
+        label: "React Developer at NORTHLANE",
         value: {
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           companyUrl: null,
           title: "React Developer",
           employmentType: null,
@@ -622,8 +622,8 @@ describe("profile editor application identity defaults", () => {
           peopleManagementScope: null,
           ownershipScope: null,
         },
-        valuePreview: "AUTOMATEDPROS | React Developer",
-        evidenceText: "AUTOMATEDPROS – React Developer",
+        valuePreview: "NORTHLANE | React Developer",
+        evidenceText: "NORTHLANE – React Developer",
         confidence: 0.82,
         resolution: "needs_review",
         resolutionReason: null,
@@ -647,9 +647,9 @@ describe("profile editor application identity defaults", () => {
           key: "record",
           recordId: "experience_candidate_2",
         },
-        label: "React Developer at AUTOMATEDPROS",
+        label: "React Developer at NORTHLANE",
         value: {
-          companyName: "AUTOMATEDPROS",
+          companyName: "NORTHLANE",
           companyUrl: null,
           title: "React Developer",
           employmentType: null,
@@ -665,8 +665,8 @@ describe("profile editor application identity defaults", () => {
           peopleManagementScope: null,
           ownershipScope: null,
         },
-        valuePreview: "AUTOMATEDPROS | React Developer",
-        evidenceText: "AUTOMATEDPROS – React Developer",
+        valuePreview: "NORTHLANE | React Developer",
+        evidenceText: "NORTHLANE – React Developer",
         confidence: 0.82,
         resolution: "needs_review",
         resolutionReason: null,
@@ -681,7 +681,7 @@ describe("profile editor application identity defaults", () => {
     expect(result.validationMessage).toBeUndefined();
     expect(result.payload?.experiences).toHaveLength(1);
     expect(result.payload?.experiences[0]).toMatchObject({
-      companyName: "AUTOMATEDPROS",
+      companyName: "NORTHLANE",
       title: "React Developer",
       workMode: ["hybrid"],
     });
@@ -1052,7 +1052,7 @@ describe("profile editor application identity defaults", () => {
         },
         generatedLabelValues,
       ).payload?.discovery.targets[0]?.label,
-    ).toBe("jobs.example.com");
+    ).toBe("jobs.example.com/careers");
 
     const whitespaceOnlyValues =
       createSearchPreferencesEditorValues(searchPreferences);
@@ -1678,4 +1678,136 @@ describe("profile editor application identity defaults", () => {
     ]);
     expect(hasProfileDraftChanges(profile, result.payload)).toBe(false);
   });
+});
+
+test("saving Profile preserves a saved eligibility answer's application location scope", () => {
+  const profile = createProfile();
+  const applicationScope = {
+    resultId: "result_1",
+    applicationRecordId: "application_1",
+    location: "Berlin, Germany",
+  };
+  profile.answerBank.customAnswers = [
+    {
+      id: "eligibility",
+      kind: "work_authorization",
+      label: "Are you authorized?",
+      question: "Are you authorized?",
+      answer: "Yes",
+      roleFamilies: [],
+      proofEntryIds: [],
+      applicationScope,
+    },
+  ];
+  const values = createProfileEditorValues(profile);
+  values.identity.headline = "Edited headline";
+  const saved = buildProfilePayload(profile, values).payload;
+  expect(saved?.answerBank.customAnswers[0]?.applicationScope).toEqual(
+    applicationScope,
+  );
+  expect(saved?.answerBank.customAnswers[0]?.question).toBe(
+    "Are you authorized?",
+  );
+});
+
+test("R3-065 saves limited German permission and future sponsorship together", () => {
+  const profile = createProfile();
+  const values = createProfileEditorValues(profile);
+  values.eligibility.authorizedWorkCountries = "Lebanon";
+  values.eligibility.limitedWorkPermissions = [
+    {
+      country: "Germany",
+      conditions: "Student permission, at most 20 hours weekly during term",
+      requiresFutureSponsorship: "yes",
+    },
+  ];
+  const saved = buildProfilePayload(profile, values).payload!;
+  expect(saved.workEligibility.authorizedWorkCountries).toEqual(["Lebanon"]);
+  expect(saved.workEligibility.limitedWorkPermissions?.[0]).toMatchObject({
+    country: "Germany",
+    requiresFutureSponsorship: true,
+  });
+  expect(
+    createProfileEditorValues(saved).eligibility.limitedWorkPermissions,
+  ).toEqual(values.eligibility.limitedWorkPermissions);
+});
+
+test("R3-105 saves day shifts and a 20–30 hour week, rejecting reversed hours", () => {
+  const preferences = JobSearchPreferencesSchema.parse({
+    minimumSalaryUsd: null,
+    approvalMode: "review_before_submit",
+    tailoringMode: "balanced",
+  });
+  const values = createSearchPreferencesEditorValues(preferences);
+  values.shiftPreference = "day";
+  values.minimumWeeklyHours = "20";
+  values.maximumWeeklyHours = "30";
+  const saved = buildSearchPreferencesPayload(preferences, values).payload!;
+  expect(saved.shiftPreference).toBe("day");
+  expect(saved.weeklyHours).toEqual({ minimum: 20, maximum: 30 });
+  expect(createSearchPreferencesEditorValues(saved).maximumWeeklyHours).toBe(
+    "30",
+  );
+  values.maximumWeeklyHours = "10";
+  expect(
+    buildSearchPreferencesPayload(preferences, values).validationMessage,
+  ).toContain("Maximum weekly hours");
+});
+
+test("R3-138 saves an OTE pay floor and preserves it on unrelated edits", () => {
+  const preferences = JobSearchPreferencesSchema.parse({
+    minimumSalaryUsd: 160000,
+    approvalMode: "review_before_submit",
+    tailoringMode: "balanced",
+  });
+  const values = createSearchPreferencesEditorValues(preferences);
+  expect(values.compensationBasis).toBe("base");
+  values.compensationBasis = "total_ote";
+  const saved = buildSearchPreferencesPayload(preferences, values).payload!;
+  expect(saved.compensation).toMatchObject({
+    minimum: 160000,
+    basis: "total_ote",
+  });
+  expect(
+    buildSearchPreferencesPayload(
+      saved,
+      createSearchPreferencesEditorValues(saved),
+    ).payload?.compensation,
+  ).toEqual(saved.compensation);
+});
+
+test("normalizes a bare portfolio domain and removes trailing skill punctuation", () => {
+  const profile = createProfile();
+  const values = createProfileEditorValues(profile);
+  values.identity.portfolioUrl = "portfolio.example.test";
+  values.profileSkills = "SAP EWM.\nSQL";
+  const result = buildProfilePayload(profile, values);
+  expect(result.payload?.portfolioUrl).toBe("https://portfolio.example.test/");
+  expect(result.payload?.skills).toEqual(["SAP EWM", "SQL"]);
+});
+
+test("saving unrelated profile edits keeps the old-answer confirmation marker until the person confirms", () => {
+  const profile = createProfile();
+  profile.answerBank.customAnswers = [
+    {
+      id: "agent",
+      label: "Experience",
+      question: "Years?",
+      answer: "0",
+      kind: "other",
+      roleFamilies: [],
+      proofEntryIds: [],
+      needsConfirmation: true,
+    },
+  ];
+  const values = createProfileEditorValues(profile);
+  expect(
+    buildProfilePayload(profile, values).payload?.answerBank.customAnswers[0]
+      ?.needsConfirmation,
+  ).toBe(true);
+  values.answerBank.customAnswers[0]!.needsConfirmation = false;
+  expect(
+    buildProfilePayload(profile, values).payload?.answerBank.customAnswers[0]
+      ?.needsConfirmation,
+  ).toBeUndefined();
 });

@@ -338,6 +338,19 @@ describe("resume entry ordering", () => {
       ).toEqual([]);
     });
 
+    test("stays quiet when year-only roles meet in the same year", () => {
+      expect(listOverlapIssueIds(["2019 - 2023", "2023 - Present"])).toEqual(
+        [],
+      );
+    });
+
+    test("flags year-only roles that run alongside each other for years", () => {
+      expect(listOverlapIssueIds(["2018 - 2023", "2020 - Present"])).toEqual([
+        "issue_date_overlap_older",
+        "issue_date_overlap_newer",
+      ]);
+    });
+
     test("flags a genuine two-month concurrent stretch", () => {
       expect(
         listOverlapIssueIds(["Nov 2019 - Jan 2022", "Dec 2021 - Feb 2026"]),

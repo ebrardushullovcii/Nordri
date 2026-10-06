@@ -3,6 +3,8 @@ import type {
   JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 
+import { isApplicationTrackedAsSentByPerson } from "@nordri/contracts";
+
 import { readBackgroundBatch } from "./tools";
 import { allJobs, compactJob } from "./tools/format";
 
@@ -103,9 +105,29 @@ export function readRunStatus(
         details: null,
       };
     }
+    const sendState = (result: (typeof results)[number]) => {
+      const application = snapshot.applicationRecords?.find(
+        (record) => record.jobId === result.jobId,
+      );
+      if (application?.personSendReceipt) return "submitted";
+      if (isApplicationTrackedAsSentByPerson(application?.crm))
+        return "marked sent by you";
+      if (
+        result.privacyReceipt?.submissionOutcome?.outcome ===
+        "outcome_uncertain"
+      )
+        return "send unconfirmed";
+      if (
+        result.state === "submitted" &&
+        result.privacyReceipt?.finalSubmitOccurred !== true
+      )
+        return "not confirmed";
+      return result.state;
+    };
     const byState = new Map<string, number>();
     for (const result of results) {
-      byState.set(result.state, (byState.get(result.state) ?? 0) + 1);
+      const state = sendState(result);
+      byState.set(state, (byState.get(state) ?? 0) + 1);
     }
     const pendingSteps =
       APPLY_TERMINAL_STATES.has(record.state) && record.state !== "completed"
@@ -164,8 +186,25 @@ export function readRunStatus(
             // The address the application actually used, so the reply
             // names the real site.
             appliedOn: job?.applicationUrl ?? job?.canonicalUrl ?? null,
-            state: result.state,
-            summary: result.summary,
+            state:
+              sendState(result) === "not confirmed"
+                ? "not_confirmed"
+                : sendState(result),
+            summary:
+              sendState(result) === "not confirmed"
+                ? "No receipt confirms this send."
+                : result.summary,
+            recovery:
+              result.privacyReceipt?.submissionOutcome?.outcome ===
+              "outcome_uncertain"
+                ? "The send was attempted, but the site did not confirm receipt. Check the site and ask the person to record the outcome. Do not send again or change sending settings."
+                : null,
+            sendPermission:
+              result.privacyReceipt?.submissionOutcome?.outcome ===
+              "outcome_uncertain"
+                ? "blocked_until_person_checks_outcome"
+                : null,
+            detail: result.detail,
             outcome: result.privacyReceipt?.submissionOutcome?.outcome ?? null,
             blocker: result.blockerSummary ?? null,
           };
@@ -207,20 +246,37 @@ export function readRunStatus(
     }
     return {
       done: true,
-      summary: batch?.cancelled
-        ? `Resume batch stopped; ${batch.completedJobIds.length} completed, ${batch.failures.length} failed. Queued jobs were not started.`
-        : `Resume writing ended for ${run.jobIds.length} job(s)${batch?.failures.length ? `; ${batch.failures.length} failed` : ""}${batch?.skipped.length ? `; ${batch.skipped.length} skipped` : ""}.`,
+      summary: batch
+        ? `Resume ${batch.cancelled ? "batch stopped" : "writing finished"}: ${batch.completedJobIds.length} rewritten, ${batch.failures.length} failed, ${batch.skipped.length} skipped, ${Math.max(0, batch.jobIds.length - batch.completedJobIds.length - batch.failures.length - batch.skipped.length)} not started.`
+        : "The resume writer is no longer running. Its completion counts are unavailable; inspect each saved draft before claiming a completed rewrite.",
       details: {
         resumes: run.jobIds.map((jobId) => {
           const item = snapshot.reviewQueue.find(
             (entry) => entry.jobId === jobId,
           );
+          const mode =
+            item?.resumeApplicationMode ??
+            snapshot.settings.resumeApplicationMode;
+          const draft = snapshot.resumeDrafts.find(
+            (entry) => entry.jobId === jobId,
+          );
           return {
             jobId,
             resume: item?.resumeReview.status ?? "unknown",
+            mode,
+            level:
+              mode === "original_resume"
+                ? "original"
+                : (item?.resumeTailoringMode ??
+                  snapshot.searchPreferences.tailoringMode),
+            generationMethod: draft?.generationMethod ?? null,
+            revision: draft?.updatedAt ?? null,
+            approved:
+              mode !== "original_resume" && draft?.status === "approved",
             linesToDecide: item?.resumeLinesToDecide ?? 0,
           };
         }),
+        completedJobIds: batch?.completedJobIds ?? [],
         failures: batch?.failures ?? [],
         skipped: batch?.skipped ?? [],
         cancelled: batch?.cancelled ?? false,

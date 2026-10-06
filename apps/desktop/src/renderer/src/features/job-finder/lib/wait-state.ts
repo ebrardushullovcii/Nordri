@@ -19,6 +19,11 @@
 export const RESUME_OPERATION_LONG_RUNNING_MS = 30_000;
 
 /**
+ * Recovery guidance appears after seventy seconds without claiming a deadline.
+ */
+export const RESUME_DRAFT_LONG_RUNNING_MS = 70_000;
+
+/**
  * The Assistant's own escalation threshold. A measured reply takes 24-27s, so a
  * 30s threshold fired only after the wait was already over and the recovery
  * copy never appeared when it would have helped. This sits below the typical
@@ -33,14 +38,9 @@ export const RESUME_ASSISTANT_LONG_RUNNING_MS = 20_000;
 export const RESUME_ASSISTANT_EXPECTED_WAIT_LABEL =
   "Usually 20-30 seconds for a grounded rewrite.";
 
-/**
- * The tailored draft is the longest wait in the journey. Measured wall-clocks
- * for a full draft-and-PDF run: 39.1s, 57.7s and 63.7s across the last three
- * full walks. Stated from the first second so a successful long operation is
- * not mistaken for a hang.
- */
+/** A fixed duration cannot describe different levels, providers and shared load. */
 export const RESUME_DRAFT_EXPECTED_WAIT_LABEL =
-  "Usually 40-70 seconds for a tailored draft.";
+  "Timing varies. The batch estimate uses finished resumes.";
 
 /**
  * A sub-second round trip that flashes `0:00` and vanishes reads as a glitch,

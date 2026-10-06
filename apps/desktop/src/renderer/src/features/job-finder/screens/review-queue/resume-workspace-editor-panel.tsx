@@ -33,6 +33,7 @@ type DraftAcknowledgments = ResumeDraft["workHistoryReviewAcknowledgments"];
 
 interface ResumeWorkspaceEditorPanelProps {
   actionMessage: string | null;
+  onRetryAction?: (() => void) | undefined;
   /**
    * The file the message names, when an export just wrote one. C6 landed the
    * path sentence and left the person to find the file by hand.
@@ -271,7 +272,7 @@ export function ResumeWorkspaceEditorPanel(
               className={
                 deterministicFallbackMessage
                   ? "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-body) leading-6 text-(--warning-text)"
-                  : "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-(--radius-field) border border-primary/30 bg-primary/10 px-3 py-2 text-(length:--text-body) leading-6 text-foreground"
+                  : "flex flex-wrap items-start justify-between gap-x-3 gap-y-2 text-(length:--text-body) leading-6 text-foreground-soft"
               }
               data-resume-draft-provenance
               {...(deterministicFallbackMessage
@@ -306,7 +307,9 @@ export function ResumeWorkspaceEditorPanel(
           ) : null}
           {props.showGeneratedLineMarkers && generatedBulletCount > 0 ? (
             <div
-              className="rounded-(--radius-field) border border-(--warning-border) bg-(--warning-surface) px-3 py-2 text-(length:--text-body) leading-6 text-(--warning-text)"
+              // The lines themselves carry the marks and Lines to confirm
+              // is the review box; this is the explanation, in plain text.
+              className="text-(length:--text-small) leading-6 text-foreground-muted"
               data-resume-inference-disclosure
               role="note"
             >
@@ -402,10 +405,12 @@ export function ResumeWorkspaceEditorPanel(
             showGeneratedMarkers={Boolean(props.showGeneratedLineMarkers)}
             onChange={props.onSectionChange}
             onPatch={(patch, revisionReason) =>
-              props.runWithSavedDraft(
-                () => props.onApplyPatch(patch, revisionReason),
-                "Saved your draft before applying this update.",
-              )
+              patch.origin === "user" && patch.operation === "toggle_include"
+                ? props.onApplyPatch(patch, revisionReason)
+                : props.runWithSavedDraft(
+                    () => props.onApplyPatch(patch, revisionReason),
+                    "Saved your draft before applying this update.",
+                  )
             }
             onSelectEntry={props.onSelectEntry}
             onSelectSection={props.onSelectSection}
@@ -442,6 +447,17 @@ export function ResumeWorkspaceEditorPanel(
             <p className="min-w-0 break-words text-(length:--text-small) leading-5 text-primary">
               {props.actionMessage}
             </p>
+            {props.onRetryAction ? (
+              <Button
+                disabled={props.isWorkspacePending}
+                onClick={props.onRetryAction}
+                size="compact"
+                type="button"
+                variant="outline"
+              >
+                Try again
+              </Button>
+            ) : null}
             {props.actionSavedFilePath && props.onOpenSavedFolder ? (
               <Button
                 onClick={() => {

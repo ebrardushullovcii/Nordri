@@ -1,5 +1,6 @@
 import {
   ApplicationAnswerRecordSchema,
+  compareApplicationAnswerRecency,
   ApplicationAttemptQuestionSchema,
   ApplyGroupedManualAnswerInputSchema,
   JobFinderIntelligenceStateSchema,
@@ -46,7 +47,10 @@ function latestAnswerForQuestion(
   let latest: ApplicationAnswerRecord | null = null;
   for (const answer of answers) {
     if (answer.questionId !== questionId) continue;
-    if (latest === null || answer.revision > latest.revision) {
+    if (
+      latest === null ||
+      compareApplicationAnswerRecency(answer, latest) < 0
+    ) {
       latest = answer;
     }
   }

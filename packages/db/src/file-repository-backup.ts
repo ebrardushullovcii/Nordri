@@ -18,8 +18,7 @@ export interface WorkspaceDatabaseBackupPaths {
   closeTemporaryPath: string;
   /**
    * Database-only snapshot taken immediately before a destructive full-state
-   * reset. Stored under a distinct destination so later close snapshots can
-   * never overwrite it with post-reset state.
+   * reset. Removed along with all older backups when the reset succeeds.
    */
   resetBackupPath: string;
   resetTemporaryPath: string;
@@ -94,8 +93,7 @@ export async function createWorkspaceCloseDatabaseBackup(input: {
 
 /**
  * Writes the pre-reset snapshot to the dedicated `<filePath>.reset-backup`
- * destination. Close snapshots rotate `<filePath>.backup` only and therefore
- * can never overwrite this file with post-reset state.
+ * destination. It is retained only while the reset is in progress or has failed.
  */
 export async function createWorkspaceResetDatabaseBackup(input: {
   database: DatabaseSync;
@@ -111,6 +109,21 @@ export async function createWorkspaceResetDatabaseBackup(input: {
   } catch (error) {
     await rm(resetTemporaryPath, { force: true }).catch(() => undefined);
     return { status: "skipped", backupPath: resetBackupPath, reason: error };
+  }
+}
+
+/** Remove every managed snapshot after a successful destructive reset.
+ * Failures propagate so callers cannot report permanent deletion prematurely.
+ */
+export async function removeWorkspaceDatabaseBackups(
+  filePath: string,
+): Promise<void> {
+  for (const snapshotPath of Object.values({
+    ...getWorkspaceDatabaseBackupPaths(filePath),
+  })) {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      await rm(`${snapshotPath}${suffix}`, { force: true });
+    }
   }
 }
 

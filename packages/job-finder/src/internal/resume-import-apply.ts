@@ -1,5 +1,6 @@
 import {
   CandidateProfileSchema,
+  isFreshStartCandidateProfile,
   CompensationPreferenceSchema,
   JobSearchPreferencesSchema,
   type CandidateProfile,
@@ -39,6 +40,9 @@ type ResolvedResumeImportSelection = {
       | "fullName"
       | "headline"
       | "summary"
+      | "currentCity"
+      | "currentRegion"
+      | "currentCountry"
       | "currentLocation"
       | "timeZone"
       | "yearsExperience"
@@ -136,9 +140,14 @@ function buildResolvedSelection(
 
       switch (candidate.target.section) {
         case "experience":
-          selection.experiences.push(
-            value as CandidateProfile["experiences"][number],
-          );
+          selection.experiences.push({
+            ...value,
+            ...(profile.experiences.some(
+              (record) => record.id === candidate.target.recordId,
+            )
+              ? { id: candidate.target.recordId }
+              : {}),
+          } as CandidateProfile["experiences"][number]);
           break;
         case "education":
           if (candidate.target.key === "record") {
@@ -376,6 +385,16 @@ function buildResolvedSelection(
           selection.scalarFields.currentLocation = value;
         }
         break;
+      case "location.currentCity":
+      case "location.currentRegion":
+      case "location.currentCountry":
+        selection.scalarFields[
+          candidate.target.key as
+            | "currentCity"
+            | "currentRegion"
+            | "currentCountry"
+        ] = typeof value === "string" ? value : null;
+        break;
       case "location.timeZone":
         selection.scalarFields.timeZone =
           typeof value === "string" ? value : null;
@@ -557,6 +576,7 @@ function mergeResolvedSelectionIntoWorkspace(
   analysisProviderKind: ResumeImportRun["analysisProviderKind"],
   analysisProviderLabel: ResumeImportRun["analysisProviderLabel"],
   analysisWarnings: readonly string[],
+  candidates: readonly ResumeImportFieldCandidate[],
 ): {
   profile: CandidateProfile;
   searchPreferences: JobSearchPreferences;
@@ -594,7 +614,26 @@ function mergeResolvedSelectionIntoWorkspace(
       ? selection.scalarFields.skillGroups.highlightedSkills
       : profile.professionalSummary.strengths,
   });
-  const mergedLinks = mergeLinkRecords(profile.links, selection.links);
+  const namedLinks = [
+    ["Website", "website", selection.scalarFields.personalWebsiteUrl],
+    ["Portfolio", "portfolio", selection.scalarFields.portfolioUrl],
+  ] as const;
+  const importedLinks = [...selection.links];
+  for (const [label, kind, url] of namedLinks) {
+    if (
+      url &&
+      ![...profile.links, ...importedLinks].some((link) => link.url === url)
+    ) {
+      importedLinks.push({
+        id: `import_${kind}`,
+        label,
+        kind,
+        url,
+        isDraft: false,
+      });
+    }
+  }
+  const mergedLinks = mergeLinkRecords(profile.links, importedLinks);
   const preferredLinkUrls = uniqueStrings(
     selection.scalarFields.applicationIdentity?.preferredLinkUrls ?? [],
   );
@@ -682,15 +721,27 @@ function mergeResolvedSelectionIntoWorkspace(
       headline: selection.scalarFields.headline ?? profile.headline,
       summary: selection.scalarFields.summary ?? profile.summary,
       currentLocation,
-      currentCity: locationParts.currentCity ?? profile.currentCity,
-      currentRegion: locationParts.currentRegion ?? profile.currentRegion,
-      currentCountry: locationParts.currentCountry ?? profile.currentCountry,
+      currentCity:
+        selection.scalarFields.currentCity !== undefined
+          ? selection.scalarFields.currentCity
+          : (locationParts.currentCity ?? profile.currentCity),
+      currentRegion:
+        selection.scalarFields.currentRegion !== undefined
+          ? selection.scalarFields.currentRegion
+          : (locationParts.currentRegion ?? profile.currentRegion),
+      currentCountry:
+        selection.scalarFields.currentCountry !== undefined
+          ? selection.scalarFields.currentCountry
+          : (locationParts.currentCountry ?? profile.currentCountry),
       timeZone:
         selection.scalarFields.timeZone !== undefined
           ? selection.scalarFields.timeZone
           : profile.timeZone,
       yearsExperience:
-        selection.scalarFields.yearsExperience ?? profile.yearsExperience,
+        selection.scalarFields.yearsExperience ??
+        (isFreshStartCandidateProfile(profile) && profile.yearsExperience === 0
+          ? null
+          : profile.yearsExperience),
       email: nextEmail,
       phone: nextPhone,
       portfolioUrl:
@@ -774,6 +825,30 @@ function mergeResolvedSelectionIntoWorkspace(
       ),
       baseResume: {
         ...profile.baseResume,
+        ...(candidates.some(
+          (candidate) => candidate.sourceKind === "model_identity_summary",
+        )
+          ? {
+              sourceIdentity: {
+                fullName:
+                  candidates.find(
+                    (candidate) =>
+                      candidate.sourceKind === "model_identity_summary" &&
+                      candidate.target.section === "identity" &&
+                      candidate.target.key === "fullName" &&
+                      typeof candidate.value === "string",
+                  )?.value ?? null,
+                email:
+                  candidates.find(
+                    (candidate) =>
+                      candidate.sourceKind === "model_identity_summary" &&
+                      candidate.target.section === "contact" &&
+                      candidate.target.key === "email" &&
+                      typeof candidate.value === "string",
+                  )?.value ?? null,
+              },
+            }
+          : {}),
         extractionStatus: "ready",
         lastAnalyzedAt: new Date().toISOString(),
         analysisProviderKind,
@@ -867,5 +942,6 @@ export function applyResolvedResumeImportCandidatesToWorkspace(input: {
     input.analysisProviderKind,
     input.analysisProviderLabel,
     input.analysisWarnings,
+    input.candidates,
   );
 }

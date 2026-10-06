@@ -5,6 +5,7 @@ import {
   plainRecordedJobFinderText,
   splitBlockedAttemptNote,
   describeFailure,
+  describeWorkspaceRestoreFailure,
 } from "./describe-failure";
 
 describe("recorded Job Finder copy", () => {
@@ -39,4 +40,66 @@ describe("paused background work", () => {
     );
     expect(description.userMessage).not.toContain("remote method");
   });
+});
+
+it("workspace restore explains unknown versions and keeps unexpected raw errors behind details", () => {
+  const unsupported = describeWorkspaceRestoreFailure(
+    new Error(
+      "Error invoking remote method 'job-finder:preview-personal-workspace-restore': Error: This export uses a version Nordri cannot restore. Your workspace was kept.",
+    ),
+  );
+  expect(unsupported.userMessage).toBe(
+    "This export uses a version Nordri cannot restore. Your workspace was kept.",
+  );
+  const unknown = describeWorkspaceRestoreFailure(
+    new Error("Unexpected storage failure at internal_record_123"),
+  );
+  expect(unknown.userMessage).not.toContain("internal_record_123");
+  expect(unknown.technicalDetails).toContain("internal_record_123");
+});
+
+it("keeps service listing advice without its Electron wrapper and hides arbitrary errors", async () => {
+  const { describeListingReadFailure, describeBrowserJobFailure } =
+    await import("./describe-failure");
+  const advice =
+    "The listing could not be read from this page. Open the listing and try again.";
+  expect(
+    describeListingReadFailure(
+      new Error(
+        `Error invoking remote method 'job-finder:assess': Error: ${advice}`,
+      ),
+    ),
+  ).toBe(advice);
+  expect(
+    describeListingReadFailure(new Error("Model provider secret payload")),
+  ).toBe("Could not assess this listing. Try again.");
+  expect(
+    describeBrowserJobFailure(
+      new Error(
+        "No job listing was found on this page. Open the job's own listing and try again.",
+      ),
+    ),
+  ).toContain("No job listing");
+});
+
+it("names a failed listing site and reserves the internet sentence for an offline device", async () => {
+  const { describeListingReadFailure } = await import("./describe-failure");
+  const failure = new Error("fetch failed");
+  expect(
+    describeListingReadFailure(failure, {
+      listingUrl: "https://careers.example.test/jobs/one?private=value",
+      online: true,
+    }),
+  ).toBe(
+    "Job Finder could not reach careers.example.test. Open the listing in the browser and try again.",
+  );
+  expect(
+    describeListingReadFailure(failure, {
+      listingUrl: "https://careers.example.test/jobs/one",
+      online: false,
+    }),
+  ).toContain("could not reach the internet");
+  expect(describeListingReadFailure(failure, { online: true })).not.toContain(
+    "internet",
+  );
 });

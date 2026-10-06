@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 import { createSeed } from "../workspace-service.test-fixtures";
 import {
   buildApplicationPrivacyReceipt,
+  describeApplicationPreparation,
+  hasVerifiedApplicationSubmission,
   buildApplyCopilotArtifacts,
   enforcePrepareOnlyExecutionResult,
   mapExecutionResultToApplyBlockerReason,
@@ -35,6 +37,51 @@ it("preserves a CAPTCHA handoff as site protection instead of an unanswered ques
 });
 
 describe("reconcileApplyRunAfterConfirmedSubmission", () => {
+  it("keeps a paused batch's exact limit and does not invent a confirmed send", () => {
+    const run = ApplyRunSchema.parse({
+      id: "run_limit",
+      state: "paused_for_user_review",
+      jobIds: ["a", "b"],
+      createdAt: "2026-10-02T09:00:00.000Z",
+      updatedAt: "2026-10-02T09:00:00.000Z",
+      summary: "Daily limit reached",
+      detail: "The daily limit of 8 applications was reached.",
+      totalJobs: 2,
+      pendingJobs: 2,
+    });
+    const results = ["a", "b"].map((jobId) =>
+      ApplyJobResultSchema.parse({
+        id: jobId,
+        runId: run.id,
+        jobId,
+        state: jobId === "a" ? "failed" : "planned",
+        summary: "Not sent",
+        detail: "Not sent",
+        startedAt: run.createdAt,
+        updatedAt: run.updatedAt,
+      }),
+    );
+    const next = reconcileApplyRunAfterConfirmedSubmission({
+      run,
+      results,
+      submittedAt: run.updatedAt,
+      submittedSummary: "Could not apply",
+      submittedDetail: "Nothing sent",
+    });
+    expect(next.detail).toBe(run.detail);
+    expect(next.submittedJobs).toBe(0);
+    const review = reconcileApplyRunAfterConfirmedSubmission({
+      run: { ...run, state: "running" },
+      results: results.map((result) => ({
+        ...result,
+        state: "awaiting_review",
+      })),
+      submittedAt: run.updatedAt,
+      submittedSummary: "Prepared",
+      submittedDetail: "Review",
+    });
+    expect(review.detail).toContain("Nothing was confirmed sent");
+  });
   const at = "2026-07-30T10:00:00.000Z";
   const later = "2026-07-30T10:05:00.000Z";
   const result = (jobId: string, state: "awaiting_review" | "submitted") =>
@@ -151,6 +198,51 @@ describe("summarizeApplyJobResultStates", () => {
 });
 
 describe("buildApplicationPrivacyReceipt", () => {
+  it("records the actual form upload without claiming a different approved file's identity", () => {
+    const job = createSeed().savedJobs[0]!;
+    const at = "2026-07-30T10:00:00.000Z";
+    const receipt = buildApplicationPrivacyReceipt({
+      applicationRecordId: "application-mismatch",
+      job,
+      generatedAt: at,
+      runId: "run-mismatch",
+      resultId: "result-mismatch",
+      resumeArtifact: ApplicationResumeArtifactSchema.parse({
+        id: "approved-resume",
+        jobId: job.id,
+        source: "tailored_export",
+        sourceDocumentId: null,
+        exportArtifactId: "approved-export",
+        fileName: "approved.pdf",
+        filePath: "/tmp/approved.pdf",
+        sha256: "a".repeat(64),
+        approvedAt: at,
+      }),
+      reviewCard: ApplicationReviewCardSchema.parse({
+        siteLabel: "Replica",
+        pageUrl: job.applicationUrl,
+        attachments: [
+          { label: "Resume", field: "Resume / CV", fileName: "original.docx" },
+        ],
+        preparedAt: at,
+      }),
+      executionResult: ApplyExecutionResultSchema.parse({
+        state: "paused",
+        summary: "Needs a document",
+        detail: "Nothing was sent.",
+        submittedAt: null,
+        outcome: null,
+        nextActionLabel: null,
+      }),
+    });
+    expect(receipt.resume).toMatchObject({
+      fileName: "original.docx",
+      sourceDocumentId: null,
+      exportArtifactId: null,
+      sha256: null,
+    });
+  });
+
   it("redacts destination secrets and records verified preparation writes", () => {
     const job = {
       ...createSeed().savedJobs[0]!,
@@ -410,6 +502,8 @@ describe("buildApplyCopilotArtifacts", () => {
     });
 
     expect(artifacts.result.reviewCard).toEqual(reviewCard);
+    expect(artifacts.result.latestQuestionCount).toBe(1);
+    expect(artifacts.result.latestAnswerCount).toBe(1);
   });
 });
 
@@ -490,7 +584,13 @@ describe("questions from a real form become records", () => {
             answerOptions: ["Male", "Female", "Decline To Self Identify"],
           }),
           question(3, {
-            prompt: "Why do you want to work here?",
+            prompt: "Coordination experience",
+            inputConstraints: {
+              type: "number",
+              min: "0",
+              max: "50",
+              step: "1",
+            },
             isRequired: false,
           }),
         ],
@@ -525,6 +625,12 @@ describe("questions from a real form become records", () => {
     );
     expect(artifacts.questionRecords[1]?.description).toBe("Phone country");
     expect(artifacts.questionRecords[1]?.answerOptions).toHaveLength(40);
+    expect(artifacts.questionRecords[3]?.inputConstraints).toEqual({
+      type: "number",
+      min: "0",
+      max: "50",
+      step: "1",
+    });
     for (const record of artifacts.questionRecords) {
       expect(record.prompt.trim().length).toBeGreaterThan(0);
       for (const option of record.answerOptions) {
@@ -532,4 +638,155 @@ describe("questions from a real form become records", () => {
       }
     }
   });
+});
+
+it("does not save a model's send claim as the summary of an unsent preparation", () => {
+  const result = ApplyExecutionResultSchema.parse({
+    state: "ready",
+    outcome: "ready_for_review",
+    summary: "Submitted via Submit button",
+    detail: "Applied successfully",
+    checkpoints: [],
+    questions: [],
+    consentDecisions: [],
+    replay: {},
+    nextActionLabel: "Review",
+    submittedAt: null,
+  });
+  expect(describeApplicationPreparation(result)).toMatchObject({
+    summary: "Ready to send.",
+    detail: "The form is filled in. Review it and send when you are ready.",
+  });
+  expect(
+    hasVerifiedApplicationSubmission(
+      ApplyJobResultSchema.parse({
+        id: "r",
+        runId: "run",
+        jobId: "j",
+        state: "submitted",
+        summary: "SENT",
+        detail: "SENT",
+        startedAt: "2026-10-03T10:00:00.000Z",
+        updatedAt: "2026-10-03T10:00:00.000Z",
+      }),
+    ),
+  ).toBe(false);
+});
+
+it("does not call a sign-in pause a prepared form", () => {
+  const result = describeApplicationPreparation(
+    ApplyExecutionResultSchema.parse({
+      state: "paused",
+      nextActionLabel: "Sign in",
+      summary: "Submitted",
+      detail: "Submitted",
+      outcome: null,
+      submittedAt: null,
+      questions: [],
+      checkpoints: [],
+      blocker: {
+        code: "requires_manual_review",
+        summary: "Sign in",
+        userActionKind: "login",
+      },
+      consentDecisions: [],
+      replay: {},
+      visualEvidence: [],
+      visualObservationSets: [],
+      visualCheckpoints: [],
+      executionTimings: [],
+    }),
+  );
+  expect(result.summary).toBe("Preparation paused.");
+  expect(result.detail).toBe("Sign in");
+});
+
+it("keeps the original fingerprint for the byte-identical TXT copy", () => {
+  const job = createSeed().savedJobs[0]!;
+  const at = "2026-07-30T10:00:00.000Z";
+  const receipt = buildApplicationPrivacyReceipt({
+    applicationRecordId: "application_txt",
+    job,
+    generatedAt: at,
+    runId: "run_txt",
+    resultId: "result_txt",
+    resumeArtifact: ApplicationResumeArtifactSchema.parse({
+      id: "original",
+      jobId: job.id,
+      source: "original_upload",
+      sourceDocumentId: "original",
+      fileName: "resume.md",
+      filePath: "/tmp/synthetic/resume.md",
+      sha256: "b".repeat(64),
+      approvedAt: at,
+    }),
+    reviewCard: ApplicationReviewCardSchema.parse({
+      siteLabel: "Replica",
+      pageUrl: job.applicationUrl,
+      preparedAt: at,
+      attachments: [
+        { label: "Resume", field: "Resume", fileName: "resume.txt" },
+      ],
+    }),
+    executionResult: ApplyExecutionResultSchema.parse({
+      state: "paused",
+      summary: "Prepared",
+      detail: "Nothing sent",
+      submittedAt: null,
+      outcome: null,
+      nextActionLabel: null,
+    }),
+  });
+  expect(receipt.resume).toMatchObject({
+    fileName: "resume.txt",
+    sourceDocumentId: "original",
+    sha256: "b".repeat(64),
+  });
+});
+
+it("keeps agent timing on the persisted apply job result", () => {
+  const job = createSeed().savedJobs[0]!;
+  const at = "2026-07-30T10:00:00.000Z";
+  const agentTiming = {
+    totalMs: 2000,
+    modelMs: 1200,
+    modelTurns: 2,
+    auxiliaryModelMs: 100,
+    auxiliaryModelCalls: 1,
+    toolMs: 600,
+    pageReadMs: 200,
+    pageReads: 7,
+    writeMs: 100,
+    uploadMs: 50,
+    longestSteps: [],
+    requests: [],
+  };
+  const artifacts = buildApplyCopilotArtifacts({
+    applicationRecordId: "application_timing",
+    job,
+    detectedAt: at,
+    runId: "run_timing",
+    resultId: "result_timing",
+    resumeArtifact: ApplicationResumeArtifactSchema.parse({
+      id: "resume_timing",
+      jobId: job.id,
+      source: "original_upload",
+      sourceDocumentId: "document_timing",
+      exportArtifactId: null,
+      fileName: "synthetic.pdf",
+      filePath: "/tmp/synthetic.pdf",
+      sha256: "a".repeat(64),
+      approvedAt: at,
+    }),
+    executionResult: ApplyExecutionResultSchema.parse({
+      state: "ready",
+      summary: "Prepared.",
+      detail: "Nothing sent.",
+      submittedAt: null,
+      outcome: null,
+      nextActionLabel: null,
+      agentTiming,
+    }),
+  });
+  expect(artifacts.result.agentTiming).toEqual(agentTiming);
 });

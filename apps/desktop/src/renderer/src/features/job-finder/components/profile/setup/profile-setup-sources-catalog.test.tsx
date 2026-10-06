@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -26,6 +27,8 @@ import {
 } from "../../../lib/profile-editor";
 import type { DiscoveryTargetEditorValue } from "../../../lib/job-finder-types";
 import { ProfileSetupTargetingStep } from "./profile-setup-step-sections";
+
+afterEach(cleanup);
 
 const profile = CandidateProfileSchema.parse({
   id: "candidate_setup_sources_catalog",
@@ -202,13 +205,13 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
 
     expect(screen.getByText("6 sources")).toBeTruthy();
     expect(screen.getByText("0 of 6 sources enabled for search")).toBeTruthy();
-    // Starter sources exist but are all disabled: warn before the ready
-    // check instead of staying silent until discovery fails.
+    // Starter sources exist but are all disabled: the step warns once, at its
+    // top, with a jump to the list; the list does not say it a second time.
     expect(
-      screen.getByText(
+      screen.queryByText(
         "All 6 saved sources are turned off. Enable at least one source below so Job Finder has somewhere to search.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     const jumpCta = screen.getByRole("button", {
       name: "Show job sources to enable",
     });
@@ -489,7 +492,11 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
   it("adds a manual URL fallback that is ready to search straight away", async () => {
     render(<SetupCatalogHarness targets={[]} />);
 
-    expect(screen.getByText(/Add at least one site to search/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Add an employer’s careers page or a job board you already use/,
+      ),
+    ).toBeTruthy();
     // With nothing saved, adding a site is the step: the form is already open,
     // so there is no button to open it, and Cancel closes it.
     expect(
@@ -515,9 +522,7 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
       target: { value: "example.com/careers" },
     });
     expect(
-      await screen.findByText(
-        "Enter a complete http or https URL before this source can be used.",
-      ),
+      await screen.findByText("Enter a complete http or https URL."),
     ).toBeTruthy();
     expect(urlInput.getAttribute("aria-invalid")).toBe("true");
     expect(addButton.hasAttribute("disabled")).toBe(true);
@@ -601,6 +606,48 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
       2,
     );
     expect(getDiscoveryReady()).toBe(true);
+  });
+
+  it("splits a multiline clipboard paste into twelve separately enabled sources", () => {
+    render(<SetupCatalogHarness targets={[]} />);
+    const urls = Array.from(
+      { length: 12 },
+      (_, index) => `https://source-${index}.example.test/jobs`,
+    );
+    const input = screen.getByLabelText<HTMLInputElement>(
+      "Careers or job-board URL",
+    );
+    fireEvent.paste(input, {
+      clipboardData: { getData: () => urls.join("\n") },
+    });
+    expect(input.checkValidity()).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Add and turn on" }));
+    expect(screen.getByText("12 sources")).toBeTruthy();
+    expect(screen.getByText(/Added 12 sources and turned them on/)).toBeTruthy();
+    const cards = Array.from(
+      document.querySelectorAll("[data-profile-setup-source-card]"),
+    );
+    expect(cards).toHaveLength(12);
+    for (const [index, url] of urls.entries())
+      expect(cards[index]?.textContent).toContain(new URL(url).host);
+    expect(screen.getByText("12 of 12 sources enabled for search")).toBeTruthy();
+  });
+
+  it("rejects a multiline paste containing an invalid address", () => {
+    render(<SetupCatalogHarness targets={[]} />);
+    fireEvent.paste(screen.getByLabelText("Careers or job-board URL"), {
+      clipboardData: {
+        getData: () => "https://valid.example.test/jobs\nhttps://",
+      },
+    });
+    expect(
+      screen
+        .getByRole("button", { name: "Add and turn on" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      document.querySelectorAll("[data-profile-setup-source-card]"),
+    ).toHaveLength(0);
   });
 
   it("explains unsupported guidance and blocks enabling sources without valid URLs", () => {
@@ -752,4 +799,46 @@ describe("ProfileSetupTargetingStep guided source catalog", () => {
     expect(onRunSourceDebug).not.toHaveBeenCalled();
     expect(screen.getByText("Acme careers")).toBeTruthy();
   });
+});
+
+it("splits pasted roles using the same semicolon separator as places", () => {
+  render(<SetupCatalogHarness targets={[]} />);
+  const input = screen.getByPlaceholderText("Add a target role");
+  fireEvent.change(input, {
+    target: {
+      value: "Junior Data Analyst; Junior Data Scientist; Working Student Data Analytics",
+    },
+  });
+  fireEvent.keyDown(input, { key: "Enter" });
+  for (const role of [
+    "Junior Data Analyst",
+    "Junior Data Scientist",
+    "Working Student Data Analytics",
+  ]) {
+    expect(screen.getByText(role)).toBeTruthy();
+  }
+});
+
+it("validates and splits URL lists filled without a paste event", () => {
+  render(<SetupCatalogHarness targets={[]} />);
+  const field = screen.getByLabelText("Careers or job-board URL");
+  fireEvent.change(field, {
+    target: { value: "https://one.example/careers https://two.example/jobs" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add and turn on" }));
+  expect(screen.getAllByText("one.example/careers").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("two.example/jobs").length).toBeGreaterThan(0);
+  fireEvent.change(field, {
+    target: {
+      value:
+        "https://one.example/careers not a web address https://two.example/jobs",
+    },
+  });
+  expect(screen.getByText(/is not a web address/)).toBeTruthy();
+  expect(
+    screen
+      .getByRole("button", { name: "Add and turn on" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  expect(screen.queryByText(/Added 2 sources and turned them on/)).toBeNull();
 });

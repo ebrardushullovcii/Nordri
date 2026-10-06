@@ -722,6 +722,8 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
           );
         });
       },
+      assessJobListing: (jobId: string) =>
+        runWorkspaceEntityMutation({ type: "assess_job_listing", jobId }),
       queueJobForReview: (jobId: string) =>
         runWorkspaceEntityMutation({
           type: "queue_job_for_review",
@@ -739,6 +741,8 @@ export function useJobFinderWorkspace(): JobFinderWorkspaceState {
           ...(resumeTailoringMode === undefined ? {} : { resumeTailoringMode }),
         }),
       refreshWorkspace: syncWorkspace,
+      resetBrowser: () =>
+        runWorkspaceAction(() => window.nordri.jobFinder.resetBrowser()),
       resetWorkspace: () =>
         runWorkspaceAction(() => window.nordri.jobFinder.resetWorkspace()),
       runAgentDiscovery: (

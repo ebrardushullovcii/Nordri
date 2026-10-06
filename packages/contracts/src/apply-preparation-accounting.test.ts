@@ -70,3 +70,19 @@ describe("application preparation accounting contract", () => {
     ).toThrow();
   });
 });
+
+test("automatic send queue state is typed and optional for old records", () => {
+  expect(
+    ApplyJobResultSchema.parse(baseResult).automaticSendPending,
+  ).toBeUndefined();
+  expect(
+    ApplyJobResultSchema.parse({ ...baseResult, automaticSendPending: true })
+      .automaticSendPending,
+  ).toBe(true);
+  expect(() =>
+    ApplyJobResultSchema.parse({
+      ...baseResult,
+      automaticSendPending: "queued",
+    }),
+  ).toThrow();
+});

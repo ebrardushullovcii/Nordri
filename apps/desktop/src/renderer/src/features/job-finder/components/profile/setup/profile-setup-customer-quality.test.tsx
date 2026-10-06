@@ -180,6 +180,31 @@ describe("profile setup customer-quality guidance", () => {
     vi.clearAllMocks();
   });
 
+  it("marks an edited earlier step as unsaved instead of Complete", () => {
+    render(
+      <ProfileSetupPathCard
+        currentStep="targeting"
+        hasImportedResume
+        unsavedSteps={["essentials", "background"]}
+        profileSetupState={{
+          status: "in_progress",
+          currentStep: "targeting",
+          completedAt: null,
+          reviewItems: [],
+          lastResumedAt: null,
+        }}
+        onGoToStep={() => undefined}
+      />,
+    );
+    const getSetupPathRowText = (label: string) =>
+      Array.from(container?.querySelectorAll("button") ?? []).find((button) =>
+        button.textContent?.includes(label),
+      )?.textContent ?? "";
+    expect(getSetupPathRowText("Basics")).toContain("Unsaved changes");
+    expect(getSetupPathRowText("Basics")).not.toContain("Complete");
+    expect(getSetupPathRowText("Work history")).toContain("Unsaved changes");
+  });
+
   it("keeps pending review counts visible instead of presenting a contradictory completed step", () => {
     render(
       <ProfileSetupPathCard
@@ -318,7 +343,8 @@ describe("profile setup customer-quality guidance", () => {
     );
 
     expect(getSetupPathRowText("Import")).toContain("Complete");
-    expect(getSetupPathRowText("Basics")).toContain("Complete");
+    expect(getSetupPathRowText("Basics")).toContain("Ready to review");
+    expect(getSetupPathRowText("Basics")).not.toContain("Complete");
     // The current step is never "Complete" by chronology alone, and the
     // optional last step still says it is optional.
     expect(getSetupPathRowText("Extras")).toContain("Optional");
@@ -340,7 +366,7 @@ describe("profile setup customer-quality guidance", () => {
       container?.querySelector<HTMLInputElement>(
         "#profile-setup-field-search-preferences-locations",
       )?.placeholder,
-    ).toBe("Example: Austin, TX; Remote");
+    ).toBe("Example: Hamburg; Remote");
     const workModes = container?.querySelector(
       "#profile-setup-field-search-preferences-work-modes",
     );
@@ -404,6 +430,20 @@ describe("profile setup customer-quality guidance", () => {
     // Both former steps live here now, under one card.
     expect(text).toContain("Your story, in your own words");
     expect(text).toContain("Screener answers you reuse");
+    // R3-170: optional sections do not expand into a large setup task.
+    const groups = Array.from(container?.querySelectorAll("details") ?? []);
+    expect(groups).toHaveLength(2);
+    expect(groups.every((group) => !group.open)).toBe(true);
+    // R3-073: guidance spans professions and includes early-career work.
+    const placeholders = Array.from(
+      container?.querySelectorAll("textarea") ?? [],
+    )
+      .map((field) => field.placeholder)
+      .join(" ");
+    expect(placeholders).toContain("use my experience and keep learning");
+    expect(placeholders).toContain("communicate clearly");
+    expect(placeholders).not.toMatch(/pupils|marketing|illustration|patients/);
+    expect(placeholders).not.toMatch(/backend|ten years/i);
   });
 
   it("associates every reusable-answer label with its field", () => {

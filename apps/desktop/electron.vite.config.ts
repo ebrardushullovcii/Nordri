@@ -80,6 +80,10 @@ const workspaceAliases = {
   "@nordri/core": corePath,
   "@nordri/db": dbPath,
   "@nordri/live-assistant": liveAssistantPath,
+  "@nordri/job-finder/assistant-attention": path.resolve(
+    currentDir,
+    "../../packages/job-finder/src/assistant/attention.ts",
+  ),
   "@nordri/job-finder/discovery-ordering": jobFinderDiscoveryOrderingPath,
   "@nordri/job-finder/discovery-result-bands":
     jobFinderDiscoveryResultBandsPath,

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { ApplicationReviewCard } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
-import { ExternalUrlLink } from "../../components/open-outside-links";
 import {
   TECHNICAL_DETAILS_LABEL,
   describeFailure,
@@ -27,7 +26,8 @@ export interface ApplicationsReviewCardProps {
    * Sending is impossible until it is prepared again.
    */
   pageClosed?: boolean | undefined;
-  onSubmit: () => Promise<void>;
+  onSubmit?: (() => Promise<void>) | undefined;
+  onOpenPage?: (() => Promise<void>) | undefined;
   onPrepareAgain?: (() => Promise<void>) | undefined;
   isSubmitPending?: boolean | undefined;
 }
@@ -36,13 +36,17 @@ export function ApplicationsReviewCard({
   card,
   pageClosed,
   onSubmit,
+  onOpenPage,
   onPrepareAgain,
   isSubmitPending,
 }: ApplicationsReviewCardProps) {
   const [failure, setFailure] = useState<FailureDescription | null>(null);
   const [pending, setPending] = useState(false);
   const busy = pending || isSubmitPending === true;
-  const readyToSend = card.waitingOnYou.length === 0 && pageClosed !== true;
+  const readyToSend =
+    card.waitingOnYou.length === 0 &&
+    pageClosed !== true &&
+    !card.letter?.needsRefresh;
 
   const run = async (
     action: (() => Promise<void>) | undefined,
@@ -72,13 +76,31 @@ export function ApplicationsReviewCard({
           Read this before you send it
         </h3>
         <p className="text-(length:--text-description) leading-5 text-foreground-soft">
-          Job Finder filled this in on {card.siteLabel}. Nothing has been sent
-          yet. Everything it wrote is below, with where each answer came from.
+          {card.answers.length > 0 ||
+          card.attachments.length > 0 ||
+          card.letter?.fields?.length
+            ? `Job Finder filled in the items below on ${card.siteLabel}. Nothing has been sent yet.`
+            : `Nothing has been filled in on ${card.siteLabel} yet. Nothing has been sent.`}
         </p>
         {card.pageUrl ? (
-          <p className="break-all text-(length:--text-small) leading-5 text-foreground-soft">
-            Page: <ExternalUrlLink url={card.pageUrl} />
-          </p>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="min-w-0 break-all text-(length:--text-small) leading-5 text-foreground-soft">
+              Page: {card.pageUrl}
+            </p>
+            {onOpenPage && !pageClosed ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                type="button"
+                pending={busy}
+                onClick={() =>
+                  void run(onOpenPage, "open this application page")
+                }
+              >
+                Open this page
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -115,16 +137,26 @@ export function ApplicationsReviewCard({
           {card.answers.map((answer) => (
             <div
               className="rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-3 py-3"
-              key={`${answer.question}:${answer.answer}`}
+              key={answer.fieldKey ?? `${answer.question}:${answer.answer}`}
             >
               <strong className="text-foreground">{answer.question}</strong>
               <p className="mt-1 whitespace-pre-wrap text-(length:--text-small) leading-6 text-foreground">
                 {answer.answer}
               </p>
               <p className="mt-1 text-(length:--text-small) leading-6 text-foreground-soft">
-                {answer.written ? "Written for this application" : "From"}{" "}
-                {answer.source}
-                {answer.written && answer.groundedIn.length > 0
+                {answer.source === "chosen on the form" ||
+                answer.source === "chosen on the form by Job Finder"
+                  ? "Chosen on the form by Job Finder"
+                  : answer.source === "your answer on the form"
+                    ? "Your answer on the form"
+                    : answer.written
+                      ? "Written for this application"
+                      : `From ${answer.source}`}
+                {answer.written &&
+                answer.source !== "chosen on the form" &&
+                answer.source !== "chosen on the form by Job Finder" &&
+                answer.source !== "your answer on the form" &&
+                answer.groundedIn.length > 0
                   ? `, based on ${answer.groundedIn.join(", ")}`
                   : ""}
               </p>
@@ -135,7 +167,45 @@ export function ApplicationsReviewCard({
 
       {card.letter ? (
         <div className="grid gap-2">
-          <p className="label-mono-xs">The letter going with it</p>
+          <p className="label-mono-xs">
+            {card.letter.reviewReason
+              ? "Letter draft for your review"
+              : "The letter going with it"}
+          </p>
+          {card.letter.needsRefresh ? (
+            <div
+              role="alert"
+              className="grid gap-2 rounded-(--radius-field) border border-warning/40 bg-warning/8 px-3.5 py-3"
+            >
+              <p>
+                {card.letter.fields?.length
+                  ? "The form still holds the earlier letter."
+                  : "The approved letter has not been added to the form yet."}{" "}
+                Prepare again to attach the letter you approved.
+              </p>
+              {onPrepareAgain ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  pending={busy}
+                  onClick={() =>
+                    void run(onPrepareAgain, "prepare this application again")
+                  }
+                >
+                  Prepare again
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          {card.letter.reviewReason ? (
+            <p
+              role="alert"
+              className="text-(length:--text-small) text-foreground-soft"
+            >
+              {card.letter.reviewReason}
+            </p>
+          ) : null}
           <p className="whitespace-pre-wrap rounded-(--radius-field) border border-(--surface-panel-border) bg-background/40 px-3 py-3 text-(length:--text-small) leading-6 text-foreground">
             {card.letter.text}
           </p>
@@ -154,7 +224,10 @@ export function ApplicationsReviewCard({
             {card.attachments.map((attachment) => (
               <li
                 className="text-(length:--text-small) leading-6 text-foreground-soft"
-                key={attachment.fileName}
+                key={
+                  attachment.fieldKey ??
+                  `${attachment.field}:${attachment.fileName}`
+                }
               >
                 {attachment.label} — {attachment.fileName} ({attachment.field})
               </li>
@@ -196,24 +269,26 @@ export function ApplicationsReviewCard({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          disabled={!readyToSend || busy}
-          onClick={() => void run(onSubmit, "send this application")}
-          pending={busy}
-          type="button"
-          variant="primary"
-        >
-          Submit application
-        </Button>
-        <p className="text-(length:--text-small) leading-5 text-foreground-soft">
-          {pageClosed
-            ? "Prepare it again before it can be sent."
-            : readyToSend
-              ? "This sends it to the employer once. Job Finder never sends it twice."
-              : "Answer what is waiting on you above first."}
-        </p>
-      </div>
+      {onSubmit ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={!readyToSend || busy}
+            onClick={() => void run(onSubmit, "send this application")}
+            pending={busy}
+            type="button"
+            variant="primary"
+          >
+            Submit application
+          </Button>
+          <p className="text-(length:--text-small) leading-5 text-foreground-soft">
+            {pageClosed || card.letter?.needsRefresh
+              ? "Prepare it again before it can be sent."
+              : readyToSend
+                ? "This sends it to the employer once. Job Finder never sends it twice."
+                : "Answer what is waiting on you above first."}
+          </p>
+        </div>
+      ) : null}
     </section>
   );
 }

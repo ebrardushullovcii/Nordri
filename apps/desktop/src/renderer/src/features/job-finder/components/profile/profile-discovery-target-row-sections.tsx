@@ -127,6 +127,7 @@ export function DiscoveryTargetActionHeader(
           Move down
         </Button>
         <Button
+          title="Saved jobs stay in your plans with their original source name."
           aria-label={`Remove ${accessibleLabel}`}
           onClick={onRemove}
           type="button"
@@ -149,7 +150,13 @@ export function DiscoveryTargetAccessPrompt(props: {
   return (
     <div
       aria-live="polite"
-      className={`grid gap-2 rounded-(--radius-field) border px-3 py-3 ${signInToneClassName}`}
+      // Required sign-in blocks the source, so it is a tinted box; a
+      // recommended one is a plain hint (ADR 0042).
+      className={
+        sourceAccessPrompt.state === "prompt_login_required"
+          ? `grid gap-2 rounded-(--radius-field) border px-3 py-3 ${signInToneClassName}`
+          : "grid gap-1 text-foreground-soft"
+      }
       role="status"
     >
       <p className="text-(length:--text-field-label) font-medium tracking-(--tracking-label)">

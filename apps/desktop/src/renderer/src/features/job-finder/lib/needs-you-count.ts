@@ -2,9 +2,10 @@ import type {
   GroupedManualAnswerDecision,
   JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
-import { projectPlanSafeguardPauses } from "@nordri/job-finder/plan-safeguard-pauses";
-import { applicationRecordAwaitsUser } from "../screens/applications/applications-status";
-import { resolveApplyStatePresentation } from "../screens/applications/apply-state";
+import {
+  projectNeedsYou,
+  projectWorkspaceAttention,
+} from "@nordri/job-finder/assistant-attention";
 
 /**
  * The one renderer-side owner of the "Needs you" population.
@@ -29,6 +30,7 @@ const FINAL_ACTION_REQUEST_STATES: readonly string[] = [
 ];
 
 export interface NeedsYouCountInput {
+  reviewQueue?: readonly JobFinderWorkspaceSnapshot["reviewQueue"][number][];
   /**
    * Applications the Applications screen badges "Needs you". They belong to
    * the same population: an application paused on a site step the person has
@@ -68,93 +70,12 @@ export function listApplicationsAwaitingUser({
   NeedsYouCountInput,
   "applicationRecords" | "applyJobResults" | "requests"
 >): readonly JobFinderWorkspaceSnapshot["applicationRecords"][number][] {
-  const records = applicationRecords ?? [];
-  if (records.length === 0) return records;
-
-  const latestResultByRecordId = new Map<
-    string,
-    JobFinderWorkspaceSnapshot["applyJobResults"][number]
-  >();
-  for (const result of applyJobResults ?? []) {
-    if (!result.applicationRecordId) continue;
-    const previous = latestResultByRecordId.get(result.applicationRecordId);
-    if (!previous || previous.updatedAt < result.updatedAt) {
-      latestResultByRecordId.set(result.applicationRecordId, result);
-    }
-  }
-
-  const coveredRecordIds = new Set(
-    (requests ?? [])
-      .filter((request) => !FINAL_ACTION_REQUEST_STATES.includes(request.state))
-      .flatMap((request) =>
-        request.scope?.type === "application" &&
-        request.scope.applicationRecordId
-          ? [request.scope.applicationRecordId]
-          : [],
-      ),
-  );
-
-  return records.filter((record) => {
-    if (coveredRecordIds.has(record.id)) return false;
-    const result = latestResultByRecordId.get(record.id);
-    if (!result) return applicationRecordAwaitsUser(record);
-    return (
-      resolveApplyStatePresentation({
-        recordCrm: record.crm,
-        mode:
-          record.automationMode === "autonomous_submit"
-            ? "apply_for_me"
-            : "fill_only",
-        result,
-        pendingQuestionCount: Math.max(
-          0,
-          record.questionSummary.total - record.questionSummary.answered,
-        ),
-        recordFailure:
-          record.lastAttemptState === "failed"
-            ? {
-                lastActionLabel: record.lastActionLabel,
-                lastUpdatedAt: record.lastUpdatedAt,
-              }
-            : null,
-      }).kind === "needs_you"
-    );
-  });
+  return projectNeedsYou({ applicationRecords, applyJobResults, requests })
+    .applications;
 }
 
-export function countNeedsYouItems({
-  applicationRecords,
-  applyJobResults,
-  groupedDecisions,
-  requests,
-}: NeedsYouCountInput): number {
-  const unresolved = (requests ?? []).filter(
-    (request) => !FINAL_ACTION_REQUEST_STATES.includes(request.state),
-  );
-  const pendingDecisions = (groupedDecisions ?? []).filter(
-    (decision) => decision.approval === "pending",
-  );
-  // A pending grouped decision represents its member requests on the Needs you
-  // screen, so the count counts the decision card instead of the hidden
-  // ordinary member cards.
-  const representedRequestIds = new Set(
-    pendingDecisions.flatMap((decision) =>
-      decision.lineage.map((entry) => entry.requestId),
-    ),
-  );
-  const unrepresentedRequests = unresolved.filter(
-    (request) => !representedRequestIds.has(request.id),
-  );
-
-  return (
-    unrepresentedRequests.length +
-    pendingDecisions.length +
-    listApplicationsAwaitingUser({
-      applicationRecords,
-      applyJobResults,
-      requests,
-    }).length
-  );
+export function countNeedsYouItems(input: NeedsYouCountInput): number {
+  return projectNeedsYou(input).count;
 }
 
 /**
@@ -204,16 +125,5 @@ export function countApplyRunItemsNeedingYou({
 export function countWorkspaceNeedsYouItems(
   workspace: JobFinderWorkspaceSnapshot,
 ): number {
-  return (
-    projectPlanSafeguardPauses(
-      workspace.intelligence?.safeguards,
-      workspace.campaigns,
-    ).length +
-    countNeedsYouItems({
-      applicationRecords: workspace.applicationRecords ?? [],
-      applyJobResults: workspace.applyJobResults ?? [],
-      groupedDecisions: workspace.intelligence?.groupedDecisions ?? [],
-      requests: workspace.userActionRequests ?? [],
-    })
-  );
+  return projectWorkspaceAttention(workspace).count;
 }

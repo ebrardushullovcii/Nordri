@@ -110,7 +110,7 @@ export function isLikelyPersonName(value: string): boolean {
  * Two rules that the plain line test lacked: every word must look like a name
  * part (capitalised, so a sentence tail such as "at scale." is never a name),
  * and a two-column header that the text extractor flattened into one line
- * ("Aaron Murphy Tampa, FL") still yields the leading name rather than being
+ * ("Owen Mercer Tampa, FL") still yields the leading name rather than being
  * rejected for the trailing location.
  */
 export function extractIdentityNameFromLine(line: string): string | null {
@@ -257,7 +257,14 @@ function candidateSourceEmail(
 function extractCanonicalResumeIdentity(
   text: string | null | undefined,
   candidates: readonly ResumeImportFieldCandidate[] = [],
+  sourceIdentity?: { fullName: string | null; email: string | null },
 ): Partial<ResumeIdentityValues> {
+  if (sourceIdentity) {
+    return {
+      ...(sourceIdentity.fullName ? { fullName: sourceIdentity.fullName } : {}),
+      ...(sourceIdentity.email ? { email: sourceIdentity.email } : {}),
+    };
+  }
   const candidateName = candidateSourceName(candidates);
   const candidateEmail = candidateSourceEmail(candidates);
 
@@ -413,6 +420,7 @@ export function describeResumeIdentityOwnershipChoice(
   const sourceIdentity = extractCanonicalResumeIdentity(
     profile.baseResume.textContent,
     sourceCandidates,
+    profile.baseResume.sourceIdentity,
   );
 
   return {
@@ -508,6 +516,7 @@ export function resolveResumeIdentity(
   const sourceIdentity = extractCanonicalResumeIdentity(
     profile.baseResume.textContent,
     sourceCandidates,
+    profile.baseResume.sourceIdentity,
   );
 
   // A fresh placeholder profile is expected to be paired with a newly

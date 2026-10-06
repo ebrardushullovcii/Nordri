@@ -217,7 +217,7 @@ describe("DiscoveryResultsPanel result sorting", () => {
     const { container } = renderResults(jobs);
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(getFirstResultJobId()).toBe("sort_job_050");
+    expect(getFirstResultJobId()).toBe("sort_job_049");
 
     fireEvent.change(screen.getByRole("combobox", { name: "Sort results" }), {
       target: { value: "company" },
@@ -245,7 +245,7 @@ describe("DiscoveryResultsPanel result sorting", () => {
     expect(getFirstResultJobId()).toBe("sort_job_000");
   });
 
-  it("reports the displayed inspection when sorting moves the selection off-page", () => {
+  it("keeps the inspected job when sorting moves the selection off-page", () => {
     const jobs = createJobs().map((job, index) =>
       index === 0
         ? ({ ...job, company: "Zeta Corp" } as SavedJob)
@@ -265,7 +265,7 @@ describe("DiscoveryResultsPanel result sorting", () => {
     });
 
     // The selected Zeta job sinks to the end of the list (page two); the
-    // inspector must follow the top of what is actually visible instead.
-    expect(onDisplayedSelectedJobIdChange).toHaveBeenCalledWith("sort_job_001");
+    // inspector keeps the same job ID until another row is selected.
+    expect(onDisplayedSelectedJobIdChange).not.toHaveBeenCalled();
   });
 });
