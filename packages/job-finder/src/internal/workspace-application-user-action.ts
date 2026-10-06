@@ -641,7 +641,7 @@ export async function persistApplicationUserAction(input: {
         },
     title: neededFileLabel
       ? `Add your ${neededFileLabel} to continue the ${input.job.company} application`
-      : `${copy.titleVerb} to continue the ${input.job.company} application`,
+      : `${kind === "manual_answer" && (input.blocker?.questionIds.length ?? 0) > 1 ? "Answer the required questions" : copy.titleVerb} to continue the ${input.job.company} application`,
     // A sign-in on the kept application page is watched and carries on by
     // itself (ADR 0027); every other step still ends with the person's
     // confirmation.

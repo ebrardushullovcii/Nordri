@@ -3078,6 +3078,59 @@ describe("application login UserActionRequest adoption", () => {
     expect(continued.instructions).not.toContain('Answer to "Currency": EUR');
   });
 
+  test("a pause with several questions asks for the questions in its title", async () => {
+    const seed = createSeed();
+    seed.settings.resumeApplicationMode = "original_resume";
+    seed.profile.baseResume.storagePath = "C:/tmp/alex-vanguard.pdf";
+    const baseRuntime = createBrowserRuntime();
+    const question = (id: string, prompt: string) => ({
+      id,
+      prompt,
+      kind: "other",
+      answerControlType: "text",
+      isRequired: true,
+      detectedAt: "2026-07-30T10:00:00.000Z",
+      answerOptions: [],
+      suggestedAnswers: [],
+      submittedAnswer: null,
+      status: "detected",
+    });
+    const executeApplicationFlow = vi.fn(
+      async (
+        source: Parameters<typeof baseRuntime.executeApplicationFlow>[0],
+        input: Parameters<typeof baseRuntime.executeApplicationFlow>[1],
+      ) =>
+        ApplyExecutionResultSchema.parse({
+          ...(await baseRuntime.executeApplicationFlow(source, input)),
+          state: "paused",
+          summary: "Two answers need you",
+          detail: "Answer these questions.",
+          questions: [
+            question("question_start", "When could you start?"),
+            question("question_notice", "What is your notice period?"),
+          ],
+          blocker: {
+            code: "missing_candidate_answer",
+            userActionKind: "manual_answer",
+            summary: "Answer two questions.",
+            detail: "The answers stay in the browser.",
+            questionIds: ["question_start", "question_notice"],
+            sourceDebugEvidenceRefIds: [],
+            url: input.job.applicationUrl ?? input.job.canonicalUrl,
+          },
+        }),
+    );
+    const harness = createWorkspaceServiceHarness({
+      seed,
+      browserRuntime: { ...baseRuntime, executeApplicationFlow },
+    });
+    const blocked =
+      await harness.workspaceService.startApplyCopilotRun("job_ready");
+    expect(blocked.userActionRequests[0]?.title).toMatch(
+      /^Answer the required questions to continue the .+ application$/u,
+    );
+  });
+
   test("retries with the exact persisted manual answer and remains restart-idempotent", async () => {
     const seed = createSeed();
     seed.settings.resumeApplicationMode = "original_resume";
@@ -3164,6 +3217,36 @@ describe("application login UserActionRequest adoption", () => {
         },
       ],
     }));
+    // An answer the person gave at an earlier pause of the same preparation
+    // belongs to that pause's summary, not this one.
+    const pausedQuestion = (
+      await harness.repository.listApplicationQuestionRecords({
+        applicationRecordId: request.scope.applicationRecordId,
+      })
+    )[0]!;
+    const earlierQuestion = ApplicationQuestionRecordSchema.parse({
+      ...pausedQuestion,
+      id: `${pausedQuestion.id}_earlier`,
+      prompt: "What is your expected salary?",
+    });
+    await harness.repository.upsertApplicationQuestionRecord(earlierQuestion);
+    await harness.repository.upsertApplicationAnswerRecord(
+      ApplicationAnswerRecordSchema.parse({
+        id: "earlier_pause_salary",
+        runId: earlierQuestion.runId,
+        resultId: earlierQuestion.resultId,
+        jobId: earlierQuestion.jobId,
+        applicationRecordId: earlierQuestion.applicationRecordId,
+        questionId: earlierQuestion.id,
+        revision: 1,
+        status: "suggested",
+        text: "50000",
+        value: { type: "text", value: "50000" },
+        sourceKind: "user",
+        sourceId: "earlier_manual_request",
+        createdAt: "2026-10-01T09:00:00.000Z",
+      }),
+    );
     const resumed = await harness.workspaceService.performUserAction({
       commandId: "submit_manual_answer_complete",
       requestId: request.id,
@@ -3192,8 +3275,12 @@ describe("application login UserActionRequest adoption", () => {
       await harness.repository.listApplicationQuestionRecords({
         applicationRecordId: request.scope.applicationRecordId,
       });
-    expect(savedQuestions[0]).toMatchObject({
-      selectedAnswerId: savedAnswers[0]!.id,
+    expect(
+      savedQuestions.find((question) => question.id === pausedQuestion.id),
+    ).toMatchObject({
+      selectedAnswerId: savedAnswers.find(
+        (answer) => answer.questionId === pausedQuestion.id,
+      )!.id,
       submittedAnswer: "Yes, I am authorized to work in this location.",
       status: "answered",
     });
@@ -3221,9 +3308,11 @@ describe("application login UserActionRequest adoption", () => {
       ]),
     );
     expect(
-      await harness.repository.listApplicationAnswerRecords({
-        applicationRecordId: request.scope.applicationRecordId,
-      }),
+      (
+        await harness.repository.listApplicationAnswerRecords({
+          applicationRecordId: request.scope.applicationRecordId,
+        })
+      ).filter((answer) => answer.id !== "earlier_pause_salary"),
     ).toEqual([
       expect.objectContaining({
         applicationRecordId: request.scope.applicationRecordId,

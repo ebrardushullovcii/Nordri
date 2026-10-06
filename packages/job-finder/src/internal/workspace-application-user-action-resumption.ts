@@ -508,11 +508,14 @@ async function settlePrepareOnlyVerification(input: {
       applicationRecordId: scope.applicationRecordId!,
       resultId: scope.resultId!,
     });
+    // Only this request's answers: an earlier pause in the same preparation
+    // has its own summary.
     const answered = questions.filter((question) =>
       answers.some(
         (answer) =>
           answer.questionId === question.id &&
           answer.sourceKind === "user" &&
+          answer.sourceId === currentRequest.id &&
           answer.status !== "rejected",
       ),
     );
