@@ -1179,6 +1179,14 @@ export function buildApplyReviewCard(input: {
   });
 }
 
+/** The address and recorded step identify a screen, without interpreting its label. */
+function reviewStepKey(fieldKey: string | undefined): string | null {
+  const parts = fieldKey?.split("|");
+  return parts && parts.length >= 4 && parts[0]
+    ? `${parts[0]}|${parts[1]}`
+    : null;
+}
+
 /** A continuation adds to the retained form review; latest fields win. */
 
 export function mergeApplyReviewCards(
@@ -1204,6 +1212,76 @@ export function mergeApplyReviewCards(
     fieldKey,
     label: fieldKey.split("|").slice(3).join("|"),
   }));
+  const currentSteps = new Set(
+    (current.observedFieldKeys ?? []).map(reviewStepKey).filter(Boolean),
+  );
+  const previousKeys = [
+    ...previous.answers.map((answer) => answer.fieldKey),
+    ...previous.attachments.map((attachment) => attachment.fieldKey),
+    ...(previous.observedFieldKeys ?? []),
+  ];
+  const previousSteps = [...new Set(previousKeys.map(reviewStepKey))].filter(
+    (step) => step !== null,
+  );
+  const previousObservedSteps = new Set(
+    (previous.observedFieldKeys ?? []).map(reviewStepKey),
+  );
+  // Older continuations stored only their last run's observations. Recover
+  // their earlier screens from the retained answers when that history is partial.
+  const orderedPreviousSteps = previousSteps.every((step) =>
+    previousObservedSteps.has(step),
+  )
+    ? [...previousObservedSteps].filter((step) => step !== null)
+    : previousSteps;
+  const firstCurrentStep = reviewStepKey(current.observedFieldKeys?.[0]);
+  const previousObservedPeers = (previous.observedFieldKeys ?? []).map(
+    (fieldKey) => ({
+      fieldKey,
+      label: fieldKey.split("|").slice(3).join("|"),
+    }),
+  );
+  const previousQuestionKeys = new Set([
+    ...previous.answers.map((answer) => answerKey(previous, answer)),
+    ...previous.attachments.map((attachment) =>
+      attachmentKey(previous, attachment),
+    ),
+    ...previousObservedPeers.map((entry) =>
+      reviewQuestionKey(entry.fieldKey, entry.label, previousObservedPeers),
+    ),
+  ]);
+  const continuedForm =
+    firstCurrentStep !== null &&
+    orderedPreviousSteps.indexOf(firstCurrentStep) > 0 &&
+    !orderedPreviousSteps
+      .slice(0, orderedPreviousSteps.indexOf(firstCurrentStep))
+      .some((step) => currentSteps.has(step)) &&
+    observedPeers.some(
+      (observed) =>
+        reviewStepKey(observed.fieldKey) === firstCurrentStep &&
+        previousQuestionKeys.has(
+          reviewQuestionKey(observed.fieldKey, observed.label, observedPeers),
+        ),
+    );
+  const retainEarlier = !options.freshPreparation || continuedForm;
+  const unobservedStep = (fieldKey: string | undefined): boolean => {
+    const step = reviewStepKey(fieldKey);
+    return step !== null ? !currentSteps.has(step) : !options.freshPreparation;
+  };
+  const observedFieldKeys = new Set<string>();
+  if (retainEarlier && current.observedFieldKeys) {
+    // Replace each observed screen in its original position so revisiting the
+    // first screen cannot make a later screen look like the form's start.
+    for (const key of previous.observedFieldKeys ?? []) {
+      if (unobservedStep(key)) observedFieldKeys.add(key);
+      else {
+        for (const currentKey of current.observedFieldKeys) {
+          if (reviewStepKey(currentKey) === reviewStepKey(key))
+            observedFieldKeys.add(currentKey);
+        }
+      }
+    }
+    for (const key of current.observedFieldKeys) observedFieldKeys.add(key);
+  }
   const answers = current.answers.map((answer) => {
     const recorded = previous.answers.find((entry) =>
       answer.fieldKey && entry.fieldKey
@@ -1218,44 +1296,52 @@ export function mergeApplyReviewCards(
         }
       : answer;
   });
-  const earlierAnswers = (
-    options.freshPreparation ? [] : previous.answers
-  ).filter((answer) =>
-    answer.fieldKey
-      ? !current.observedFieldKeys?.some(
-          (key) =>
-            reviewQuestionKey(
-              key,
-              key.split("|").slice(3).join("|"),
-              observedPeers,
-            ) === answerKey(previous, answer),
-        ) &&
-        !answers.some(
-          (entry) => answerKey(current, entry) === answerKey(previous, answer),
-        )
-      : !answers.some((entry) => entry.question === answer.question),
+  const earlierAnswers = (retainEarlier ? previous.answers : []).filter(
+    (answer) =>
+      unobservedStep(answer.fieldKey) &&
+      (answer.fieldKey
+        ? !current.observedFieldKeys?.some(
+            (key) =>
+              reviewQuestionKey(
+                key,
+                key.split("|").slice(3).join("|"),
+                observedPeers,
+              ) === answerKey(previous, answer),
+          ) &&
+          !answers.some(
+            (entry) =>
+              answerKey(current, entry) === answerKey(previous, answer),
+          )
+        : !answers.some((entry) => entry.question === answer.question)),
   );
-  const earlierAttachments = (
-    options.freshPreparation ? [] : previous.attachments
-  ).filter((attachment) =>
-    attachment.fieldKey
-      ? !current.observedFieldKeys?.some(
-          (key) =>
-            reviewQuestionKey(
-              key,
-              key.split("|").slice(3).join("|"),
-              observedPeers,
-            ) === attachmentKey(previous, attachment),
-        ) &&
-        !current.attachments.some(
-          (entry) =>
-            attachmentKey(current, entry) ===
-            attachmentKey(previous, attachment),
-        )
-      : !current.attachments.some((entry) => entry.field === attachment.field),
+  const earlierAttachments = (retainEarlier ? previous.attachments : []).filter(
+    (attachment) =>
+      unobservedStep(attachment.fieldKey) &&
+      (attachment.fieldKey
+        ? !current.observedFieldKeys?.some(
+            (key) =>
+              reviewQuestionKey(
+                key,
+                key.split("|").slice(3).join("|"),
+                observedPeers,
+              ) === attachmentKey(previous, attachment),
+          ) &&
+          !current.attachments.some(
+            (entry) =>
+              attachmentKey(current, entry) ===
+              attachmentKey(previous, attachment),
+          )
+        : !current.attachments.some(
+            (entry) => entry.field === attachment.field,
+          )),
   );
   return ApplicationReviewCardSchema.parse({
     ...current,
+    ...(retainEarlier && current.observedFieldKeys
+      ? {
+          observedFieldKeys: [...observedFieldKeys].slice(0, 500),
+        }
+      : {}),
     answers: [
       ...new Map(
         [...earlierAnswers, ...answers].map((answer) => [

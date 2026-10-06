@@ -544,9 +544,13 @@ describe("apply prerequisites resolve the resume path the verifier actually read
   });
 });
 
-test.each(["direct", "approved", "queue"] as const)(
-  "%s preparation keeps unchanged answer sources in the persisted card",
-  async (path) => {
+test.each(
+  (["direct", "approved", "queue"] as const).flatMap((path) =>
+    [false, true].map((multistep) => ({ path, multistep })),
+  ),
+)(
+  "$path preparation keeps answer sources in the persisted card (multistep: $multistep)",
+  async ({ path, multistep }) => {
     const seed = createSeed();
     stageApprovedTailoredExport(seed, RECOVERED_EXPORT_PATH, EXPORT_SHA256);
     const ready = ApplyExecutionResultSchema.parse({
@@ -585,36 +589,51 @@ test.each(["direct", "approved", "queue"] as const)(
       "https://example.test/portfolio",
       path === "queue" ? "Finance; Reporting" : "I build dependable platforms.",
     ];
+    if (multistep) {
+      labels.push("Declaration");
+      sources.push("your Settings (on by default)");
+      ids.push("settings.declaration");
+      values.push("Yes");
+    }
     let preparations = 0;
     const preparer = vi
       .spyOn(preparation, "createApplyFormPreparer")
       .mockImplementation((input) => {
         preparations += 1;
+        const indices = labels
+          .map((_, index) => index)
+          .filter((index) =>
+            multistep
+              ? preparations === 1 ||
+                (preparations === 4 ? index < 2 : index === 5)
+              : preparations !== 4 || index < 4,
+          );
+        const fieldKey = (index: number) =>
+          `https://example.test/apply|${multistep ? `Screen ${index + 1}` : "Application"}|c${index + preparations * 10}|${labels[index]}`;
         const card = ApplicationReviewCardSchema.parse({
           siteLabel: "Example",
           pageUrl: "https://example.test/apply",
           preparedAt: new Date().toISOString(),
-          answers: labels
-            .slice(0, preparations === 4 ? 4 : 5)
-            .map((question, index) => ({
-              question,
-              fieldKey: `https://example.test/apply|Application|c${index + preparations * 10}|${question}`,
-              answer:
-                preparations === 4 && index === 1
-                  ? "changed@example.test"
-                  : values[index],
-              source:
-                preparations === 1 && index !== 4
-                  ? sources[index]
-                  : "the filled application form",
-              ...(index === 4 && preparations === 1
-                ? {}
-                : {
-                    sourceId:
-                      preparations === 1 ? ids[index] : `observed.c${index}`,
-                  }),
-              written: false,
-            })),
+          ...(multistep ? { observedFieldKeys: indices.map(fieldKey) } : {}),
+          answers: indices.map((index) => ({
+            question: labels[index],
+            fieldKey: fieldKey(index),
+            answer:
+              preparations === 4 && index === 1
+                ? "changed@example.test"
+                : values[index],
+            source:
+              preparations === 1 && index !== 4
+                ? sources[index]
+                : "the filled application form",
+            ...(index === 4 && preparations === 1
+              ? {}
+              : {
+                  sourceId:
+                    preparations === 1 ? ids[index] : `observed.c${index}`,
+                }),
+            written: false,
+          })),
         });
         input.onPrepared?.({
           reviewCard: card,
@@ -681,16 +700,22 @@ test.each(["direct", "approved", "queue"] as const)(
         applicationRecordId = newest?.applicationRecordId ?? null;
         expect(applicationRecordId).not.toBeNull();
         const card = newest?.reviewCard;
-        expect(card?.answers).toHaveLength(run === 3 ? 4 : 5);
+        expect(card?.answers).toHaveLength(
+          multistep ? (run === 3 ? 2 : 6) : run === 3 ? 4 : 5,
+        );
         expect(card?.answers.map((answer) => answer.source)).toEqual(
           run === 3
             ? [
                 sources[0],
                 "the filled application form",
-                ...sources.slice(2, 4),
+                ...(multistep ? [] : sources.slice(2, 4)),
               ]
             : run === 0
-              ? [...sources.slice(0, 4), "the filled application form"]
+              ? [
+                  ...sources.slice(0, 4),
+                  "the filled application form",
+                  ...sources.slice(5),
+                ]
               : sources,
         );
         if (run > 0 && run !== 3)
