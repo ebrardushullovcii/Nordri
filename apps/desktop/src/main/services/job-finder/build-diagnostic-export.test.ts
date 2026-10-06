@@ -295,3 +295,35 @@ it("personal export filename uses the local calendar date", () => {
     "nordri-workspace-2026-10-05.json",
   );
 });
+
+it("exports waiting form memory without page contents", () => {
+  const memory = {
+    recordedAt: performance.generatedAt,
+    budgetBytes: 805306368,
+    totalBytes: 1024,
+    measurementComplete: true,
+    overBudget: false,
+    tabs: [
+      {
+        tabId: "synthetic",
+        processId: 42,
+        processBytes: 1024,
+        backgroundThrottled: true,
+      },
+    ],
+  };
+  const result = buildJobFinderDiagnosticExport({
+    workspace: createWorkspace(),
+    performance: { ...performance, waitingFormMemory: memory },
+    build: {
+      appVersion: "test",
+      electronVersion: "test",
+      chromiumVersion: "test",
+      nodeVersion: "test",
+      platform: "darwin",
+      architecture: "arm64",
+    },
+    generatedAt: performance.generatedAt,
+  });
+  expect(result.performance.waitingFormMemory).toEqual(memory);
+});

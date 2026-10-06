@@ -17,6 +17,27 @@ describe("SettingsPerformanceEvidence", () => {
   it("shows measured zero, partial, and unavailable timings as distinct states", async () => {
     const snapshot = JobFinderPerformanceSnapshotSchema.parse({
       generatedAt,
+      waitingFormMemory: {
+        recordedAt: generatedAt,
+        budgetBytes: 805306368,
+        totalBytes: 104857600,
+        measurementComplete: false,
+        overBudget: false,
+        tabs: [
+          {
+            tabId: "synthetic",
+            processId: 100,
+            processBytes: 104857600,
+            backgroundThrottled: true,
+          },
+          {
+            tabId: "unmeasured",
+            processId: 0,
+            processBytes: null,
+            backgroundThrottled: true,
+          },
+        ],
+      },
       latestDiscoveryRun: null,
       latestSourceDebugRun: null,
       evidence: [
@@ -53,6 +74,7 @@ describe("SettingsPerformanceEvidence", () => {
                 observationChars: 2000,
                 fieldsFilled: 4,
                 stepsAdvanced: 1,
+                uploadsAttached: 1,
               },
               {
                 turn: 2,
@@ -60,6 +82,7 @@ describe("SettingsPerformanceEvidence", () => {
                 observationChars: 2000,
                 fieldsFilled: 0,
                 stepsAdvanced: 0,
+                uploadsAttached: 0,
               },
               { turn: 3, historyChars: 15000, observationChars: 2000 },
             ],
@@ -102,6 +125,12 @@ describe("SettingsPerformanceEvidence", () => {
     fireEvent.click(getByRole("button", { name: "Load performance evidence" }));
 
     await waitFor(() => expect(getPerformanceSnapshot).toHaveBeenCalledOnce());
+    expect(getByText("Waiting forms memory")).toBeTruthy();
+    expect(getByText(/100.0 MiB of 768 MiB budget/u)).toBeTruthy();
+    expect(getByText(/Form 1: 100.0 MiB/u)).toBeTruthy();
+    expect(
+      getByText(/Some process memory could not be measured/u),
+    ).toBeTruthy();
     expect(getByText("Resume import")).toBeTruthy();
     expect(getAllByText("0 ms").length).toBeGreaterThanOrEqual(1);
     expect(getByText("Application preparation")).toBeTruthy();
@@ -113,13 +142,15 @@ describe("SettingsPerformanceEvidence", () => {
       getByText("Entering answers and checking facts: 600 ms"),
     ).toBeTruthy();
     expect(getByText(/15000 \(page update 2000\)/u)).toBeTruthy();
-    expect(getByText(/Turn 1: 4 fields filled; 1 step advanced/u)).toBeTruthy();
     expect(
-      getByText(/Turn 2: 0 fields filled; 0 steps advanced/u),
+      getByText(/Turn 1: 4 fields filled; 1 step advanced; 1 file attached/u),
+    ).toBeTruthy();
+    expect(
+      getByText(/Turn 2: 0 fields filled; 0 steps advanced; 0 files attached/u),
     ).toBeTruthy();
     expect(
       getByText(
-        /Turn 3: fields filled not recorded; steps advanced not recorded/u,
+        /Turn 3: fields filled not recorded; steps advanced not recorded; uploads not recorded/u,
       ),
     ).toBeTruthy();
     expect(getByText("Total not recorded")).toBeTruthy();

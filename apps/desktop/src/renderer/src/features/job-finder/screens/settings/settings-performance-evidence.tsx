@@ -144,6 +144,49 @@ export function SettingsPerformanceEvidence() {
 
       {snapshot ? (
         <div className="grid gap-2" data-testid="performance-evidence-list">
+          {snapshot.waitingFormMemory ? (
+            <details className="rounded-(--radius-field) border border-(--surface-panel-border) p-3">
+              <summary className="cursor-pointer text-sm font-medium">
+                Waiting forms memory
+              </summary>
+              <p className="mt-2 text-sm text-foreground-muted">
+                {(snapshot.waitingFormMemory.totalBytes / 1024 / 1024).toFixed(
+                  1,
+                )}{" "}
+                MiB of{" "}
+                {(snapshot.waitingFormMemory.budgetBytes / 1024 / 1024).toFixed(
+                  0,
+                )}{" "}
+                MiB budget · {snapshot.waitingFormMemory.tabs.length} forms
+              </p>
+              <p className="mt-2 text-sm text-foreground-muted">
+                {snapshot.waitingFormMemory.overBudget
+                  ? "Above budget; new forms wait until memory is available."
+                  : "New forms reserve memory before starting."}{" "}
+                Background forms are throttled. Answers and attachments stay in
+                their tabs. Shared processes count once in the total.
+              </p>
+              {!snapshot.waitingFormMemory.measurementComplete ? (
+                <p className="mt-2 text-sm text-foreground-muted">
+                  Some process memory could not be measured.
+                </p>
+              ) : null}
+              <ul className="mt-2 text-sm text-foreground-muted">
+                {snapshot.waitingFormMemory.tabs.map((tab, index) => (
+                  <li key={tab.tabId}>
+                    Form {index + 1}:{" "}
+                    {tab.processBytes === null
+                      ? "Not recorded"
+                      : `${(tab.processBytes / 1024 / 1024).toFixed(1)} MiB`}{" "}
+                    ·{" "}
+                    {tab.backgroundThrottled
+                      ? "Background throttling on"
+                      : "Active"}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
           {snapshot.evidence.map((entry) => (
             <article
               className="rounded-(--radius-field) border border-(--surface-panel-border) bg-(--surface-panel-subtle) p-3"
@@ -231,7 +274,7 @@ export function SettingsPerformanceEvidence() {
                     {entry.agentTiming.requests
                       .map(
                         (request) =>
-                          `Turn ${request.turn}: ${request.fieldsFilled === undefined ? "fields filled not recorded" : `${request.fieldsFilled} ${request.fieldsFilled === 1 ? "field" : "fields"} filled`}; ${request.stepsAdvanced === undefined ? "steps advanced not recorded" : `${request.stepsAdvanced} ${request.stepsAdvanced === 1 ? "step" : "steps"} advanced`}`,
+                          `Turn ${request.turn}: ${request.fieldsFilled === undefined ? "fields filled not recorded" : `${request.fieldsFilled} ${request.fieldsFilled === 1 ? "field" : "fields"} filled`}; ${request.stepsAdvanced === undefined ? "steps advanced not recorded" : `${request.stepsAdvanced} ${request.stepsAdvanced === 1 ? "step" : "steps"} advanced`}; ${request.uploadsAttached === undefined ? "uploads not recorded" : `${request.uploadsAttached} ${request.uploadsAttached === 1 ? "file" : "files"} attached`}`,
                       )
                       .join(" · ") || "No assistant turns"}
                   </p>

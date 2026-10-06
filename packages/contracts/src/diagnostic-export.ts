@@ -4,6 +4,7 @@ import { IsoDateTimeSchema, NonEmptyStringSchema } from "./base";
 import {
   PerformanceEvidenceAreaSchema,
   PerformanceEvidenceStageDurationSchema,
+  WaitingFormMemorySchema,
 } from "./performance";
 
 const CountSchema = z.number().int().nonnegative();
@@ -59,6 +60,7 @@ export const JobFinderDiagnosticExportSchema = z
       .strict(),
     performance: z
       .object({
+        waitingFormMemory: WaitingFormMemorySchema.optional(),
         measurements: z.array(
           z.discriminatedUnion("measurementStatus", [
             z

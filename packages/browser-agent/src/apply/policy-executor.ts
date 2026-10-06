@@ -119,6 +119,7 @@ export interface ApplyExecutorDeps {
    */
   classifyQuestions?: (
     controls: readonly ApplyFormControl[],
+    step?: string,
   ) => Promise<ReadonlyMap<string, ApplyQuestionClassification>>;
   checkWrittenAnswer?: (
     question: string,
@@ -352,7 +353,10 @@ async function withModelQuestionKinds(
   let classification: ApplyQuestionClassification | undefined;
   let payCurrency = false;
   try {
-    const classifications = await deps.classifyQuestions(observation.controls);
+    const classifications = await deps.classifyQuestions(
+      observation.controls,
+      JSON.stringify({ url: observation.url, step: observation.step }),
+    );
     classification = classifications.get(questionPrompt(control));
     payCurrency =
       /currency/iu.test(questionPrompt(control)) &&

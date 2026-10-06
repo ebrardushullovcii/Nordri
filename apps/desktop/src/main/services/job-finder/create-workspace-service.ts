@@ -456,6 +456,8 @@ export function createDesktopBrowserRuntime(
               assertAutomationSafe: () => embedded.assertAutomationSafe(),
               openTabCount: () => embedded.openTabCount(),
               workingTabCount: () => embedded.workingTabCount(),
+              hasAutomationTabCapacity: () =>
+                embedded.hasAutomationTabCapacity(),
             },
           }
         : {}),

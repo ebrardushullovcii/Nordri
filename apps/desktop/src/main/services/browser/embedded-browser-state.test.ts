@@ -1,8 +1,11 @@
+import { app } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import { EmbeddedBrowser } from "./embedded-browser";
 
 vi.mock("electron", () => ({
-  app: {},
+  app: {
+    getAppMetrics: vi.fn(() => [{ pid: 100, memory: { workingSetSize: 0 } }]),
+  },
   BrowserWindow: class {},
   dialog: {},
   screen: {},
@@ -48,6 +51,11 @@ function makeContents(id: string) {
   let closed = false;
   return {
     isDestroyed: () => closed,
+    getOSProcessId: () => 100,
+    debugger: {
+      isAttached: () => true,
+      sendCommand: vi.fn(() => Promise.resolve()),
+    },
     getTitle: () => id,
     getURL: () => `https://jobs.example/${id}`,
     isLoading: () => false,
@@ -497,4 +505,50 @@ test("ending an application loan returns the person's own send control", async (
   expect(execute).toHaveBeenLastCalledWith(
     expect.stringContaining("state.finalActionAllowed = true"),
   );
+});
+
+test("waiting forms are throttled while an unrelated search works and unthrottled only when claimed", () => {
+  const { browser, state } = makeBrowser();
+  state.ownedTabs.set("result", new Set(["prepared"]));
+  const controller = new AbortController();
+  state.operations.set(controller, "search");
+  state.operationClaims.set(controller, {
+    id: "search",
+    owner: null,
+    tabs: new Set(["search"]),
+  });
+  const policy = browser as unknown as {
+    shouldThrottleTab(id: string): boolean;
+  };
+  expect(policy.shouldThrottleTab("prepared")).toBe(true);
+  expect(policy.shouldThrottleTab("search")).toBe(false);
+  state.operationClaims.get(controller)!.tabs.add("prepared");
+  expect(policy.shouldThrottleTab("prepared")).toBe(false);
+});
+
+test("memory pressure collects garbage without closing forms and admits work when memory falls", async () => {
+  const { browser, state, pages } = makeBrowser();
+  state.ownedTabs.set("result", new Set(["prepared"]));
+  const metrics = vi.spyOn(app, "getAppMetrics");
+  metrics.mockReturnValue([
+    { pid: 100, memory: { workingSetSize: 800 * 1024 } },
+  ] as ReturnType<typeof app.getAppMetrics>);
+  expect(browser.hasAutomationTabCapacity()).toBe(false);
+  const before = await browser.reduceWaitingFormMemory();
+  expect(before.overBudget).toBe(true);
+  expect(pages.get("prepared")!.debugger.sendCommand).toHaveBeenCalledWith(
+    "HeapProfiler.collectGarbage",
+  );
+  expect(pages.get("prepared")!.close).not.toHaveBeenCalled();
+  expect(pages.get("prepared")!.setBackgroundThrottling).toHaveBeenCalledWith(
+    true,
+  );
+  metrics.mockReturnValue([
+    { pid: 100, memory: { workingSetSize: 50 * 1024 } },
+  ] as ReturnType<typeof app.getAppMetrics>);
+  expect(browser.hasAutomationTabCapacity()).toBe(true);
+  expect(browser.getWaitingFormMemory().totalBytes).toBe(50 * 1024 * 1024);
+  metrics.mockReturnValue([
+    { pid: 100, memory: { workingSetSize: 0 } },
+  ] as ReturnType<typeof app.getAppMetrics>);
 });

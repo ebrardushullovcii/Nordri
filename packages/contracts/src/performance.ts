@@ -175,8 +175,29 @@ export type PerformanceBudgetEvaluation = z.infer<
   typeof PerformanceBudgetEvaluationSchema
 >;
 
+/** Renderer process working sets, counted once when several retained tabs share a PID. */
+export const WaitingFormMemorySchema = z.object({
+  recordedAt: IsoDateTimeSchema,
+  budgetBytes: z.number().int().positive(),
+  totalBytes: z.number().int().nonnegative(),
+  measurementComplete: z.boolean(),
+  overBudget: z.boolean(),
+  tabs: z
+    .array(
+      z.object({
+        tabId: NonEmptyStringSchema,
+        processId: z.number().int().nonnegative(),
+        processBytes: z.number().int().nonnegative().nullable(),
+        backgroundThrottled: z.boolean(),
+      }),
+    )
+    .max(16),
+});
+export type WaitingFormMemory = z.infer<typeof WaitingFormMemorySchema>;
+
 export const JobFinderPerformanceSnapshotSchema = z.object({
   generatedAt: IsoDateTimeSchema,
+  waitingFormMemory: WaitingFormMemorySchema.optional(),
   latestDiscoveryRun: DiscoveryRunRecordSchema.nullable().default(null),
   latestSourceDebugRun: SourceDebugRunDetailsSchema.nullable().default(null),
   budgetEvaluations: z.array(PerformanceBudgetEvaluationSchema).default([]),

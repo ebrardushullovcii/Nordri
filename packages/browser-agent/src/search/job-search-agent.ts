@@ -23,6 +23,7 @@ import type { ApplyFormObservation, ApplyPageHands } from "../apply/types";
 import { describeObservation } from "../apply/apply-prompts";
 import { createPageTools } from "../page-tools";
 import type { AgentConfig, AgentProgress, AgentResult } from "../types";
+import type { SearchResultCache } from "./search-result-cache";
 import { createSearchCatalogTools } from "./job-search-catalog-tools";
 import {
   normalizeExtractedJobSourceId,
@@ -47,6 +48,7 @@ import {
  */
 
 export interface JobSearchAgentInput {
+  resultCache?: SearchResultCache;
   hands: ApplyPageHands;
   /** The live page, for posting links handed to the extractor. Optional in tests. */
   page?: Page;
@@ -200,6 +202,24 @@ export function describeStepForPerson(note: string): string {
   }
 }
 
+/** A bounded, fully observed starting index. Longer/blocked/loading pages are reread. */
+function indexFingerprint(observation: ApplyFormObservation): string | null {
+  if (
+    observation.loading ||
+    observation.blocker ||
+    observation.bodyTextExcerpt.length >= 6000
+  )
+    return null;
+  return JSON.stringify({
+    url: observation.url,
+    title: observation.title,
+    text: observation.bodyTextExcerpt,
+    links: observation.links.map(({ href, label }) => ({ href, label })),
+    controls: observation.controls,
+    actions: observation.actions,
+  });
+}
+
 export async function runJobSearchAgent(
   input: JobSearchAgentInput,
 ): Promise<AgentResult> {
@@ -208,6 +228,26 @@ export async function runJobSearchAgent(
   const isSourceCheck = Boolean(config.promptContext.taskPacket);
   const siteLabel = config.promptContext.siteLabel;
 
+  input.signal?.throwIfAborted();
+  const reused = input.resultCache?.read(config);
+  if (reused) {
+    input.onProgress?.({
+      currentUrl: config.startingUrls[0] ?? "about:blank",
+      jobsFound: reused.jobs.length,
+      stepCount: 0,
+      currentAction: "finish",
+      message:
+        "This source has not changed; reused the previous search results.",
+      targetId: null,
+      adapterKind: config.source,
+    });
+    return {
+      ...reused,
+      steps: 0,
+      phaseCompletionReason:
+        "This source has not changed; reused the previous search results.",
+    };
+  }
   const collected: JobPosting[] = [];
   const known = new Set<string>();
   const catalogKeys =
@@ -321,6 +361,7 @@ export async function runJobSearchAgent(
       pageTools.state.visitedUrls.push(url);
   }
 
+  let initialIndex: ApplyFormObservation | null = null;
   let steps = 0;
   let lastProgressStep = 0;
   let pagesWithoutNewJobs = 0;
@@ -746,6 +787,11 @@ export async function runJobSearchAgent(
               enum: ["sign_in", "security_check", "manual_step"],
               description: "With needsPerson: what the site wants from them.",
             },
+            reusableIndex: {
+              type: "boolean",
+              description:
+                "True only when the first landed page was the complete listing index for this source, all retained jobs link from that index, and there were no later index pages, hidden rows or filter changes. Never true for a job detail page, partial index, source check, login or security page.",
+            },
             summary: {
               type: "string",
               description: "One proven takeaway about this site.",
@@ -804,6 +850,12 @@ export async function runJobSearchAgent(
       });
     }
   }
+  if (!isSourceCheck && !config.sourceCatalog)
+    messages.push({
+      role: "user",
+      content:
+        "When finishing, set reusableIndex=true only if the first landed page itself showed the complete source listing index: every retained posting links from it, all index rows were available, and you did not need another index page or change filters. This lets the next identical search reuse your judgments after checking that index again. If the index was partial, paginated, clipped, hidden or not a listing index, leave it false. New or changed index content always needs your judgment again.",
+    });
   if (collected.length > 0) {
     messages.push({
       role: "user",
@@ -814,6 +866,17 @@ export async function runJobSearchAgent(
   try {
     const landed = await pageTools.observe();
     await checkBotCheck();
+    initialIndex = landed;
+    const fingerprint = indexFingerprint(landed);
+    const reusedIndex = fingerprint
+      ? input.resultCache?.read(config, fingerprint)
+      : null;
+    if (reusedIndex) {
+      const reason =
+        "This source has not changed; reused the previous search results.";
+      emit("finish", reason);
+      return { ...reusedIndex, steps: 0, phaseCompletionReason: reason };
+    }
     messages.push({
       role: "user",
       content: `The page you have landed on:\n\n${describeObservation(landed)}`,
@@ -925,7 +988,19 @@ export async function runJobSearchAgent(
         : `Stopped: no new jobs in the last ${loop.steps - lastProgressStep} steps.`;
   }
   emit("finish", loop.reason);
-  return buildResult(loop);
+  const result = buildResult(loop);
+  const completeIndex =
+    initialIndex &&
+    loop.finish?.data.reusableIndex === true &&
+    result.jobs.every((job) =>
+      initialIndex?.links.some(
+        (link) => sanitizeUrl(link.href) === sanitizeUrl(job.canonicalUrl),
+      ),
+    )
+      ? indexFingerprint(initialIndex)
+      : null;
+  input.resultCache?.write(config, result, completeIndex ?? undefined);
+  return result;
 
   function buildResult(loop: {
     ending: string;

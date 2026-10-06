@@ -1,3 +1,4 @@
+import { getEmbeddedBrowser } from "../services/browser/embedded-browser";
 import { resetJobFinderBrowser } from "../services/job-finder/reset-workspace";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -1744,6 +1745,7 @@ export function registerJobFinderRouteHandlers(
     const service = await getJobFinderWorkspaceService();
     const { performance } = await collectJobFinderPerformanceSnapshot({
       service,
+      waitingFormMemory: () => getEmbeddedBrowser().reduceWaitingFormMemory(),
     });
 
     return JobFinderPerformanceSnapshotSchema.parse(performance);
@@ -1758,6 +1760,7 @@ export function registerJobFinderRouteHandlers(
     const service = await getJobFinderWorkspaceService();
     const { performance } = await collectJobFinderPerformanceSnapshot({
       service,
+      waitingFormMemory: () => getEmbeddedBrowser().reduceWaitingFormMemory(),
     });
 
     return JobFinderPerformanceSnapshotSchema.parse(performance);
@@ -2604,7 +2607,10 @@ export function registerJobFinderRouteHandlers(
   ipcMain.handle("job-finder:export-diagnostics", async (event) => {
     const service = await getJobFinderWorkspaceService();
     const { performance, workspace } =
-      await collectJobFinderPerformanceSnapshot({ service });
+      await collectJobFinderPerformanceSnapshot({
+        service,
+        waitingFormMemory: () => getEmbeddedBrowser().reduceWaitingFormMemory(),
+      });
     const diagnostic = buildJobFinderDiagnosticExport({
       workspace,
       performance,

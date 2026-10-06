@@ -459,7 +459,10 @@ async function runMeasuredApplyAgent(
     pageTools.state.observation = next;
     // Classify the page's questions now, while the model reads the page, so
     // the first answer does not wait for it. Writes await the same result.
-    void classifyQuestions?.(next.controls).catch(() => undefined);
+    void classifyQuestions?.(
+      next.controls,
+      JSON.stringify({ url: next.url, step: next.step }),
+    ).catch(() => undefined);
     // A person or a later page write may have answered a previously pending
     // question. Keep the live controls authoritative when continuing.
     // Refs are page-local. Retain only questions that still describe an
@@ -715,12 +718,14 @@ async function runMeasuredApplyAgent(
           const observation = await pageTools.observe();
           const classifications = await classifyQuestions?.(
             observation.controls,
+            JSON.stringify({ url: observation.url, step: observation.step }),
           ).catch(() => undefined);
+          // Cache the native question set before adding the model's required marker.
+          syncObservation(observation);
           for (const control of observation.controls) {
             if (classifications?.get(questionPrompt(control))?.required)
               control.required = true;
           }
-          syncObservation(observation);
           for (const control of unresolvedRequiredControls(observation)) {
             const key = pendingQuestionKey(control);
             if (pendingQuestions.has(key)) continue;
@@ -774,12 +779,14 @@ async function runMeasuredApplyAgent(
         const observation = await pageTools.observe();
         const classifications = await classifyQuestions?.(
           observation.controls,
+          JSON.stringify({ url: observation.url, step: observation.step }),
         ).catch(() => undefined);
+        // Inferred required markers are results, not changed native questions.
+        syncObservation(observation);
         for (const control of observation.controls) {
           const classification = classifications?.get(questionPrompt(control));
           if (classification?.required) control.required = true;
         }
-        syncObservation(observation);
         const finishWithQuestions = (): AgentLoopToolOutcome => {
           // The model has already left questions for the person. One finish
           // hands back this step, including other visible required gaps;
@@ -1278,7 +1285,7 @@ async function runMeasuredApplyAgent(
         return check ? [check] : [];
       });
       const prechecked = new Map<string, WrittenAnswerCheck>();
-      const verdicts = await checkWrittenApplicationAnswers({
+      const verdicts = checkWrittenApplicationAnswers({
         client: llmClient,
         sources: runConfig.sources,
         payDisclosed,
@@ -1292,18 +1299,28 @@ async function runMeasuredApplyAgent(
             "Job Finder could not check this answer right now. Please review it yourself or try again.",
         })),
       );
-      toCheck.forEach((entry, index) => {
-        const verdict = verdicts[index];
-        if (verdict) {
-          prechecked.set(`${entry.question}\u0000${entry.answer}`, verdict);
-        }
+      // Start both independent model checks before the executor's fresh page
+      // read. Writes still await each verdict and retain every policy check.
+      void classifyQuestions?.(
+        observation.controls,
+        JSON.stringify({ url: observation.url, step: observation.step }),
+      ).catch(() => undefined);
+      const checkedBatch = verdicts.then((results) => {
+        toCheck.forEach((entry, index) => {
+          const verdict = results[index];
+          if (verdict)
+            prechecked.set(`${entry.question}\u0000${entry.answer}`, verdict);
+        });
       });
-      const checkFromBatch = (
+      const checkFromBatch = async (
         question: string,
         answer: string,
       ): Promise<WrittenAnswerCheck> => {
-        const known = prechecked.get(`${question}\u0000${answer}`);
-        return known ? Promise.resolve(known) : checkOne(question, answer);
+        await checkedBatch;
+        return (
+          prechecked.get(`${question}\u0000${answer}`) ??
+          checkOne(question, answer)
+        );
       };
       const lines: string[] = [];
       let wrote = false;

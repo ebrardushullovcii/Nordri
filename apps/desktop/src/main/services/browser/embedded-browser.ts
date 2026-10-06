@@ -1,3 +1,7 @@
+import {
+  measureWaitingFormMemory,
+  waitingFormsHaveCapacity,
+} from "./waiting-form-memory";
 import { randomUUID } from "node:crypto";
 import {
   app,
@@ -19,6 +23,7 @@ import {
   type DesktopBrowserSnapshot,
   type RawApplyPage,
   type DesktopBrowserViewport,
+  type WaitingFormMemory,
 } from "@nordri/contracts";
 import path from "node:path";
 import { routeMainWindowZoomShortcut } from "../../setup/window-zoom";
@@ -799,9 +804,91 @@ export class EmbeddedBrowser {
     ).length;
   }
 
+  private isWaitingTab(id: string): boolean {
+    return (
+      (this.parkedTabs.has(id) ||
+        [...this.ownedTabs.values()].some((tabs) => tabs.has(id))) &&
+      ![...this.operationClaims.values()].some((claim) => claim.tabs.has(id))
+    );
+  }
+
+  private shouldThrottleTab(id: string): boolean {
+    return this.operations.size === 0 || this.isWaitingTab(id);
+  }
+
+  private memoryCleanup: Promise<void> | null = null;
+  private lastMemoryCleanupAt = 0;
+
+  /** Read native process metrics; no page content or answer leaves its renderer. */
+  getWaitingFormMemory(): WaitingFormMemory {
+    const tabs = [...this.pageMap.values()].filter(
+      (page) => !page.contents.isDestroyed() && this.isWaitingTab(page.id),
+    );
+    return measureWaitingFormMemory({
+      recordedAt: new Date().toISOString(),
+      tabs: tabs.map((page) => ({
+        tabId: page.id,
+        processId: page.contents.getOSProcessId(),
+        backgroundThrottled: this.shouldThrottleTab(page.id),
+      })),
+      processes: app.getAppMetrics?.() ?? [],
+    });
+  }
+
+  async reduceWaitingFormMemory(): Promise<WaitingFormMemory> {
+    if (this.memoryCleanup) await this.memoryCleanup;
+    const memory = this.getWaitingFormMemory();
+    if (
+      !waitingFormsHaveCapacity(memory) &&
+      Date.now() - this.lastMemoryCleanupAt > 10_000
+    ) {
+      this.lastMemoryCleanupAt = Date.now();
+      const hidden = memory.tabs.filter(
+        (tab) =>
+          tab.tabId !== this.activeTabId || this.presentation === "minimized",
+      );
+      this.memoryCleanup = Promise.all(
+        hidden.map(async ({ tabId }) => {
+          const page = this.pageMap.get(tabId);
+          if (!page || page.contents.isDestroyed() || !this.isWaitingTab(tabId))
+            return;
+          page.contents.setBackgroundThrottling(true);
+          // Only unreachable objects are collected. The live DOM, selected files,
+          // session and form answers remain in the same tab.
+          if (page.contents.debugger.isAttached()) {
+            let deadline: ReturnType<typeof setTimeout> | undefined;
+            await Promise.race([
+              page.contents.debugger
+                .sendCommand("HeapProfiler.collectGarbage")
+                .catch(() => undefined),
+              new Promise<void>((resolve) => {
+                deadline = setTimeout(resolve, 2_000);
+              }),
+            ]).finally(() => clearTimeout(deadline));
+          }
+        }),
+      )
+        .then(() => undefined)
+        .finally(() => {
+          this.memoryCleanup = null;
+        });
+      await this.memoryCleanup;
+    }
+    return this.getWaitingFormMemory();
+  }
+
+  hasAutomationTabCapacity(): boolean {
+    const memory = this.getWaitingFormMemory();
+    if (!waitingFormsHaveCapacity(memory))
+      void this.reduceWaitingFormMemory().catch(() => undefined);
+    return this.hasTabCapacity();
+  }
+
   private hasTabCapacity(): boolean {
     return (
-      this.pageMap.size < MAX_TOTAL_TABS && this.workingTabCount() < MAX_TABS
+      this.pageMap.size < MAX_TOTAL_TABS &&
+      this.workingTabCount() < MAX_TABS &&
+      waitingFormsHaveCapacity(this.getWaitingFormMemory())
     );
   }
 
@@ -1168,7 +1255,7 @@ export class EmbeddedBrowser {
         });
         if (bounds) page.view.setBounds(bounds);
         page.view.setVisible(true);
-        page.contents.setBackgroundThrottling(this.operations.size === 0);
+        page.contents.setBackgroundThrottling(this.shouldThrottleTab(page.id));
         continue;
       }
       // Minimize preserves the last usable viewport; never resize a live page
@@ -1190,7 +1277,7 @@ export class EmbeddedBrowser {
       // Native view visibility can hide a newly created render widget after
       // its preferences were applied. Reassert the active-run rendering policy
       // after visibility changes so background tabs keep animation frames.
-      page.contents.setBackgroundThrottling(this.operations.size === 0);
+      page.contents.setBackgroundThrottling(this.shouldThrottleTab(page.id));
     }
   }
 
@@ -1487,6 +1574,9 @@ export class EmbeddedBrowser {
               this.ownedTabs.set(claim.owner, tabs);
             }
             this.finishedTabs.delete(tabId);
+            const claimedPage = this.pageMap.get(tabId);
+            if (claimedPage && !claimedPage.contents.isDestroyed())
+              claimedPage.contents.setBackgroundThrottling(false);
           }
         })
         .catch(() => undefined)
@@ -1504,7 +1594,7 @@ export class EmbeddedBrowser {
     this.releasePending = false;
     for (const page of this.pageMap.values())
       if (!page.contents.isDestroyed())
-        page.contents.setBackgroundThrottling(false);
+        page.contents.setBackgroundThrottling(this.shouldThrottleTab(page.id));
     this.focusApp();
     this.hostPages();
     this.emit();
@@ -1525,11 +1615,13 @@ export class EmbeddedBrowser {
       this.operations.delete(controller);
       this.operationClaims.delete(controller);
       this.closeReleasedOwnedTabs();
-      if (this.operations.size === 0)
-        for (const page of this.pageMap.values()) {
-          if (!page.contents.isDestroyed())
-            page.contents.setBackgroundThrottling(true);
-        }
+      for (const page of this.pageMap.values()) {
+        if (!page.contents.isDestroyed())
+          page.contents.setBackgroundThrottling(
+            this.shouldThrottleTab(page.id),
+          );
+      }
+      void this.reduceWaitingFormMemory().catch(() => undefined);
       if (this.operations.size === 0)
         await this.bridge?.syncFocusEmulation().catch(() => undefined);
       this.emit();

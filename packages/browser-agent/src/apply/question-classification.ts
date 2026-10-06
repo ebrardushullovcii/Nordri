@@ -116,7 +116,12 @@ export async function classifyApplicationQuestions(input: {
     : AbortSignal.timeout(60_000);
   const response = await input.client.chatWithTools([...messages], tools, {
     signal,
-    maxOutputTokens: 2000,
+    // A full page can have dozens of questions; truncation used to leave
+    // later questions unclassified and trigger another call on each write.
+    maxOutputTokens: Math.max(
+      2000,
+      Math.min(16_000, input.questions.length * 150 + 300),
+    ),
   });
   const call = response.toolCalls?.find(
     (item) => item.function.name === "report_question_kinds",
@@ -148,51 +153,57 @@ export async function classifyApplicationQuestions(input: {
   return result;
 }
 
-/**
- * The page's questions, classified once each and remembered by their wording
- * for the rest of the run, so a page costs one call however many fields it
- * has. Calls run one after another, so a page classified ahead of time (while
- * the model is still deciding what to type) is not classified twice.
+/** Cache one in-flight or completed classification for the exact step/question set.
+ * Values and page-local handles do not change what a question asks.
  */
 export function createQuestionClassifier(input: {
   client: LLMClient;
   signal?: AbortSignal | undefined;
 }): (
   controls: readonly ApplyFormControl[],
+  step?: string,
 ) => Promise<ReadonlyMap<string, ApplyQuestionClassification>> {
-  const known = new Map<string, ApplyQuestionClassification>();
-  let queue: Promise<unknown> = Promise.resolve();
-  const classify = async (controls: readonly ApplyFormControl[]) => {
-    const unseen = new Map<
-      string,
-      { prompt: string; kind: string; options: string[]; required?: boolean }
-    >();
-    for (const control of controls) {
-      if (!control.visible) continue;
-      const prompt = questionPrompt(control);
-      if (!prompt || known.has(prompt) || unseen.has(prompt)) continue;
-      unseen.set(prompt, {
-        prompt,
-        kind: control.kind,
-        options: [...control.options],
-        required: control.required,
-      });
+  const cacheByStep = new Map<
+    string,
+    {
+      key: string;
+      result: Promise<ReadonlyMap<string, ApplyQuestionClassification>>;
     }
-    if (unseen.size > 0) {
-      const classified = await classifyApplicationQuestions({
-        client: input.client,
-        questions: [...unseen.values()],
-        signal: input.signal,
+  >();
+  return (controls, step = "") => {
+    const questions = [
+      ...new Map(
+        controls
+          .filter((control) => control.visible && questionPrompt(control))
+          .map((control) => [
+            questionPrompt(control),
+            {
+              prompt: questionPrompt(control),
+              kind: control.kind,
+              options: [...control.options],
+              required: control.required,
+            },
+          ]),
+      ).values(),
+    ];
+    const key = JSON.stringify({ step, questions });
+    const cached = cacheByStep.get(step);
+    if (cached?.key === key) return cached.result;
+    const result = classifyApplicationQuestions({
+      client: input.client,
+      questions,
+      signal: input.signal,
+    })
+      .then((classifications) => {
+        if (questions.some((question) => !classifications.has(question.prompt)))
+          throw new Error("The question check did not cover every question.");
+        return classifications;
+      })
+      .catch((error: unknown) => {
+        if (cacheByStep.get(step)?.result === result) cacheByStep.delete(step);
+        throw error;
       });
-      for (const [prompt, classification] of classified) {
-        known.set(prompt, classification);
-      }
-    }
-    return known;
-  };
-  return (controls) => {
-    const next = queue.then(() => classify(controls));
-    queue = next.catch(() => undefined);
-    return next;
+    cacheByStep.set(step, { key, result });
+    return result;
   };
 }

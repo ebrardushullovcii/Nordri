@@ -1830,12 +1830,15 @@ describe("playwright browser runtime", () => {
       );
       vi.doMock("@nordri/browser-agent", async (importOriginal) => ({
         ...(await importOriginal<typeof browserAgent>()),
-        runJobSearchAgent: vi.fn().mockResolvedValue({
+        runJobSearchAgent: vi.fn((input: browserAgent.JobSearchAgentInput) => {
+          const result = {
           jobs: [createTestJob()],
           steps: 3,
           incomplete: false,
           transcriptMessageCount: 4,
-          warning: null,
+          };
+          input.resultCache?.write(input.config, result);
+          return Promise.resolve(result);
         }),
       }));
 
@@ -1899,6 +1902,7 @@ describe("playwright browser runtime", () => {
           navigationHostnames: ["example.com"],
           siteLabel: "Catalog Jobs",
           sourceCatalog: [createTestJob()],
+          sourceCatalogComplete: true,
           dedicatedPage,
           onAutomationPage: (claimedPage) => claimed.push(claimedPage),
         });
@@ -1908,6 +1912,24 @@ describe("playwright browser runtime", () => {
         expect(result.jobs[0]?.title).toBe("Senior Engineer");
         expect(page.goto).not.toHaveBeenCalled();
         expect(page.close).toHaveBeenCalledOnce();
+        expect(claimed).toEqual([page]);
+        const readCount = page.evaluate.mock.calls.length;
+        const repeated = await runtime.runAgentDiscovery!("target_site", {
+          maxSteps: 3,
+          targetJobCount: 1,
+          userProfile: createTestProfile(),
+          searchPreferences: { targetRoles: [], locations: [] },
+          startingUrls: ["https://example.com/jobs"],
+          navigationHostnames: ["example.com"],
+          siteLabel: "Catalog Jobs",
+          sourceCatalog: [createTestJob()],
+          sourceCatalogComplete: true,
+          dedicatedPage,
+          onAutomationPage: (claimedPage) => claimed.push(claimedPage),
+        });
+        expect(repeated.jobs).toEqual(result.jobs);
+        expect(repeated.agentMetadata?.steps).toBe(0);
+        expect(page.evaluate.mock.calls.length).toBe(readCount);
         expect(claimed).toEqual([page]);
       } finally {
         vi.doUnmock("@nordri/browser-agent");

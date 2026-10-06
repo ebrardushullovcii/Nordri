@@ -11,6 +11,7 @@ import type { ApplyPageHands } from "../apply/types";
 import type { AgentConfig } from "../types";
 import type { Page } from "playwright";
 import { describeNonPosting, runJobSearchAgent } from "./job-search-agent";
+import { createSearchResultCache } from "./search-result-cache";
 import { createJobSearchPrompts } from "./job-search-prompts";
 
 function rawPage(overrides: Partial<RawApplyPage> = {}): RawApplyPage {
@@ -1619,3 +1620,269 @@ test("counts another rendered result page even when pagination keeps the same ad
     pages.current.url,
   ]);
 });
+
+test("reuses a freshly verified unchanged complete inventory and plan without model or listing reads", async () => {
+  const catalog = [
+    JobPostingSchema.parse({
+      ...posting("Platform Engineer", "Northwind", "j1"),
+      source: "target_site",
+      discoveredAt: "2026-10-05T10:00:00Z",
+    }),
+  ];
+  const resultCache = createSearchResultCache();
+  const searchConfig = config({
+    sourceCatalog: catalog,
+    sourceCatalogComplete: true,
+  });
+  const model = scripted([
+    { name: "list_catalog_jobs" },
+    { name: "save_catalog_jobs", args: { ids: [0] } },
+    { name: "finish", args: { reason: "Reviewed the complete inventory." } },
+  ]);
+  const first = await runJobSearchAgent({
+    config: searchConfig,
+    hands: hands({ current: rawPage() }),
+    llmClient: model,
+    jobExtractor: extractor,
+    resultCache,
+  });
+  expect(first.jobs).toHaveLength(1);
+  const pageHands = hands({ current: rawPage() });
+  pageHands.observe = vi.fn(pageHands.observe);
+  const unusedModel = { chatWithTools: vi.fn() } as unknown as LLMClient;
+  const repeatConfig = structuredClone(searchConfig);
+  repeatConfig.sourceCatalog![0].discoveredAt = "2026-10-05T11:00:00Z";
+  const repeated = await runJobSearchAgent({
+    config: repeatConfig,
+    hands: pageHands,
+    llmClient: unusedModel,
+    jobExtractor: extractor,
+    resultCache,
+  });
+  expect(repeated.jobs[0]?.canonicalUrl).toBe(first.jobs[0]?.canonicalUrl);
+  expect(repeated.jobs[0]?.discoveredAt).toBe("2026-10-05T11:00:00Z");
+  expect(repeated.steps).toBe(0);
+  expect(unusedModel.chatWithTools).not.toHaveBeenCalled();
+  expect(pageHands.observe).not.toHaveBeenCalled();
+  for (const changed of [
+    {
+      ...repeatConfig,
+      sourceCatalog: [
+        { ...catalog[0], description: "Changed responsibilities" },
+      ],
+    },
+    {
+      ...repeatConfig,
+      sourceCatalog: [
+        ...catalog,
+        { ...catalog[0], canonicalUrl: "https://jobs.example.test/new" },
+      ],
+    },
+    { ...repeatConfig, sourceCatalog: [] },
+    {
+      ...repeatConfig,
+      searchPreferences: {
+        ...repeatConfig.searchPreferences,
+        targetRoles: ["Designer"],
+      },
+    },
+    {
+      ...repeatConfig,
+      userProfile: { ...repeatConfig.userProfile, summary: "Changed facts" },
+    },
+    { ...repeatConfig, sourceCatalogComplete: false },
+    {
+      ...repeatConfig,
+      promptContext: {
+        ...repeatConfig.promptContext,
+        searchRequest: {
+          intent: "",
+          sourceIds: "all" as const,
+          freshness: "recent" as const,
+        },
+      },
+    },
+  ]) {
+    expect(resultCache.read(changed)).toBeNull();
+    const judge = scripted([
+      { name: "finish", args: { reason: "Judged changed inventory." } },
+    ]);
+    const judgeSpy = vi.spyOn(judge, "chatWithTools");
+    await runJobSearchAgent({
+      config: changed,
+      hands: hands({ current: rawPage() }),
+      llmClient: judge,
+      jobExtractor: extractor,
+      resultCache,
+    });
+    expect(judgeSpy).toHaveBeenCalled();
+  }
+  const failedCache = createSearchResultCache();
+  failedCache.write(searchConfig, { ...first, incomplete: true });
+  expect(failedCache.read(searchConfig)).toBeNull();
+  const bounded = createSearchResultCache(1);
+  bounded.write(searchConfig, first);
+  bounded.write(
+    { ...searchConfig, startingUrls: ["https://another.example.test"] },
+    first,
+  );
+  expect(bounded.read(searchConfig)).toBeNull();
+});
+
+test("cached search judgments preserve prior listing details and do not share mutable results", () => {
+  const job = JobPostingSchema.parse({
+    ...posting("Platform Engineer", "Northwind", "j1"),
+    source: "target_site",
+    discoveredAt: "2026-10-05T10:00:00Z",
+  });
+  const input = config({ sourceCatalog: [job], sourceCatalogComplete: true });
+  const cache = createSearchResultCache();
+  cache.write(input, {
+    jobs: [{ ...job, description: "The previously read full listing." }],
+    steps: 3,
+    transcriptMessageCount: 0,
+  });
+  const first = cache.read(input)!;
+  expect(first.jobs[0].description).toBe("The previously read full listing.");
+  first.jobs[0].description = "Changed by caller";
+  expect(cache.read(input)?.jobs[0].description).toBe(
+    "The previously read full listing.",
+  );
+});
+
+test("unchanged complete browser indices reuse previous model judgments after one fresh index read", async () => {
+  const source = rawPage({
+    actions: [],
+    links: [
+      {
+        index: 0,
+        label: "Platform Engineer",
+        href: "https://jobs.example.test/jobs/j1",
+        visible: true,
+        target: "",
+        topOffset: 0,
+      },
+      {
+        index: 1,
+        label: "Data Engineer",
+        href: "https://jobs.example.test/jobs/j2",
+        visible: true,
+        target: "",
+        topOffset: 0,
+      },
+    ],
+  });
+  const indexExtractor: JobExtractor = {
+    extractJobsFromPage: () =>
+      Promise.resolve([
+        posting("Platform Engineer", "Northwind", "j1"),
+        posting("Data Engineer", "Contoso", "j2"),
+      ]),
+  };
+  const resultCache = createSearchResultCache();
+  const pageHands = hands({ current: source });
+  const input = config();
+  const first = await runJobSearchAgent({
+    config: input,
+    hands: pageHands,
+    llmClient: scripted([
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      {
+        name: "finish",
+        args: { reason: "All index rows read.", reusableIndex: true },
+      },
+    ]),
+    jobExtractor: indexExtractor,
+    resultCache,
+  });
+  expect(first.jobs).toHaveLength(2);
+  const observe = vi.spyOn(pageHands, "observe");
+  const model = scripted([
+    { name: "finish", args: { reason: "Changed index reviewed." } },
+  ]);
+  const judge = vi.spyOn(model, "chatWithTools");
+  const readListings = vi.spyOn(indexExtractor, "extractJobsFromPage");
+  readListings.mockClear();
+  const repeated = await runJobSearchAgent({
+    config: input,
+    hands: pageHands,
+    llmClient: model,
+    jobExtractor: indexExtractor,
+    resultCache,
+  });
+  expect(repeated.jobs).toEqual(first.jobs);
+  expect(observe).toHaveBeenCalledOnce();
+  expect(judge).not.toHaveBeenCalled();
+  expect(readListings).not.toHaveBeenCalled();
+  source.bodyText += " A changed listing or a new job.";
+  await runJobSearchAgent({
+    config: input,
+    hands: pageHands,
+    llmClient: model,
+    jobExtractor: indexExtractor,
+    resultCache,
+  });
+  expect(judge).toHaveBeenCalled();
+});
+
+test.each([false, true])(
+  "browser index reuse requires complete model-confirmed coverage (claim=%s)",
+  async (claim) => {
+    const indexExtractor: JobExtractor = {
+      extractJobsFromPage: () =>
+        Promise.resolve([
+          posting("Platform Engineer", "Northwind", "j1"),
+          posting("Data Engineer", "Contoso", "j2"),
+        ]),
+    };
+    const resultCache = createSearchResultCache();
+    // Require both the model's completeness judgment and linked coverage.
+    const pageHands = hands({
+      current: rawPage({
+        links: claim
+          ? []
+          : [
+              {
+                index: 0,
+                label: "Platform Engineer",
+                href: "https://jobs.example.test/jobs/j1",
+                target: "",
+                topOffset: 0,
+                visible: true,
+              },
+              {
+                index: 1,
+                label: "Data Engineer",
+                href: "https://jobs.example.test/jobs/j2",
+                target: "",
+                topOffset: 0,
+                visible: true,
+              },
+            ],
+      }),
+    });
+    const input = config();
+    await runJobSearchAgent({
+      config: input,
+      hands: pageHands,
+      llmClient: scripted([
+        { name: "extract_jobs", args: { pageType: "search_results" } },
+        { name: "finish", args: { reason: "Done.", reusableIndex: claim } },
+      ]),
+      jobExtractor: indexExtractor,
+      resultCache,
+    });
+    const model = scripted([
+      { name: "finish", args: { reason: "Review again." } },
+    ]);
+    const judge = vi.spyOn(model, "chatWithTools");
+    await runJobSearchAgent({
+      config: input,
+      hands: pageHands,
+      llmClient: model,
+      jobExtractor: indexExtractor,
+      resultCache,
+    });
+    expect(judge).toHaveBeenCalled();
+  },
+);

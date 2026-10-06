@@ -2407,6 +2407,7 @@ describe("apply readiness regressions", () => {
       },
     );
     expect(result.outcome).toBe("paused");
+    expect(result.timing?.auxiliaryModelCalls).toBe(1);
     expect(result.pauses[0]?.questions).toHaveLength(1);
     expect(result.pauses[0]?.question).toMatchObject({
       prompt: "Select your skills *",
@@ -4294,4 +4295,102 @@ test("renumbered handles keep current answers and two equal-worded questions dis
     ["Description", "First role"],
     ["Description", "Changed second role"],
   ]);
+});
+
+test("batch classification, answer checks and safety page read overlap before any write", async () => {
+  const source = page({
+    controls: [{ ...nameControl(), label: "Why this role?", value: "" }],
+  });
+  const input = config(source);
+  input.modelQuestionClassification = true;
+  const events: string[] = [];
+  let releaseKinds!: () => void;
+  let releaseAnswers!: () => void;
+  const kindsGate = new Promise<void>((resolve) => {
+    releaseKinds = resolve;
+  });
+  const answersGate = new Promise<void>((resolve) => {
+    releaseAnswers = resolve;
+  });
+  const observe = input.hands.observe;
+  input.hands.observe = () => {
+    events.push("read");
+    return observe();
+  };
+  input.hands.fillText = (_ref, value) => {
+    events.push("write");
+    source.controls[0].value = value;
+    return Promise.resolve({ ok: true, observedValue: value });
+  };
+  let turns = 0;
+  const resultPromise = runApplyAgent(input, {
+    chatWithTools: async (messages, definitions) => {
+      const name = definitions[0]?.function.name;
+      if (name === "report_question_kinds") {
+        events.push("classification");
+        await kindsGate;
+        return {
+          toolCalls: [
+            {
+              id: "kinds",
+              type: "function",
+              function: {
+                name,
+                arguments: JSON.stringify({
+                  questions: [
+                    { index: 0, asksAboutPay: false, declarationKind: null },
+                  ],
+                }),
+              },
+            },
+          ],
+        };
+      }
+      if (name === "report_answer_checks") {
+        events.push("answers");
+        await answersGate;
+        return (await supportedChecks(messages, definitions))!;
+      }
+      return {
+        toolCalls: [
+          {
+            id: "decision",
+            type: "function",
+            function: {
+              name: ++turns === 1 ? "fill_fields" : "finish",
+              arguments: JSON.stringify(
+                turns === 1
+                  ? {
+                      fields: [
+                        {
+                          tool: "type",
+                          ref: "c0",
+                          text: "My platform experience fits this role.",
+                        },
+                      ],
+                    }
+                  : { reason: "Done." },
+              ),
+            },
+          },
+        ],
+      };
+    },
+  });
+  for (let i = 0; i < 20 && !events.includes("answers"); i += 1)
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  expect(events).toContain("classification");
+  expect(events).toContain("answers");
+  expect(
+    events.filter((event) => event === "read").length,
+  ).toBeGreaterThanOrEqual(2);
+  expect(events).not.toContain("write");
+  releaseKinds();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  expect(events).not.toContain("write");
+  releaseAnswers();
+  const result = await resultPromise;
+  expect(result.filled).toHaveLength(1);
+  expect(events.filter((event) => event === "classification")).toHaveLength(1);
+  expect(events.filter((event) => event === "answers")).toHaveLength(1);
 });

@@ -154,3 +154,35 @@ test("the total cap still holds even when every form is waiting", async () => {
   await expect(reservation).rejects.toBeTruthy();
   expect(pages.every((page) => !page.isClosed())).toBe(true);
 });
+
+test("memory pressure queues a new form without losing waiting tabs and wakes when capacity returns", async () => {
+  vi.useFakeTimers();
+  try {
+    const { context, pages } = fakeContext(["https://jobs.example/apply/1"]);
+    let capacity = false;
+    let settled = false;
+    const waiting = vi.fn();
+    const reservation = reserveEmbeddedApplicationTab(
+      context,
+      undefined,
+      undefined,
+      waiting,
+      () => 1,
+      () => 0,
+      () => capacity,
+    ).then((release) => {
+      settled = true;
+      return release;
+    });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(settled).toBe(false);
+    expect(waiting).toHaveBeenCalledOnce();
+    expect(pages[0]!.isClosed()).toBe(false);
+    capacity = true;
+    await vi.advanceTimersByTimeAsync(250);
+    expect(settled).toBe(true);
+    (await reservation)();
+  } finally {
+    vi.useRealTimers();
+  }
+});

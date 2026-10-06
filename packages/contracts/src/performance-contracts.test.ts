@@ -68,3 +68,42 @@ describe("Job Finder performance evidence contracts", () => {
     expect(snapshot.budgetEvaluations).toEqual([]);
   });
 });
+
+it("waiting forms keep per-process memory, missing measurements and old timing snapshots", async () => {
+  const { WaitingFormMemorySchema, JobFinderPerformanceSnapshotSchema } =
+    await import("./performance");
+  const snapshot = { generatedAt: "2026-10-05T10:00:00Z" };
+  expect(
+    JobFinderPerformanceSnapshotSchema.parse(snapshot).waitingFormMemory,
+  ).toBeUndefined();
+  const memory = {
+    recordedAt: snapshot.generatedAt,
+    totalBytes: 1024,
+    budgetBytes: 805306368,
+    measurementComplete: false,
+    overBudget: false,
+    tabs: [
+      {
+        tabId: "synthetic",
+        processId: 42,
+        processBytes: 1024,
+        backgroundThrottled: true,
+      },
+      {
+        tabId: "missing",
+        processId: 0,
+        processBytes: null,
+        backgroundThrottled: true,
+      },
+    ],
+  };
+  expect(
+    JobFinderPerformanceSnapshotSchema.parse({
+      ...snapshot,
+      waitingFormMemory: memory,
+    }).waitingFormMemory,
+  ).toEqual(memory);
+  expect(
+    WaitingFormMemorySchema.safeParse({ ...memory, totalBytes: -1 }).success,
+  ).toBe(false);
+});

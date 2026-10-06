@@ -31,3 +31,5 @@ export { createPageTools, type PageTools, type PageToolPolicy } from './page-too
 export { runJobSearchAgent, type JobSearchAgentInput } from './search/job-search-agent'
 export { createJobSearchPrompts } from './search/job-search-prompts'
 export { createMoveReviewer, describeSearchGoal, type MoveReview } from './search/move-reviewer'
+
+export { createSearchResultCache } from "./search/search-result-cache";

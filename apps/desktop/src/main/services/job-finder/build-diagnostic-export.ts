@@ -88,6 +88,9 @@ export function buildJobFinderDiagnosticExport(input: {
       latestApplyDurationMs,
     },
     performance: {
+      ...(input.performance.waitingFormMemory
+        ? { waitingFormMemory: input.performance.waitingFormMemory }
+        : {}),
       measurements: input.performance.evidence.map((entry) => ({
         area: entry.area,
         measurementStatus: entry.measurementStatus,

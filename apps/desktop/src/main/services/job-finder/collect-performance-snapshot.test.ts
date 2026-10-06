@@ -56,3 +56,38 @@ describe("collectJobFinderPerformanceSnapshot", () => {
     expect(service.getSourceDebugRunDetails).not.toHaveBeenCalled();
   });
 });
+
+it("includes native waiting-form measurements in the timing snapshot", async () => {
+  const memory = {
+    recordedAt: generatedAt,
+    totalBytes: 1024,
+    budgetBytes: 805306368,
+    measurementComplete: true,
+    overBudget: false,
+    tabs: [
+      {
+        tabId: "synthetic",
+        processId: 1,
+        processBytes: 1024,
+        backgroundThrottled: true,
+      },
+    ],
+  };
+  const workspace = {
+    activeDiscoveryRun: null,
+    recentDiscoveryRuns: [],
+    latestResumeImportRun: null,
+    applicationAttempts: [],
+    activeSourceDebugRun: null,
+    recentSourceDebugRuns: [],
+  } as unknown as JobFinderWorkspaceSnapshot;
+  const result = await collectJobFinderPerformanceSnapshot({
+    service: {
+      getWorkspaceSnapshot: () => Promise.resolve(workspace),
+      getSourceDebugRunDetails: vi.fn(),
+    },
+    waitingFormMemory: () => Promise.resolve(memory),
+    generatedAt,
+  });
+  expect(result.performance.waitingFormMemory).toEqual(memory);
+});

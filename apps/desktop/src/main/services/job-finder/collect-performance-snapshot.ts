@@ -1,6 +1,7 @@
 import type {
   JobFinderPerformanceSnapshot,
   JobFinderWorkspaceSnapshot,
+  WaitingFormMemory,
 } from "@nordri/contracts";
 import {
   buildJobFinderPerformanceSnapshot,
@@ -16,6 +17,7 @@ export async function collectJobFinderPerformanceSnapshot(input: {
   service: PerformanceWorkspaceService;
   generatedAt?: string;
   nowMs?: () => number;
+  waitingFormMemory?: () => Promise<WaitingFormMemory>;
 }): Promise<{
   workspace: JobFinderWorkspaceSnapshot;
   performance: JobFinderPerformanceSnapshot;
@@ -33,25 +35,29 @@ export async function collectJobFinderPerformanceSnapshot(input: {
     ? await input.service.getSourceDebugRunDetails(latestSourceDebugSummary.id)
     : null;
 
+  const waitingFormMemory = await input.waitingFormMemory?.();
   return {
     workspace,
-    performance: buildJobFinderPerformanceSnapshot({
-      workspace,
-      latestSourceDebugRun,
-      generatedAt,
-      runtimeObservations: [
-        {
-          area: "persistence",
-          durationMs: snapshotReadDurationMs,
-          recordedAt: generatedAt,
-          stageDurations: [
-            {
-              id: "persistence.workspace_snapshot_read",
-              durationMs: snapshotReadDurationMs,
-            },
-          ],
-        },
-      ],
-    }),
+    performance: {
+      ...buildJobFinderPerformanceSnapshot({
+        workspace,
+        latestSourceDebugRun,
+        generatedAt,
+        runtimeObservations: [
+          {
+            area: "persistence",
+            durationMs: snapshotReadDurationMs,
+            recordedAt: generatedAt,
+            stageDurations: [
+              {
+                id: "persistence.workspace_snapshot_read",
+                durationMs: snapshotReadDurationMs,
+              },
+            ],
+          },
+        ],
+      }),
+      ...(waitingFormMemory ? { waitingFormMemory } : {}),
+    },
   };
 }

@@ -160,6 +160,9 @@ describe("createDesktopBrowserRuntime", () => {
   test("wires the host's live working count into application reservations", () => {
     const factory = vi.spyOn(browserRuntimeModule, "createBrowserAgentRuntime");
     const embedded = getEmbeddedBrowser();
+    const capacity = vi
+      .spyOn(embedded, "hasAutomationTabCapacity")
+      .mockReturnValue(false);
     const working = vi.spyOn(embedded, "workingTabCount").mockReturnValue(2);
     const total = vi.spyOn(embedded, "openTabCount").mockReturnValue(12);
     const env = {
@@ -174,6 +177,8 @@ describe("createDesktopBrowserRuntime", () => {
     const host = factory.mock.calls.at(-1)?.[0].browserHost;
     expect(host?.openTabCount?.()).toBe(12);
     expect(host?.workingTabCount?.()).toBe(2);
+    expect(host?.hasAutomationTabCapacity?.()).toBe(false);
+    capacity.mockRestore();
     working.mockRestore();
     total.mockRestore();
     factory.mockRestore();
