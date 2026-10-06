@@ -1,3 +1,4 @@
+import { describeListingReadFailure } from "../../lib/describe-failure";
 import { useEffect, useRef, useState } from "react";
 import type { SavedJob } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui/button";
@@ -13,7 +14,7 @@ export function DiscoveryAssessmentContinuation(props: {
     done: number;
     total: number;
   } | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const stopped = useRef(false);
   const busy = useRef(false);
   useEffect(
@@ -27,7 +28,7 @@ export function DiscoveryAssessmentContinuation(props: {
     if (busy.current) return;
     busy.current = true;
     stopped.current = false;
-    setError(false);
+    setError(null);
     const batch = unread.slice(0, 20);
     setProgress({ done: 0, total: batch.length });
     try {
@@ -37,8 +38,8 @@ export function DiscoveryAssessmentContinuation(props: {
         if (!stopped.current)
           setProgress({ done: index + 1, total: batch.length });
       }
-    } catch {
-      if (!stopped.current) setError(true);
+    } catch (error) {
+      if (!stopped.current) setError(describeListingReadFailure(error));
     } finally {
       busy.current = false;
       if (!stopped.current) setProgress(null);
@@ -58,10 +59,11 @@ export function DiscoveryAssessmentContinuation(props: {
         </p>
       ) : !props.isSearchRunning ? (
         <Button size="sm" variant="secondary" onClick={() => void assessMore()}>
-          Assess next {Math.min(20, unread.length)} listings
+          Assess next {Math.min(20, unread.length)}{" "}
+          {unread.length === 1 ? "listing" : "listings"}
         </Button>
       ) : null}
-      {error ? <p>Assessment stopped. Try again to continue.</p> : null}
+      {error ? <p role="alert">{error}</p> : null}
     </div>
   );
 }

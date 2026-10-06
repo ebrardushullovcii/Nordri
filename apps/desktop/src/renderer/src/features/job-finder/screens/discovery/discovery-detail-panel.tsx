@@ -1,3 +1,4 @@
+import { describeListingReadFailure } from "../../lib/describe-failure";
 import { joinUniqueSentences } from "../../lib/sentence-copy";
 import {
   discoveryFeedbackOptions,
@@ -485,6 +486,7 @@ export function DiscoveryDetailPanel({
   const [assessmentErrorJobId, setAssessmentErrorJobId] = useState<
     string | null
   >(null);
+  const [assessmentError, setAssessmentError] = useState<string | null>(null);
   const [assessingJobId, setAssessingJobId] = useState<string | null>(null);
   const [listingCopyFailedJobId, setListingCopyFailedJobId] = useState<
     string | null
@@ -1535,7 +1537,10 @@ export function DiscoveryDetailPanel({
                     setAssessmentErrorJobId(null);
                     setAssessingJobId(jobId);
                     void onAssessJobListing(jobId)
-                      .catch(() => setAssessmentErrorJobId(jobId))
+                      .catch((error: unknown) => {
+                        setAssessmentErrorJobId(jobId);
+                        setAssessmentError(describeListingReadFailure(error));
+                      })
                       .finally(() =>
                         setAssessingJobId((current) =>
                           current === jobId ? null : current,
@@ -1556,7 +1561,8 @@ export function DiscoveryDetailPanel({
                   role="alert"
                   className="text-(length:--text-small) text-foreground-soft"
                 >
-                  Could not assess this listing. Try again.
+                  {assessmentError ??
+                    "Could not assess this listing. Try again."}
                 </p>
               ) : null}
               {onOpenListing ? (

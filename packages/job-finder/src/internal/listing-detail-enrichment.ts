@@ -59,6 +59,11 @@ export type ListingHtmlFetcher = (
  * The model reading one listing page's text: the posting it found, or null
  * when the page is not a job listing.
  */
+export type RenderedListingPageReader = (
+  url: string,
+  options: { signal?: AbortSignal },
+) => Promise<{ html: string; finalUrl: string }>;
+
 export type ListingPageReader = (input: {
   pageText: string;
   pageUrl: string;
@@ -110,6 +115,7 @@ export interface EnrichSavedJobListingDetailsInput {
   fetchHtml: ListingHtmlFetcher;
   /** Reads the full page with published facts and links as model inputs. */
   readPage?: ListingPageReader;
+  readRenderedPage?: RenderedListingPageReader;
   /** Re-scores a posting; the discovery pipeline's assessment session. */
   assess: (posting: JobPosting) => MatchAssessment | Promise<MatchAssessment>;
   now?: () => string;
@@ -335,6 +341,7 @@ export async function readListingDetail(input: {
   html: string;
   url: string;
   expectedTitle: string | null;
+  readRenderedPage?: RenderedListingPageReader;
   readPage?: ListingPageReader;
   signal?: AbortSignal;
 }): Promise<ExtractedListingDetail | null> {
@@ -364,7 +371,19 @@ export async function readListingDetail(input: {
     pageUrl: input.url,
     ...(input.signal ? { signal: input.signal } : {}),
   });
-  if (!posting || !posting.description.trim()) {
+  if (!posting || !posting.description.trim() || posting.needsRenderedPage) {
+    if (input.readRenderedPage) {
+      const rendered = await input.readRenderedPage(input.url, {
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      return readListingDetail({
+        html: rendered.html,
+        url: rendered.finalUrl,
+        expectedTitle: input.expectedTitle,
+        readPage: input.readPage,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+    }
     return null;
   }
   return {
@@ -864,6 +883,9 @@ export async function enrichSavedJobListingDetails(
           continue;
         }
         let detail = await readListingDetail({
+          ...(input.readRenderedPage
+            ? { readRenderedPage: input.readRenderedPage }
+            : {}),
           html: response.html,
           url: response.finalUrl,
           expectedTitle: job.title,

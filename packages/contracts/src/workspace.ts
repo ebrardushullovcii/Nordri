@@ -946,6 +946,13 @@ const PersistedApplicationRecordSchema: z.ZodType<
   z.input<typeof ApplicationRecordSchema>
 > = ApplicationRecordSchema;
 
+// Keep repository inference bounded as discovery accounting grows.
+const PersistedDiscoveryStateSchema: z.ZodType<
+  JobFinderDiscoveryState,
+  z.ZodTypeDef,
+  z.input<typeof JobFinderDiscoveryStateSchema>
+> = JobFinderDiscoveryStateSchema;
+
 const JobFinderRepositoryStateShape = {
   profile: CandidateProfileSchema,
   searchPreferences: JobSearchPreferencesSchema,
@@ -1005,7 +1012,7 @@ const JobFinderRepositoryStateShape = {
     .array(ResumeImportFieldCandidateSchema)
     .default([]),
   settings: JobFinderSettingsSchema,
-  discovery: JobFinderDiscoveryStateSchema.default({}),
+  discovery: PersistedDiscoveryStateSchema.default({}),
   campaigns: z.array(JobSearchCampaignSchema).default([]),
   activeCampaignId: NonEmptyStringSchema.nullable().default(null),
   campaignNotifications: z.array(CampaignNotificationSchema).default([]),

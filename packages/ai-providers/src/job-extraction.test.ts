@@ -732,3 +732,45 @@ describe("job extraction with openai-compatible client", () => {
     }
   });
 });
+
+test("returns model rejection categories and reasons so inspected jobs are accounted for", async () => {
+  const restore = mockJsonFetch({
+    choices: [
+      {
+        message: {
+          content: JSON.stringify({
+            jobs: [
+              {
+                title: "Warehouse Lead",
+                company: "Example",
+                location: "Leeds",
+                canonicalUrl: "https://jobs.example.test/warehouse",
+                description: "Lead a warehouse team.",
+                searchRejection: {
+                  category: "role",
+                  reason: "This plan asks for product design roles.",
+                },
+              },
+            ],
+          }),
+        },
+      },
+    ],
+  });
+  try {
+    const client = createJobFinderAiClientFromEnvironment(createEnvironment());
+    const jobs = await client.extractJobsFromPage({
+      pageText: "Warehouse Lead",
+      pageUrl: "https://jobs.example.test",
+      pageType: "search_results",
+      maxJobs: 20,
+      selectionContext: "Product design only",
+    });
+    expect(jobs[0]?.searchRejection).toEqual({
+      category: "role",
+      reason: "This plan asks for product design roles.",
+    });
+  } finally {
+    restore();
+  }
+});

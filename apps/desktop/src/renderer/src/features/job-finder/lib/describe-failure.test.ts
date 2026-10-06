@@ -57,3 +57,27 @@ it("workspace restore explains unknown versions and keeps unexpected raw errors 
   expect(unknown.userMessage).not.toContain("internal_record_123");
   expect(unknown.technicalDetails).toContain("internal_record_123");
 });
+
+it("keeps service listing advice without its Electron wrapper and hides arbitrary errors", async () => {
+  const { describeListingReadFailure, describeBrowserJobFailure } =
+    await import("./describe-failure");
+  const advice =
+    "The listing could not be read from this page. Open the listing and try again.";
+  expect(
+    describeListingReadFailure(
+      new Error(
+        `Error invoking remote method 'job-finder:assess': Error: ${advice}`,
+      ),
+    ),
+  ).toBe(advice);
+  expect(
+    describeListingReadFailure(new Error("Model provider secret payload")),
+  ).toBe("Could not assess this listing. Try again.");
+  expect(
+    describeBrowserJobFailure(
+      new Error(
+        "No job listing was found on this page. Open the job's own listing and try again.",
+      ),
+    ),
+  ).toContain("No job listing");
+});

@@ -36,16 +36,6 @@ function normalizeForMatch(value: string): string {
     .trim();
 }
 
-function containsTerm(text: string, term: string): boolean {
-  const normalizedText = normalizeForMatch(text);
-  const normalizedTerm = normalizeForMatch(term);
-  if (!normalizedText || !normalizedTerm) {
-    return false;
-  }
-
-  return ` ${normalizedText} `.includes(` ${normalizedTerm} `);
-}
-
 function uniqueTerms(values: readonly string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -118,14 +108,6 @@ function collectJobTerms(
   );
 }
 
-function shortenEvidence(value: string): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  if (compact.length <= 180) {
-    return compact;
-  }
-  return `${compact.slice(0, 177).trimEnd()}…`;
-}
-
 export function isResumeDraftThin(draft: ResumeDraft): boolean {
   const includedSections = draft.sections.filter((section) => section.included);
   const includedLineCount = includedSections.reduce((count, section) => {
@@ -163,30 +145,6 @@ export function isResumeDraftThin(draft: ResumeDraft): boolean {
     !hasExperienceContent ||
     includedSections.length < 2
   );
-}
-
-function findDraftWording(draft: ResumeDraft, term: string): string | null {
-  for (const section of draft.sections) {
-    if (!section.included || section.kind === "keywords") continue;
-    const texts = [
-      section.text,
-      ...section.bullets
-        .filter((bullet) => bullet.included)
-        .map((bullet) => bullet.text),
-      ...section.entries
-        .filter((entry) => entry.included)
-        .flatMap((entry) => [
-          entry.title,
-          entry.summary,
-          ...entry.bullets
-            .filter((bullet) => bullet.included)
-            .map((bullet) => bullet.text),
-        ]),
-    ];
-    const text = texts.find((value) => value && containsTerm(value, term));
-    if (text) return shortenEvidence(text);
-  }
-  return null;
 }
 
 export function buildResumeJobKeywordEvidence(input: {
@@ -228,7 +186,7 @@ export function buildResumeJobKeywordEvidence(input: {
     evidence: null,
     sourceLabel: null,
     status: "unchecked",
-    draftEvidence: findDraftWording(input.draft, term),
+
     term,
   }));
 }

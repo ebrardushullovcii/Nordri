@@ -250,6 +250,10 @@ export interface ApplicationPreparationProgress {
 }
 
 export interface BrowserSessionRuntime {
+  readRenderedPage?(
+    url: string,
+    options?: { signal?: AbortSignal; onPage?: (page: Page) => void },
+  ): Promise<{ html: string; finalUrl: string }>;
   getSessionState(source: JobSource): Promise<BrowserSessionState>;
   openSession(
     source: JobSource,

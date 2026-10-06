@@ -221,3 +221,55 @@ describe("discovery run change digest", () => {
     ).toMatchObject({ found: 10, new: 0 });
   });
 });
+
+it("partitions inspected listings across sources into saved, rejected, duplicates and deferred", () => {
+  const run = DiscoveryRunRecordSchema.parse({
+    id: "counted",
+    state: "completed",
+    startedAt: "2026-10-05T10:00:00.000Z",
+    summary: { jobsStaged: 3, validJobsFound: 3, duplicatesMerged: 1 },
+    targetExecutions: [
+      {
+        targetId: "one",
+        adapterKind: "auto",
+        state: "completed",
+        jobsInspected: 5,
+        jobsStaged: 2,
+        duplicatesMerged: 1,
+        listingsDeferred: 1,
+        pagesCovered: 2,
+        rejectedListings: [
+          {
+            title: "Warehouse",
+            url: "https://example.test/warehouse",
+            category: "role",
+            reason: "Outside your design roles.",
+          },
+        ],
+      },
+      {
+        targetId: "two",
+        adapterKind: "auto",
+        state: "completed",
+        jobsInspected: 2,
+        jobsStaged: 1,
+        jobsSkippedByLedger: 1,
+        pagesCovered: 1,
+        listingsDeferred: 0,
+        rejectedListings: [],
+      },
+    ],
+  });
+  const report = buildDiscoveryRunReport(run, "2026-10-05T10:01:00.000Z");
+  expect(report).toMatchObject({
+    found: 7,
+    saved: 3,
+    rejected: 1,
+    duplicates: 2,
+    deferred: 1,
+    pagesCovered: 3,
+  });
+  expect(report.found).toBe(
+    report.saved! + report.rejected! + report.duplicates! + report.deferred!,
+  );
+});

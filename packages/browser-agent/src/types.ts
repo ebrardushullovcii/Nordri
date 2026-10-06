@@ -81,6 +81,17 @@ export interface AgentConfig {
 }
 
 export interface AgentResult {
+  pagesCovered?: number;
+  coveredPageUrls?: string[];
+  deferredListingPageUrls?: string[];
+  duplicateListingPageUrls?: string[];
+  duplicateListings?: number;
+  unreadableListings?: Array<{
+    title: string;
+    url: string;
+    category: "unreadable";
+    reason: string;
+  }>;
   jobs: JobPosting[];
   steps: number;
   incomplete?: boolean;

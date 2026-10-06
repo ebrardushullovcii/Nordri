@@ -1607,15 +1607,21 @@ export async function collectPublicProviderJobs(input: {
   artifact: Pick<SourceInstructionArtifact, "intelligence">;
   source: JobSource;
   signal?: AbortSignal;
-}): Promise<{ jobs: JobPosting[]; warning: string | null }> {
+}): Promise<{
+  jobs: JobPosting[];
+  warning: string | null;
+  pagesCovered?: number;
+}> {
   const provider = input.artifact.intelligence.provider;
   if (!provider || provider.apiAvailability !== "available") {
     return {
       jobs: [],
       warning: "No public provider API is configured for this source.",
+      pagesCovered: 0,
     };
   }
 
+  let pagesCovered = 0;
   try {
     const responseAdapter =
       PUBLIC_API_RESPONSE_ADAPTERS[
@@ -1626,6 +1632,7 @@ export async function collectPublicProviderJobs(input: {
       const composedSignal = composeAbortSignals(timeout.signal, input.signal);
 
       try {
+        pagesCovered += 1;
         const response = await fetch(provider.publicApiUrlTemplate, {
           signal: composedSignal.signal,
         });
@@ -1644,6 +1651,7 @@ export async function collectPublicProviderJobs(input: {
         );
 
         return {
+          pagesCovered,
           jobs: jobs.flatMap((job) => {
             if (!job.sourceJobId || !job.title || !job.canonicalUrl) {
               return [];
@@ -1731,6 +1739,7 @@ export async function collectPublicProviderJobs(input: {
     return {
       jobs: [],
       warning: `${provider.label} API collection is not implemented yet for this provider.`,
+      pagesCovered,
     };
   } catch (error) {
     if (input.signal?.aborted) {
@@ -1739,6 +1748,7 @@ export async function collectPublicProviderJobs(input: {
 
     return {
       jobs: [],
+      pagesCovered,
       warning: isAbortError(error)
         ? `Public provider API collection failed: ${provider.label} API request timed out.`
         : error instanceof Error

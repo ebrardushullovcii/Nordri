@@ -1096,6 +1096,10 @@ function assembleMergedDiscoveredJob(input: {
     // already retained that row. Dropping this list on duplicate merge made a
     // job silently leave plan 1 as soon as plan 2 found it.
     campaignIds: [...(existingJob?.campaignIds ?? [])],
+    ...(existingJob?.personSupplied ? { personSupplied: true } : {}),
+    ...(existingJob?.planAssessments
+      ? { planAssessments: existingJob.planAssessments }
+      : {}),
     status: preserveJobStatus(existingJob),
     matchAssessment: preserveCompletedAssessment(
       existingJob?.matchAssessment,

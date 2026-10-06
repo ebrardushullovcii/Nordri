@@ -1,5 +1,9 @@
 import { useToast } from "@renderer/components/ui/toast";
 import {
+  describeBrowserJobFailure,
+  describeFailure,
+} from "../lib/describe-failure";
+import {
   useCallback,
   useEffect,
   useRef,
@@ -112,6 +116,43 @@ export function BrowserPeek(props: {
   const bridge = window.nordri?.browser;
   const { showToast } = useToast();
   const lastSendNotice = useRef<string | null>(null);
+  const [addingJob, setAddingJob] = useState(false);
+  const addJob = async () => {
+    if (!bridge || !state.activeTabId) return;
+    setMenuOpen(false);
+    setAddingJob(true);
+    setMessage(null);
+    try {
+      const saved = await bridge.addCurrentJob({ tabId: state.activeTabId });
+      showToast({
+        title: "Job saved",
+        description: saved.planName
+          ? `Saved to ${saved.planName}.`
+          : saved.title,
+        action: {
+          label: "Shortlist",
+          onClick: () => {
+            void window.nordri.jobFinder
+              .queueJobForReview(saved.jobId)
+              .then(() => {
+                showToast({ title: "Job added to Shortlisted" });
+              })
+              .catch((error: unknown) =>
+                setMessage(
+                  describeFailure(error, {
+                    unknownSentence: "Could not shortlist this job. Try again.",
+                  }).userMessage,
+                ),
+              );
+          },
+        },
+      });
+    } catch (error) {
+      setMessage(describeBrowserJobFailure(error));
+    } finally {
+      setAddingJob(false);
+    }
+  };
   const [state, setState] = useState(initialState);
   useEffect(() => {
     const notice = state.unboundSendNotice;
@@ -590,6 +631,15 @@ export function BrowserPeek(props: {
                     </button>
                     {menuOpen && (
                       <div className="browser-menu-list" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          disabled={blank || busy || addingJob}
+                          onClick={() => void addJob()}
+                        >
+                          <Plus size={14} />{" "}
+                          {addingJob ? "Adding job…" : "Add this job"}
+                        </button>
                         <button
                           type="button"
                           role="menuitem"

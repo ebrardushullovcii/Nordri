@@ -152,7 +152,21 @@ export type DesktopBrowserSnapshot = z.infer<
   typeof DesktopBrowserSnapshotSchema
 >;
 
+export const AddBrowserJobInputSchema = z
+  .object({ tabId: BrowserTabIdSchema })
+  .strict();
+export type AddBrowserJobInput = z.infer<typeof AddBrowserJobInputSchema>;
+export const AddBrowserJobResultSchema = z
+  .object({
+    jobId: z.string().min(1),
+    title: z.string(),
+    planName: z.string().nullable(),
+  })
+  .strict();
+export type AddBrowserJobResult = z.infer<typeof AddBrowserJobResultSchema>;
+
 export interface DesktopBrowserBridge {
+  addCurrentJob(input: AddBrowserJobInput): Promise<AddBrowserJobResult>;
   getState(): Promise<DesktopBrowserState>;
   command(command: DesktopBrowserCommand): Promise<DesktopBrowserState>;
   setViewport(viewport: DesktopBrowserViewport): Promise<void>;

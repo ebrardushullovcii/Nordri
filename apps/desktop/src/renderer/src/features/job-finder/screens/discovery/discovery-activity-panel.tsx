@@ -378,6 +378,19 @@ export function DiscoveryHistoryModal(props: {
     () => new Map(props.targets.map((target) => [target.id, target.label])),
     [props.targets],
   );
+  const sourceContributions = new Map<
+    string,
+    { label: string; saved: number }
+  >();
+  for (const execution of selectedRun?.targetExecutions ?? []) {
+    for (const counts of execution.sourceCounts ?? []) {
+      const previous = sourceContributions.get(counts.sourceId);
+      sourceContributions.set(counts.sourceId, {
+        label: counts.label,
+        saved: (previous?.saved ?? 0) + counts.saved,
+      });
+    }
+  }
   const sourceHealth = useMemo(() => {
     if (!selectedRun) {
       return [];
@@ -751,21 +764,25 @@ export function DiscoveryHistoryModal(props: {
                     </h3>
                     <p className="text-[0.82rem] leading-5 text-foreground-soft">
                       By source:{" "}
-                      {sourceHealth
-                        .map((source) => {
-                          const label =
-                            targetLabels.get(source.targetId) ??
-                            "Configured source";
-                          const execution = selectedRun.targetExecutions.find(
-                            (candidate) =>
-                              candidate.targetId === source.targetId,
-                          );
-                          const contributed =
-                            (execution?.jobsPersisted ?? 0) +
-                            (execution?.jobsStaged ?? 0);
-                          return `${label} — ${contributed} ${contributed === 1 ? "job" : "jobs"}`;
-                        })
-                        .join("; ")}
+                      {(sourceContributions.size > 0
+                        ? [...sourceContributions.values()].map(
+                            (source) =>
+                              `${source.label} — ${source.saved} ${source.saved === 1 ? "job" : "jobs"}`,
+                          )
+                        : sourceHealth.map((source) => {
+                            const label =
+                              targetLabels.get(source.targetId) ??
+                              "Configured source";
+                            const execution = selectedRun.targetExecutions.find(
+                              (candidate) =>
+                                candidate.targetId === source.targetId,
+                            );
+                            const contributed =
+                              (execution?.jobsPersisted ?? 0) +
+                              (execution?.jobsStaged ?? 0);
+                            return `${label} — ${contributed} ${contributed === 1 ? "job" : "jobs"}`;
+                          })
+                      ).join("; ")}
                       .
                     </p>
                     <div className="grid gap-2 md:grid-cols-2">
@@ -841,13 +858,62 @@ export function DiscoveryHistoryModal(props: {
                                     : ""}
                                 </p>
                                 <p className="mt-1 text-[0.82rem] text-foreground-soft">
-                                  Contributed {contributed} new job
-                                  {contributed === 1 ? "" : "s"} to this run
-                                  {alreadySaved > 0
-                                    ? `; ${execution?.duplicatesMerged ?? 0} duplicates merged · ${execution?.jobsSkippedByLedger ?? 0} seen before`
-                                    : ""}
-                                  .
+                                  {execution?.jobsInspected !== undefined ? (
+                                    <>
+                                      {execution.jobsInspected} inspected ·{" "}
+                                      {contributed} saved ·{" "}
+                                      {(execution.rejectedListings?.length ??
+                                        0) + execution.invalidSkipped}{" "}
+                                      rejected ·{" "}
+                                      {execution.duplicatesMerged +
+                                        execution.jobsSkippedByLedger}{" "}
+                                      duplicates ·{" "}
+                                      {execution.listingsDeferred ?? 0} deferred
+                                      ·{" "}
+                                      {execution.pagesCovered ?? "Not recorded"}{" "}
+                                      pages covered.
+                                    </>
+                                  ) : (
+                                    <>
+                                      Contributed {contributed} new job
+                                      {contributed === 1 ? "" : "s"} to this run
+                                      {alreadySaved > 0
+                                        ? `; ${execution?.duplicatesMerged ?? 0} duplicates merged · ${execution?.jobsSkippedByLedger ?? 0} seen before`
+                                        : ""}
+                                      .
+                                    </>
+                                  )}
                                 </p>
+                                {execution?.sourceCounts?.map((counts) => (
+                                  <p
+                                    key={counts.sourceId}
+                                    className="mt-1 text-[0.82rem] text-foreground-soft"
+                                  >
+                                    Found on {counts.label}: {counts.inspected}{" "}
+                                    inspected · {counts.saved} saved ·{" "}
+                                    {counts.rejected} rejected ·{" "}
+                                    {counts.duplicates} duplicates ·{" "}
+                                    {counts.deferred} deferred ·{" "}
+                                    {counts.pagesCovered ?? "Not recorded"}{" "}
+                                    pages covered.
+                                  </p>
+                                ))}
+                                {execution?.rejectedListings?.length ? (
+                                  <details className="mt-2 text-[0.82rem] text-foreground-soft">
+                                    <summary>
+                                      Why listings were excluded
+                                    </summary>
+                                    <ul>
+                                      {execution.rejectedListings.map(
+                                        (listing, index) => (
+                                          <li key={`${listing.url}:${index}`}>
+                                            {listing.title}: {listing.reason}
+                                          </li>
+                                        ),
+                                      )}
+                                    </ul>
+                                  </details>
+                                ) : null}
                               </div>
                               {canRetry ? (
                                 <Button

@@ -155,7 +155,7 @@ describe("ResumeJobKeywordEvidencePanel", () => {
     );
   });
 
-  it("labels generated wording as draft wording, not saved facts (R3-146)", () => {
+  it("leaves evidence unchecked without a model verdict, regardless of draft phrase overlap (R3-074)", () => {
     const draft = createDraft({
       sections: [
         createSection({
@@ -175,7 +175,9 @@ describe("ResumeJobKeywordEvidencePanel", () => {
     const before = buildResumeJobKeywordEvidence({ draft, job: createJob() });
     expect(before.every((item) => item.status === "unchecked")).toBe(true);
     render(<ResumeJobKeywordEvidencePanel draft={draft} job={createJob()} />);
-    expect(renderedMissingKeywords().textContent).toContain("Draft wording:");
+    expect(renderedMissingKeywords().textContent).not.toContain(
+      "Draft wording:",
+    );
     expect(renderedMissingKeywords().textContent).not.toContain(
       "Saved profile:",
     );

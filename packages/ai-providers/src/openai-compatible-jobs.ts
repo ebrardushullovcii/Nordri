@@ -73,9 +73,9 @@ export function buildJobsExtractionPrompt(input: {
 }): string {
   const evidenceInstructions = [
     "Employer identity must come from the named hiring organization in the posting or employer board heading. Keep the employer separate from the job title and job-board/ATS brand; a board URL token or logo abbreviation is not its display name. Never use part of the title as company. If the employer cannot be established, leave company empty rather than invent it.",
-    "Read the full page body, including duties, qualifications, hours, start date and application restrictions. Extract explicit remote country limits and hybrid/onsite arrangements into location and workMode, including when they appear only in the description. Preserve named pay scales such as MPS/UPS verbatim in salaryText. Include start dates, variable hours and no-CV/application-form-only restrictions in description and relevant qualifications.",
+    "On a job_detail page, set needsRenderedPage to true when the body is only a loading shell or a card and the listing text still needs the browser to render. Do not describe a partial card as a full listing. Read the full page body, including duties, qualifications, hours, start date and application restrictions. Extract explicit remote country limits and hybrid/onsite arrangements into location and workMode, including when they appear only in the description. Preserve named pay scales such as MPS/UPS verbatim in salaryText. Include start dates, variable hours and no-CV/application-form-only restrictions in description and relevant qualifications.",
     "Select applicationUrl only when a link or published record is an application destination for this exact vacancy. Match it with this listing's title/employer and link context. Articles, advice, citizenship guides, navigation, other jobs and generic account links are not application routes, even when labelled with the word apply. If the route cannot be proved, return null and keep canonicalUrl as the original listing.",
-    "When selectionContext is provided, use the person's request, saved goals, work eligibility and source notes to decide which postings to retain. Explicit exclusions always apply, including in a wide search. Wide includes plausible related roles and requested location variants; it does not mean every occupation on the page. Omit clearly unrelated or explicitly excluded jobs. Unknown detail is provisional, not proof of a mismatch. Without selectionContext, read the posting without filtering it for fit.",
+    "When selectionContext is provided, use the person's request, saved goals, work eligibility and source notes to decide which postings to retain. Explicit exclusions always apply, including in a wide search. Wide includes plausible related roles and requested location variants; it does not mean every occupation on the page. Return clearly unrelated or explicitly excluded listings too, with searchRejection containing category (role, place, preferences, closed, or not_a_listing) and a short plain reason. Set searchRejection to null for plausible matches. Every inspected listing belongs in the jobs array so counts can explain exclusions. Unknown detail is provisional, not proof of a mismatch. Without selectionContext, read the posting without filtering it for fit.",
   ].join(" ");
   return (
     evidenceInstructions +
@@ -234,6 +234,10 @@ export function normalizeExtractedJobs(input: {
     const summary = trimToNull(raw.summary);
     const description = rawDescription ?? summary ?? "";
     const candidate = {
+      ...(typeof raw.needsRenderedPage === "boolean"
+        ? { needsRenderedPage: raw.needsRenderedPage }
+        : {}),
+      searchRejection: raw.searchRejection ?? null,
       source: "target_site" as const,
       sourceJobId: derivedSourceJobId,
       discoveryMethod: "browser_agent" as const,

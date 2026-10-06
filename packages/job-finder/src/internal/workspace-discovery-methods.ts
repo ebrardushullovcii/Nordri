@@ -1,9 +1,15 @@
+import {
+  withPlanAssessment,
+  readPlanAssessment,
+  personPickedJob,
+} from "./plan-assessment";
 import { searchPreferencesForCampaignRun } from "./campaign-dashboard";
 import {
   JobSearchCampaignCollectionSchema,
   DISCOVERY_NO_JOB_SITES_MESSAGE,
   DISCOVERY_RUN_ALREADY_ACTIVE_MESSAGE,
   DiscoveryRunRecordSchema,
+  DiscoveryAgentMetadataSchema,
   JobPostingSchema,
   SavedJobSchema,
   type CandidateProfile,
@@ -15,6 +21,7 @@ import {
   type MatchAssessment,
   type DiscoveryRunScope,
   type DiscoveryTargetExecution,
+  type DiscoverySourceListingCounts,
   type JobDiscoveryTarget,
   type JobFinderDiscoveryState,
   type JobFinderSearchRequest,
@@ -123,11 +130,11 @@ import {
   readCarriedJudgment,
 } from "./fit-judgment";
 import {
-  LISTING_DETAIL_READS_PER_RUN,
   describeListingDetailEnrichment,
   createModelListingPageReader,
   enrichSavedJobListingDetails,
   jobNeedsListingDetail,
+  LISTING_DETAIL_READS_PER_RUN,
   readSightingApplyRoutes,
 } from "./listing-detail-enrichment";
 import {
@@ -217,7 +224,7 @@ export function resolveListingLocation(
 }
 
 const DISCOVERY_ACTIVITY_SAMPLE_LIMIT = 3;
-/** Five model calls at most: twenty jobs judged per call. */
+/** Five model calls at most: twenty jobs judged per call (ADR 0041). */
 const FIT_JUDGMENTS_PER_RUN = 100;
 const PUBLIC_API_PREFETCH_CONCURRENCY = 8;
 /**
@@ -276,7 +283,19 @@ function applySavedJobDelta(
       serializeSavedJobDeltaValue(intendedJob[key]) !==
       serializeSavedJobDeltaValue(baselineJob[key])
     ) {
-      changedFields[key] = intendedJob[key];
+      if (key === "planAssessments") {
+        const assessments = { ...currentJob.planAssessments };
+        for (const [planId, assessment] of Object.entries(
+          intendedJob.planAssessments ?? {},
+        )) {
+          if (
+            serializeSavedJobDeltaValue(assessment) !==
+            serializeSavedJobDeltaValue(baselineJob.planAssessments?.[planId])
+          )
+            assessments[planId] = assessment;
+        }
+        changedFields[key] = assessments;
+      } else changedFields[key] = intendedJob[key];
     }
   }
 
@@ -695,6 +714,12 @@ function createInitialRunRecord(input: {
       startedAt: null,
       completedAt: null,
       requestedJobBudget: null,
+      jobsInspected: 0,
+      inspectedJobIds: [],
+      uniqueInspectionsKnown: true,
+      rejectedListings: [],
+      listingsDeferred: 0,
+      sourceCounts: [],
       jobsReviewed: 0,
       jobsFound: 0,
       jobsPersisted: 0,
@@ -872,7 +897,7 @@ function getDiscoveryCheckpointPostingKey(posting: JobPosting): string {
  */
 /** Resolve attribution from the observed page, never from its extracted apply URL. */
 export function resolvePostingProducingTarget(
-  posting: JobPosting,
+  posting: Pick<JobPosting, "producingPageUrl">,
   activeTarget: JobDiscoveryTarget,
   targets: readonly JobDiscoveryTarget[],
 ): Pick<JobDiscoveryTarget, "id" | "label" | "adapterKind" | "startingUrl"> {
@@ -926,6 +951,14 @@ function createPostingWithTriage(
   posting: JobPosting;
   triageReason: string | null;
 } {
+  if (posting.searchRejection)
+    return {
+      posting: JobPostingSchema.parse({
+        ...posting,
+        titleTriageOutcome: "skip_title",
+      }),
+      triageReason: posting.searchRejection.reason,
+    };
   const triage = applyDiscoveryTitleTriage({
     posting,
     searchPreferences,
@@ -1153,7 +1186,9 @@ async function collectTargetJobs(input: {
               adapterKind,
             }),
           ),
-          agentMetadata: null,
+          agentMetadata: DiscoveryAgentMetadataSchema.parse({
+            pagesCovered: apiResult.pagesCovered ?? 0,
+          }),
         },
         collectionMethod,
         adapterKind,
@@ -1510,6 +1545,8 @@ export function createWorkspaceDiscoveryMethods(
     // Verdicts the model gave during this run, so a job judged to choose
     // which ones a result limit keeps is not judged again (ADR 0041).
     const runJudgments = new Map<string, FitJudgment>();
+    const assessmentPlanId =
+      effectiveCampaign?.campaignId ?? (await ctx.getActiveCampaignId());
     const assessDiscoveryPosting = (posting: JobPosting) =>
       assessmentSession.assess(
         posting,
@@ -1570,7 +1607,7 @@ export function createWorkspaceDiscoveryMethods(
       ...job,
       matchAssessment: assessmentSession.assessPersisted(
         job,
-        job.matchAssessment,
+        readPlanAssessment(job, assessmentPlanId).matchAssessment,
       ),
     }));
     const savedJobsAtLastCommitById = new Map(
@@ -1581,13 +1618,22 @@ export function createWorkspaceDiscoveryMethods(
         ...job,
         matchAssessment: assessmentSession.assessPersisted(
           job,
-          job.matchAssessment,
+          readPlanAssessment(job, assessmentPlanId).matchAssessment,
         ),
       }),
     );
     let workingLedger: DiscoveryLedgerEntry[] = [
       ...startingDiscovery.discoveryLedger,
     ];
+    const inspectionIdentityIndex = createJobIdentityIndex<
+      JobPosting & { id: string; alternateListingUrls?: string[] }
+    >(
+      [
+        ...startingSavedJobs.map(toSightingIdentityInput),
+        ...startingDiscovery.pendingDiscoveryJobs.map(toSightingIdentityInput),
+      ],
+      (job) => ({ ...job, matchAcrossSources: true }),
+    );
     const touchedSavedJobIds = new Set<string>();
     // Every posting this run retained (new or re-seen), by saved-job id: the
     // population the listing-detail read stage is allowed to touch.
@@ -1926,6 +1972,13 @@ export function createWorkspaceDiscoveryMethods(
         const checkpointState = {
           processedKeys: new Map<string, string[]>(),
           budgetedCount: 0,
+          sourceCounts: new Map<string, DiscoverySourceListingCounts>(),
+          inspectedJobIds: new Set<string>(),
+          inspectedCount: 0,
+          rejectedListings: [] as NonNullable<
+            DiscoveryTargetExecution["rejectedListings"]
+          >,
+          deferredCount: 0,
           reviewedCount: 0,
           validatedCount: 0,
           jobsPersisted: 0,
@@ -1939,6 +1992,31 @@ export function createWorkspaceDiscoveryMethods(
           // until this target's first checkpoint flush. Drives the bounded
           // duplicate-checkpoint heartbeat.
           persistedCheckpointRevision: null as number | null,
+        };
+        const sourceCountsFor = (
+          posting: Pick<JobPosting, "producingPageUrl">,
+        ): DiscoverySourceListingCounts => {
+          const source = resolvePostingProducingTarget(
+            posting,
+            target,
+            enrichedPreferences.discovery.targets,
+          );
+          let counts = checkpointState.sourceCounts.get(source.id);
+          if (!counts) {
+            counts = {
+              sourceId: source.id,
+              label: source.label,
+              startingUrl: source.startingUrl,
+              inspected: 0,
+              saved: 0,
+              rejected: 0,
+              duplicates: 0,
+              deferred: 0,
+              pagesCovered: null,
+            };
+            checkpointState.sourceCounts.set(source.id, counts);
+          }
+          return counts;
         };
         const getDiscoveryCheckpointFingerprintKey = (
           posting: JobPosting,
@@ -2027,7 +2105,17 @@ export function createWorkspaceDiscoveryMethods(
               );
             }
 
+            checkpointState.inspectedCount += 1;
             const posting = JobPostingSchema.parse(rawPosting);
+            const knownInspection = inspectionIdentityIndex.find({
+              ...posting,
+              matchAcrossSources: true,
+            });
+            const inspectionId = knownInspection?.id ?? toSavedJobId(posting);
+            inspectionIdentityIndex.add({ ...posting, id: inspectionId });
+            checkpointState.inspectedJobIds.add(inspectionId);
+            const sourceCounts = sourceCountsFor(posting);
+            sourceCounts.inspected += 1;
             const { posting: triagedPosting, triageReason } =
               createPostingWithTriage(
                 posting,
@@ -2037,7 +2125,21 @@ export function createWorkspaceDiscoveryMethods(
               );
 
             if (triagedPosting.titleTriageOutcome !== "pass") {
+              sourceCounts.rejected += 1;
               phaseSkippedByTitleTriage += 1;
+              const judgment = runJudgments.get(toSavedJobId(posting));
+              checkpointState.rejectedListings.push({
+                title: posting.title,
+                url: posting.canonicalUrl,
+                category:
+                  posting.searchRejection?.category ??
+                  (judgment?.role === "conflict"
+                    ? "role"
+                    : judgment?.locationReach === "outside_area"
+                      ? "place"
+                      : "person_exclusion"),
+                reason: triageReason ?? "Excluded by your search preferences.",
+              });
               if (
                 titleTriageSkipSamples.length < DISCOVERY_ACTIVITY_SAMPLE_LIMIT
               ) {
@@ -2077,6 +2179,7 @@ export function createWorkspaceDiscoveryMethods(
               refreshDecision.disposition !== "refresh_now";
 
             if (canReuseKnownPosting) {
+              sourceCounts.duplicates += 1;
               phaseSkippedByLedger += 1;
               workingLedger = recordDiscoveredPostingInLedger({
                 ledger: workingLedger,
@@ -2162,6 +2265,11 @@ export function createWorkspaceDiscoveryMethods(
                   preferredCanonicalUrls: [target.startingUrl],
                   assessPosting: assessDiscoveryPosting,
                 });
+          const budgeted = new Set(budgetedNewPostings);
+          for (const posting of newCandidates)
+            if (!budgeted.has(posting)) sourceCountsFor(posting).deferred += 1;
+          checkpointState.deferredCount +=
+            newCandidates.length - budgetedNewPostings.length;
           checkpointState.budgetedCount += budgetedNewPostings.length;
           checkpointState.reviewedCount +=
             budgetedNewPostings.length + upgradeCandidates.length;
@@ -2265,6 +2373,19 @@ export function createWorkspaceDiscoveryMethods(
             });
           }
 
+          const newIndex = createJobIdentityIndex(
+            mergeResult.newJobs,
+            toSightingIdentityInput,
+          );
+          const countedNewIds = new Set<string>();
+          for (const posting of budgetedPostings) {
+            const newJob = newIndex.find(posting);
+            const sourceCounts = sourceCountsFor(posting);
+            if (newJob && !countedNewIds.has(newJob.id)) {
+              sourceCounts.saved += 1;
+              countedNewIds.add(newJob.id);
+            } else sourceCounts.duplicates += 1;
+          }
           checkpointState.validatedCount += mergeResult.validatedCount;
           checkpointState.jobsPersisted += jobsPersisted;
           checkpointState.jobsStaged += jobsStaged;
@@ -2494,6 +2615,16 @@ export function createWorkspaceDiscoveryMethods(
             activeRun,
           };
           const totalsBeforeAttempt = {
+            sourceCounts: new Map(
+              [...checkpointState.sourceCounts].map(([id, counts]) => [
+                id,
+                { ...counts },
+              ]),
+            ),
+            inspectedJobIds: new Set(checkpointState.inspectedJobIds),
+            inspectedCount: checkpointState.inspectedCount,
+            rejectedListings: [...checkpointState.rejectedListings],
+            deferredCount: checkpointState.deferredCount,
             budgetedCount: checkpointState.budgetedCount,
             reviewedCount: checkpointState.reviewedCount,
             validatedCount: checkpointState.validatedCount,
@@ -2554,6 +2685,11 @@ export function createWorkspaceDiscoveryMethods(
               target.id,
               (entry) => ({
                 ...entry,
+                sourceCounts: [...checkpointState.sourceCounts.values()],
+                inspectedJobIds: [...checkpointState.inspectedJobIds],
+                jobsInspected: checkpointState.inspectedCount,
+                rejectedListings: [...checkpointState.rejectedListings],
+                listingsDeferred: checkpointState.deferredCount,
                 jobsReviewed: checkpointState.reviewedCount,
                 jobsFound:
                   checkpointState.jobsPersisted + checkpointState.jobsStaged,
@@ -2709,6 +2845,11 @@ export function createWorkspaceDiscoveryMethods(
             // committed jobs durably, so the failed execution must report what
             // was actually kept rather than zeros. jobsFound is the distinct
             // retained total (persisted + staged), matching the summary.
+            sourceCounts: [...checkpointState.sourceCounts.values()],
+            inspectedJobIds: [...checkpointState.inspectedJobIds],
+            jobsInspected: checkpointState.inspectedCount,
+            rejectedListings: [...checkpointState.rejectedListings],
+            listingsDeferred: checkpointState.deferredCount,
             jobsReviewed: checkpointState.reviewedCount,
             jobsFound:
               checkpointState.jobsPersisted + checkpointState.jobsStaged,
@@ -2955,6 +3096,45 @@ export function createWorkspaceDiscoveryMethods(
             activeRun.summary.invalidSkipped + mergeResult.invalidSkipped,
         });
 
+        const agentDuplicates =
+          collected.result.agentMetadata?.duplicateListings ?? 0;
+        const unreadable =
+          collected.result.agentMetadata?.unreadableListings ?? [];
+        const duplicatePageUrls =
+          collected.result.agentMetadata?.duplicateListingPageUrls ?? [];
+        const countPage = (pageUrl: string | undefined) =>
+          sourceCountsFor({ producingPageUrl: pageUrl ?? target.startingUrl });
+        for (let i = 0; i < agentDuplicates; i += 1) {
+          const counts = countPage(duplicatePageUrls[i]);
+          counts.inspected += 1;
+          counts.duplicates += 1;
+        }
+        for (const listing of unreadable) {
+          const counts = countPage(listing.url);
+          counts.inspected += 1;
+          counts.rejected += 1;
+        }
+        const coveredPages = collected.result.agentMetadata?.coveredPageUrls;
+        if (coveredPages)
+          for (const pageUrl of coveredPages) {
+            const counts = countPage(pageUrl);
+            counts.pagesCovered = (counts.pagesCovered ?? 0) + 1;
+          }
+        else if (collected.result.agentMetadata?.pagesCovered !== undefined)
+          countPage(target.startingUrl).pagesCovered =
+            collected.result.agentMetadata.pagesCovered;
+        const deferredPageUrls =
+          collected.result.agentMetadata?.deferredListingPageUrls ?? [];
+        for (const pageUrl of deferredPageUrls) {
+          const counts = countPage(pageUrl);
+          counts.inspected += 1;
+          counts.deferred += 1;
+        }
+        checkpointState.inspectedCount +=
+          agentDuplicates + unreadable.length + deferredPageUrls.length;
+        checkpointState.deferredCount += deferredPageUrls.length;
+        checkpointState.duplicatesMerged += agentDuplicates;
+        checkpointState.rejectedListings.push(...unreadable);
         const targetCompletedAt = new Date().toISOString();
         const targetFailed = Boolean(
           collected.result.agentMetadata?.accessBlockerReason ||
@@ -2965,6 +3145,9 @@ export function createWorkspaceDiscoveryMethods(
           target.id,
           targetCompletedAt,
           {
+            ...(collected.result.agentMetadata?.pagesCovered !== undefined
+              ? { pagesCovered: collected.result.agentMetadata.pagesCovered }
+              : {}),
             state: targetFailed ? "failed" : "completed",
             requestedJobBudget:
               runJobBudget == null ? null : discoveryBudget.targetJobCount,
@@ -2975,6 +3158,13 @@ export function createWorkspaceDiscoveryMethods(
             // so upgrades of known identities do not consume them. jobsFound
             // is the distinct retained total (persisted + staged), matching
             // the run summary so user-facing found/kept claims stay truthful.
+            uniqueInspectionsKnown:
+              unreadable.length === 0 && deferredPageUrls.length === 0,
+            sourceCounts: [...checkpointState.sourceCounts.values()],
+            inspectedJobIds: [...checkpointState.inspectedJobIds],
+            jobsInspected: checkpointState.inspectedCount,
+            rejectedListings: [...checkpointState.rejectedListings],
+            listingsDeferred: checkpointState.deferredCount,
             jobsReviewed: checkpointState.reviewedCount,
             jobsFound:
               checkpointState.jobsPersisted + checkpointState.jobsStaged,
@@ -3137,15 +3327,14 @@ export function createWorkspaceDiscoveryMethods(
         }
       };
 
-      // Read the listing bodies the compact scan did not. Current-run jobs go
-      // first, followed by older uncaptured jobs, so the per-run count cap is
-      // a retry queue rather than permanent starvation. Discovery-only jobs
+      // Read every uncaptured listing, with person-supplied and selected jobs
+      // first, then new results, then the older queue. Discovery-only jobs
       // live in the pending collection and must be included here too.
       // Every retained card gets one plain-HTTP read of its own page, then a
       // fresh score from the same assessment session, before the run is
       // declared finished: "Search finished" should mean the results are
       // scored, not that a list of titles arrived. Bounded (per-job time,
-      // count, concurrency) and never fatal: a page that will not read stays a
+      // concurrency) and never fatal: a page that will not read stays a
       // title match with the attempt recorded on the job.
       const enrichmentCandidates = mergeSavedJobs(
         workingSavedJobs,
@@ -3157,6 +3346,7 @@ export function createWorkspaceDiscoveryMethods(
         )
         .sort(
           (left, right) =>
+            Number(personPickedJob(right)) - Number(personPickedJob(left)) ||
             Number(runRetainedJobIds.has(right.id)) -
               Number(runRetainedJobIds.has(left.id)) ||
             compareMatchRecommendationPriority(
@@ -3197,6 +3387,8 @@ export function createWorkspaceDiscoveryMethods(
         !executionSignal.aborted
       ) {
         const fetchListingHtml = ctx.fetchListingHtml;
+        // Supplied and selected jobs are first in the candidates, so they are
+        // read within the per-run budget; the rest wait for the next search.
         const readsThisRun = Math.min(
           enrichmentCandidates.length,
           LISTING_DETAIL_READS_PER_RUN,
@@ -3213,8 +3405,16 @@ export function createWorkspaceDiscoveryMethods(
         try {
           const enrichment = await enrichSavedJobListingDetails({
             jobs: enrichmentCandidates,
+            maxJobs: readsThisRun,
             fetchHtml: fetchListingHtml,
             readPage: createModelListingPageReader(ctx.aiClient),
+            ...(ctx.browserRuntime.readRenderedPage
+              ? {
+                  readRenderedPage: ctx.browserRuntime.readRenderedPage.bind(
+                    ctx.browserRuntime,
+                  ),
+                }
+              : {}),
             // Re-scoring keeps a job's model verdict; the judging stage below
             // asks the model about jobs whose listing changed.
             assess: assessDiscoveryPosting,
@@ -3385,9 +3585,11 @@ export function createWorkspaceDiscoveryMethods(
           )
           .sort(
             (left, right) =>
+              Number(personPickedJob(right)) - Number(personPickedJob(left)) ||
               Number(runRetainedJobIds.has(right.id)) -
-              Number(runRetainedJobIds.has(left.id)),
+                Number(runRetainedJobIds.has(left.id)),
           )
+          // Jobs the person supplied or picked come first within the cap.
           .slice(0, FIT_JUDGMENTS_PER_RUN);
         if (toJudge.length > 0) {
           emitActivity(
@@ -3454,11 +3656,11 @@ export function createWorkspaceDiscoveryMethods(
                 } else {
                   touchedSavedJobIds.add(job.id);
                 }
-                return {
-                  ...job,
-                  matchAssessment:
-                    fullAssessment ?? assessmentSession.assess(job, judgment),
-                };
+                return withPlanAssessment(
+                  job,
+                  assessmentPlanId,
+                  fullAssessment ?? assessmentSession.assess(job, judgment),
+                );
               };
               workingSavedJobs = workingSavedJobs.map(applyJudgment);
               workingPendingJobs = workingPendingJobs.map(applyJudgment);

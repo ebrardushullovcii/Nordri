@@ -378,3 +378,40 @@ export function describeWorkspaceRestoreFailure(
   const sentence = sentences.find(([match]) => detail.includes(match))?.[1];
   return sentence ? { ...failure, sentence, userMessage: sentence } : failure;
 }
+
+// These are service-authored recovery messages, not provider or transport text.
+const LISTING_READ_MESSAGES = new Set([
+  "The listing could not be read from this page. Open the listing and try again.",
+  "The fit assessment could not be completed. Your previous assessment was kept. Try again.",
+  "The listing could not be assessed. Your previous assessment was kept.",
+  "This job is not in the saved or pending list. Use Assess next 1 listing in Find jobs to assess the search results.",
+  "The AI is unavailable. Try again.",
+  "The linked listing names a different role. Open the listing and choose the role you want.",
+  "Only a short excerpt could be read. Open the listing to check the requirements.",
+  "The site asked Job Finder to slow down (HTTP 429). The listing is read again on the next search.",
+]);
+
+/** Preserve the service's recovery advice, while removing IPC wrappers. */
+export function describeListingReadFailure(error: unknown): string {
+  const detail = getJobFinderErrorDetail(error);
+  if (detail && LISTING_READ_MESSAGES.has(detail)) return detail;
+  if (detail?.startsWith("The page answered "))
+    return "The job site could not provide this listing. Open it in the browser and try again.";
+  return describeFailure(error, {
+    unknownSentence: "Could not assess this listing. Try again.",
+  }).userMessage;
+}
+
+const BROWSER_JOB_MESSAGES = new Set([
+  "Open a job listing on a website first.",
+  "Wait for this page to finish loading, then try again.",
+  "No job listing was found on this page. Open the job's own listing and try again.",
+  "This job could not be saved. Try again.",
+]);
+export function describeBrowserJobFailure(error: unknown): string {
+  const detail = getJobFinderErrorDetail(error);
+  if (detail && BROWSER_JOB_MESSAGES.has(detail)) return detail;
+  return describeFailure(error, {
+    unknownSentence: "Could not save this job. Try again.",
+  }).userMessage;
+}

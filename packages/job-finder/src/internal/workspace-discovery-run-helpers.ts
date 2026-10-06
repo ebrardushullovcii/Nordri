@@ -226,6 +226,9 @@ export function finalizeRunningTargetExecutions(
       completedAt,
       {
         state,
+        ...(targetExecution.agentCheckpoint
+          ? { pagesCovered: targetExecution.agentCheckpoint.visitedUrls.length }
+          : {}),
         warning:
           state === "cancelled"
             ? "Discovery was cancelled before this target finished."
@@ -279,16 +282,67 @@ export function buildDiscoveryRunReport(
       Math.max(skippedAsSaved, run.summary.jobsSkippedByLedger),
   );
 
+  const counted =
+    run.targetExecutions.length > 0 &&
+    run.targetExecutions.every((source) => source.jobsInspected !== undefined);
+  const inspected = run.targetExecutions.reduce(
+    (sum, source) => sum + (source.jobsInspected ?? 0),
+    0,
+  );
   return DiscoveryRunReportSchema.parse({
+    ...(counted
+      ? {
+          rejected: run.targetExecutions.reduce(
+            (sum, source) =>
+              sum +
+              (source.rejectedListings?.length ?? 0) +
+              source.invalidSkipped,
+            0,
+          ),
+          deferred: run.targetExecutions.reduce(
+            (sum, source) => sum + (source.listingsDeferred ?? 0),
+            0,
+          ),
+          pagesCovered: run.targetExecutions.every(
+            (source) => source.pagesCovered !== undefined,
+          )
+            ? run.targetExecutions.reduce(
+                (sum, source) => sum + (source.pagesCovered ?? 0),
+                0,
+              )
+            : null,
+        }
+      : {}),
     version: 2,
     measuredAt,
-    found,
-    unique,
+    found: counted ? inspected : found,
+    unique:
+      counted &&
+      run.targetExecutions.some(
+        (source) => source.uniqueInspectionsKnown === false,
+      )
+        ? null
+        : counted &&
+            run.targetExecutions.every(
+              (source) => source.inspectedJobIds !== undefined,
+            )
+          ? new Set(
+              run.targetExecutions.flatMap(
+                (source) => source.inspectedJobIds ?? [],
+              ),
+            ).size
+          : unique,
     new: run.summary.validJobsFound,
     saved,
     retained: run.campaignId === null ? saved : null,
     worthOpening: null,
-    duplicates,
+    duplicates: counted
+      ? run.targetExecutions.reduce(
+          (sum, source) =>
+            sum + source.duplicatesMerged + source.jobsSkippedByLedger,
+          0,
+        )
+      : duplicates,
   });
 }
 

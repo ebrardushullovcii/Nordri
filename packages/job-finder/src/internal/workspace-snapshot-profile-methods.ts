@@ -1,4 +1,5 @@
 import { groupCompanyConflicts } from "./same-company-sends";
+import { readPlanAssessment } from "./plan-assessment";
 import { readSalaryDisclosurePreference } from "./salary-disclosure-preference";
 import { hasVerifiedApplicationSubmission } from "./workspace-apply-run-support";
 import {
@@ -932,7 +933,7 @@ export function createWorkspaceSnapshotProfileMethods(
 
     const [
       setupContext,
-      savedJobs,
+      rawSavedJobs,
       tailoredAssets,
       resumeDrafts,
       resumeExportArtifacts,
@@ -977,7 +978,7 @@ export function createWorkspaceSnapshotProfileMethods(
     let intelligence = groupCompanyConflicts(
       rawIntelligence,
       applicationRecords,
-      savedJobs,
+      rawSavedJobs,
     );
     if (JSON.stringify(intelligence) !== JSON.stringify(rawIntelligence)) {
       intelligence = await ctx.withIntelligenceTransition(async () => {
@@ -985,7 +986,7 @@ export function createWorkspaceSnapshotProfileMethods(
         const grouped = groupCompanyConflicts(
           current,
           applicationRecords,
-          savedJobs,
+          rawSavedJobs,
         );
         if (JSON.stringify(grouped) !== JSON.stringify(current))
           await ctx.repository.saveIntelligenceState(grouped);
@@ -1037,11 +1038,22 @@ export function createWorkspaceSnapshotProfileMethods(
       generatedAt,
     });
 
+    let campaignState = await ctx.withCampaignTransition(() =>
+      ensureCampaignState({
+        repository: ctx.repository,
+        searchPreferences: setupContext.searchPreferences,
+        now: generatedAt,
+      }),
+    );
+    const snapshotPlanId = campaignState.activeCampaignId;
+    const savedJobs = rawSavedJobs.map((job) =>
+      readPlanAssessment(job, snapshotPlanId),
+    );
     const persistedDiscoveryJobs = buildDiscoveryJobs(savedJobs);
     const savedJobIds = new Set(savedJobs.map((job) => job.id));
-    const mergedPendingJobs = discovery.pendingDiscoveryJobs.filter(
-      (job) => !savedJobIds.has(job.id),
-    );
+    const mergedPendingJobs = discovery.pendingDiscoveryJobs
+      .filter((job) => !savedJobIds.has(job.id))
+      .map((job) => readPlanAssessment(job, snapshotPlanId));
     // Listing activity is projected before anything is ranked: a listing whose
     // own text says it is closed must already be marked closed when the
     // ordering decides what comes first.
@@ -1134,13 +1146,6 @@ export function createWorkspaceSnapshotProfileMethods(
     // Creation and adoption reconcile rewrite the whole collection, so they
     // hold the campaign transition like every other mutating campaign
     // operation; the returned state is truthful for this snapshot.
-    let campaignState = await ctx.withCampaignTransition(() =>
-      ensureCampaignState({
-        repository: ctx.repository,
-        searchPreferences: setupContext.searchPreferences,
-        now: generatedAt,
-      }),
-    );
     const activeCampaign = campaignState.campaigns.find(
       (campaign) => campaign.id === campaignState.activeCampaignId,
     );

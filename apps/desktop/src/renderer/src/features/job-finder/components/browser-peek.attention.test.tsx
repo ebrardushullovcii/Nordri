@@ -3,10 +3,10 @@ import { ToastProvider } from "@renderer/components/ui/toast";
 
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
-  fireEvent,
 } from "@testing-library/react";
 import type {
   DesktopBrowserBridge,
@@ -40,6 +40,7 @@ describe("BrowserPeek handoff attention", () => {
   it("clears the derived browser chip when the workspace has no unresolved handoff", async () => {
     const previousBridge = window.nordri;
     const browser: DesktopBrowserBridge = {
+      addCurrentJob: vi.fn(),
       getState: vi.fn().mockResolvedValue(staleAttentionState),
       command: vi.fn().mockResolvedValue(staleAttentionState),
       setViewport: vi.fn().mockResolvedValue(undefined),
@@ -79,6 +80,72 @@ describe("BrowserPeek handoff attention", () => {
       value: previousBridge,
     });
   });
+});
+
+it("saves the exact current tab from the visible Add this job action", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const previous = window.nordri;
+  const addCurrentJob = vi.fn().mockResolvedValue({
+    jobId: "saved",
+    title: "Designer",
+    planName: "Design",
+  });
+  const state: DesktopBrowserState = {
+    ...staleAttentionState,
+    phase: "ready",
+    attention: null,
+    presentation: "peek",
+    activeTabId: "chosen",
+    tabs: [
+      {
+        id: "chosen",
+        title: "Designer",
+        url: "https://jobs.example.test/one",
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+      },
+    ],
+  };
+  Object.defineProperty(window, "nordri", {
+    configurable: true,
+    value: {
+      browser: {
+        addCurrentJob,
+        getState: vi.fn().mockResolvedValue(state),
+        command: vi.fn().mockResolvedValue(state),
+        setViewport: vi.fn().mockResolvedValue(undefined),
+        captureActivePage: vi.fn().mockResolvedValue({ dataUrl: null }),
+        onStateChanged: () => () => undefined,
+        onFocusAddress: () => () => undefined,
+      },
+    },
+  });
+  try {
+    render(<BrowserPeek />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "More browser actions" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add this job" }));
+    await waitFor(() =>
+      expect(addCurrentJob).toHaveBeenCalledExactlyOnceWith({
+        tabId: "chosen",
+      }),
+    );
+  } finally {
+    cleanup();
+    Object.defineProperty(window, "nordri", {
+      configurable: true,
+      value: previous,
+    });
+    vi.unstubAllGlobals();
+  }
 });
 
 it("shows a dismissible recording prompt for an unbound send without blocking browser input", async () => {

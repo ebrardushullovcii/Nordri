@@ -1777,7 +1777,11 @@ describe("requested listing assessment", () => {
   it("exposes read and assess, reports failure, and returns to results", async () => {
     const onAssessJobListing = vi
       .fn()
-      .mockRejectedValue(new Error("Read failed"));
+      .mockRejectedValue(
+        new Error(
+          "The listing could not be read from this page. Open the listing and try again.",
+        ),
+      );
     const onBackToResults = vi.fn();
     render(
       <MemoryRouter>
@@ -1797,7 +1801,9 @@ describe("requested listing assessment", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByText("Could not assess this listing. Try again."),
+        screen.getByText(
+          "The listing could not be read from this page. Open the listing and try again.",
+        ),
       ).toBeTruthy(),
     );
     expect(onAssessJobListing).toHaveBeenCalledWith(baseSelectedJob.id);

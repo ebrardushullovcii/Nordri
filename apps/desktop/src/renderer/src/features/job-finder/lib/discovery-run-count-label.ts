@@ -14,6 +14,9 @@ import type {
  * as 100 on Home, 50 on Find jobs and 15 in the plan card.
  */
 export interface DiscoveryRunReportCounts {
+  rejected?: number | null;
+  deferred?: number | null;
+  pagesCovered?: number | null;
   found: number | null;
   unique?: number | null;
   new: number | null;
@@ -67,6 +70,13 @@ export function readDiscoveryRunReportCounts(
   }
 
   return {
+    ...(report.rejected !== undefined
+      ? {
+          rejected: report.rejected,
+          deferred: report.deferred ?? null,
+          pagesCovered: report.pagesCovered ?? null,
+        }
+      : {}),
     found: readReportCount(report.found),
     unique: readReportCount(report.unique),
     new: readReportCount(report.new),

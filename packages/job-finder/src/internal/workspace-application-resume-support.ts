@@ -12,6 +12,9 @@ import {
   type TailoringMode,
   type WorkHistoryReviewSuggestion,
 } from "@nordri/contracts";
+import { createMatchAssessmentAsync } from "./matching";
+import { searchPreferencesForCampaignRun } from "./campaign-dashboard";
+import { readPlanAssessment, withPlanAssessment } from "./plan-assessment";
 import { fnv1a32 } from "@nordri/core";
 import {
   buildResumeRenderDocument,
@@ -835,10 +838,13 @@ export async function buildResumeWorkspace(
   ctx: WorkspaceServiceContext,
   jobId: string,
 ): Promise<JobFinderResumeWorkspace> {
-  const { job, draft, profile, tailoredAsset } = await ensureResumeDraft(
-    ctx,
-    jobId,
-  );
+  const {
+    job: initialJob,
+    draft,
+    profile,
+    profileRevision,
+    tailoredAsset,
+  } = await ensureResumeDraft(ctx, jobId);
   const [
     validations,
     exports,
@@ -846,7 +852,8 @@ export async function buildResumeWorkspace(
     assistantMessages,
     revisions,
     strategyContext,
-    searchPreferences,
+    profilePreferences,
+    campaignState,
   ] = await Promise.all([
     ctx.repository.listResumeValidationResults(draft.id),
     ctx.repository.listResumeExportArtifacts({ jobId }),
@@ -855,7 +862,44 @@ export async function buildResumeWorkspace(
     ctx.repository.listResumeDraftRevisions(draft.id),
     resolveResumeStrategyContextForJob(ctx, jobId),
     ctx.repository.getSearchPreferences(),
+    ctx.repository.getCampaignState(),
   ]);
+  const planId = campaignState?.activeCampaignId ?? null;
+  const activePlan = campaignState?.campaigns.find(
+    (plan) => plan.id === planId,
+  );
+  const searchPreferences = activePlan
+    ? searchPreferencesForCampaignRun(activePlan)
+    : profilePreferences;
+  let job = readPlanAssessment(initialJob, planId);
+  if (
+    job.matchAssessment.requirementsSource !== "model" ||
+    (planId && !job.planAssessments?.[planId])
+  ) {
+    try {
+      const assessment = await createMatchAssessmentAsync(
+        ctx.aiClient,
+        profile,
+        searchPreferences,
+        job,
+      );
+      await assertResumeProfileRevisionCurrent(
+        ctx,
+        profileRevision,
+        "checking listing requirements",
+        profile,
+      );
+      job = withPlanAssessment(job, planId, assessment);
+      await ctx.repository.commitSavedJobDelta({
+        update: (current) =>
+          current.id === jobId && current.description === initialJob.description
+            ? withPlanAssessment(current, planId, assessment)
+            : current,
+      });
+    } catch {
+      /* No phrase-based substitute: requirement evidence stays unchecked. */
+    }
+  }
   const normalizedExports = exports.map((artifact) => ({
     ...artifact,
     isApproved: draft.approvedExportId === artifact.id,

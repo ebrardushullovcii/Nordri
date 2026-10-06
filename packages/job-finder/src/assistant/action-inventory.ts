@@ -908,6 +908,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   applyAssistantResumeRevision: "revise_resume",
   undoAssistantResumeChange: "undo_change",
   extractJobsFromPageText: "collect_page_jobs",
+  addJobFromBrowserPage: "save_page_jobs",
   saveJobsFromPage: "save_page_jobs",
   runResumeRevisionSpecialist: "revise_resume",
 };

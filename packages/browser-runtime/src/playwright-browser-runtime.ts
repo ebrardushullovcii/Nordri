@@ -1,3 +1,4 @@
+import { readRenderedPageHtml } from "./rendered-page-reader";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   mkdir,
@@ -2197,6 +2198,9 @@ export function createBrowserAgentRuntime(
   }
 
   return {
+    async readRenderedPage(url, readOptions) {
+      return readRenderedPageHtml(await getContext(), url, readOptions);
+    },
     getSessionState(source) {
       return Promise.resolve(
         BrowserSessionStateSchema.parse({
@@ -3254,6 +3258,14 @@ export function createBrowserAgentRuntime(
               result.compactionUsedFallbackTrigger ?? false,
             phaseCompletionMode: result.phaseCompletionMode ?? null,
             phaseCompletionReason: result.phaseCompletionReason ?? null,
+            coveredPageUrls: result.coveredPageUrls,
+            deferredListingPageUrls: result.deferredListingPageUrls,
+            duplicateListingPageUrls: result.duplicateListingPageUrls,
+            duplicateListings: result.duplicateListings,
+            unreadableListings: result.unreadableListings,
+            ...(result.pagesCovered !== undefined
+              ? { pagesCovered: result.pagesCovered }
+              : {}),
             phaseEvidence: result.phaseEvidence ?? null,
             debugFindings: result.debugFindings ?? null,
             accessBlockerReason: result.accessBlockerReason ?? null,

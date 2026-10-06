@@ -181,6 +181,7 @@ export function DiscoverySearchBar(props: {
   onToggleSetup: (chipId: string | null) => void;
   searchActionDescribedBy?: string | undefined;
   searchPreferences: JobSearchPreferences;
+  profileSourceEnabled?: Readonly<Record<string, boolean>>;
   isSearchRunning: boolean;
   resultScope?: "focused" | "wide";
   hiddenResultCount?: number;
@@ -360,6 +361,12 @@ export function DiscoverySearchBar(props: {
       >
         Prefer recent
       </button>
+      {availableSources.length === 1 &&
+      props.profileSourceEnabled?.[availableSources[0]!.id] === false ? (
+        <span className="text-xs text-foreground-muted">
+          Off in Profile; this plan still searches it
+        </span>
+      ) : null}
       {/* With one enabled source there is nothing to choose; the picker
           returns as soon as a second source is on. */}
       {availableSources.length > 1 ? (
@@ -411,7 +418,14 @@ export function DiscoverySearchBar(props: {
                   onChange={() => toggleSource(source.id)}
                   type="checkbox"
                 />
-                <span className="truncate">{source.label}</span>
+                <span className="min-w-0">
+                  <span className="block truncate">{source.label}</span>
+                  {props.profileSourceEnabled?.[source.id] === false ? (
+                    <span className="block text-xs text-foreground-muted">
+                      Off in Profile; this plan still searches it
+                    </span>
+                  ) : null}
+                </span>
               </label>
             );
           })}

@@ -108,3 +108,29 @@ it("explains navigation and stops before the next listing after unmount", async 
   });
   expect(onAssess).toHaveBeenCalledExactlyOnceWith("visible-first");
 });
+
+it("uses the actual singular count and shows the service failure", async () => {
+  const job = {
+    id: "one",
+    discoveryMethod: "browser_agent",
+    matchAssessment: { judgment: null },
+  } as SavedJob;
+  render(
+    <DiscoveryAssessmentContinuation
+      jobs={[job]}
+      isSearchRunning={false}
+      onAssess={vi
+        .fn()
+        .mockRejectedValue(new Error("The AI is unavailable. Try again."))}
+    />,
+  );
+  await act(() => {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Assess next 1 listing" }),
+    );
+    return Promise.resolve();
+  });
+  expect(screen.getByRole("alert").textContent).toBe(
+    "The AI is unavailable. Try again.",
+  );
+});

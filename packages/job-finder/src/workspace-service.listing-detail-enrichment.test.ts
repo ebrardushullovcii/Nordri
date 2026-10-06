@@ -260,7 +260,7 @@ test("an explicit listing read reports a job outside saved and pending lists", a
   await expect(
     workspaceService.assessJobListing("missing_synthetic_job"),
   ).rejects.toThrow(
-    "This job is not in the saved or pending list. Use Assess next 1 listings in Find jobs to assess the search results.",
+    "This job is not in the saved or pending list. Use Assess next 1 listing in Find jobs to assess the search results.",
   );
   expect(fetchListingHtml).not.toHaveBeenCalled();
 });

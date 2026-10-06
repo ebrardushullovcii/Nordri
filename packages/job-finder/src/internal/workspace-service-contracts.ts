@@ -662,6 +662,10 @@ export interface JobFinderWorkspaceService {
    * gate-checked patches without storing any chat message.
    */
   /** Reads the job postings on a page the assistant was lent (no writes). */
+  addJobFromBrowserPage(input: {
+    html: string;
+    pageUrl: string;
+  }): Promise<import("@nordri/contracts").AddBrowserJobResult>;
   extractJobsFromPageText(input: {
     pageText: string;
     pageUrl: string;

@@ -127,6 +127,7 @@ export function DiscoveryTargetActionHeader(
           Move down
         </Button>
         <Button
+          title="Saved jobs stay in your plans with their original source name."
           aria-label={`Remove ${accessibleLabel}`}
           onClick={onRemove}
           type="button"

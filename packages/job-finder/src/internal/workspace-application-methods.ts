@@ -1,4 +1,6 @@
 import { checkSameCompanySends } from "./same-company-sends";
+import { searchPreferencesForCampaignRun } from "./campaign-dashboard";
+import { withPlanAssessment } from "./plan-assessment";
 import { completeTailoredResumeDraft } from "@nordri/ai-providers";
 import {
   applyResumeLanguage,
@@ -526,7 +528,7 @@ export function createWorkspaceApplicationMethods(
       if (!job) {
         if (options.throwOnFailure) {
           throw new Error(
-            "This job is not in the saved or pending list. Use Assess next 1 listings in Find jobs to assess the search results.",
+            "This job is not in the saved or pending list. Use Assess next 1 listing in Find jobs to assess the search results.",
           );
         }
         return;
@@ -537,11 +539,20 @@ export function createWorkspaceApplicationMethods(
       if (!options.force && !alreadyRead && !jobNeedsListingDetail(job)) {
         return;
       }
-      const [profile, searchPreferences, settings] = await Promise.all([
-        ctx.repository.getProfile(),
-        ctx.repository.getSearchPreferences(),
-        ctx.repository.getSettings(),
-      ]);
+      const [profile, profilePreferences, settings, campaignState] =
+        await Promise.all([
+          ctx.repository.getProfile(),
+          ctx.repository.getSearchPreferences(),
+          ctx.repository.getSettings(),
+          ctx.repository.getCampaignState(),
+        ]);
+      const assessmentPlanId = campaignState?.activeCampaignId ?? null;
+      const activePlan = campaignState?.campaigns.find(
+        (plan) => plan.id === assessmentPlanId,
+      );
+      const searchPreferences = activePlan
+        ? searchPreferencesForCampaignRun(activePlan)
+        : profilePreferences;
       const session = createMatchAssessmentSession({
         profile,
         // Scored with the same remote setting a search uses, so reading the
@@ -574,13 +585,13 @@ export function createWorkspaceApplicationMethods(
         await ctx.repository.commitSavedJobDelta({
           update: (current) =>
             current.id === jobId && current.description === job.description
-              ? { ...current, matchAssessment }
+              ? withPlanAssessment(current, assessmentPlanId, matchAssessment)
               : current,
           updateDiscoveryState: (current) => ({
             ...current,
             pendingDiscoveryJobs: current.pendingDiscoveryJobs.map((entry) =>
               entry.id === jobId && entry.description === job.description
-                ? { ...entry, matchAssessment }
+                ? withPlanAssessment(entry, assessmentPlanId, matchAssessment)
                 : entry,
             ),
           }),
@@ -591,6 +602,13 @@ export function createWorkspaceApplicationMethods(
         jobs: [job],
         fetchHtml: fetchListingHtml,
         readPage: createModelListingPageReader(ctx.aiClient),
+        ...(ctx.browserRuntime.readRenderedPage
+          ? {
+              readRenderedPage: ctx.browserRuntime.readRenderedPage.bind(
+                ctx.browserRuntime,
+              ),
+            }
+          : {}),
         assess: async (posting) => {
           try {
             const assessed = await createMatchAssessmentAsync(
@@ -644,6 +662,11 @@ export function createWorkspaceApplicationMethods(
               detailQuality: next.detailQuality,
               listingDetailFetch: next.listingDetailFetch,
               listingDetailCapture: next.listingDetailCapture,
+              planAssessments: withPlanAssessment(
+                current,
+                assessmentPlanId,
+                next.matchAssessment,
+              ).planAssessments,
               matchAssessment: next.matchAssessment,
             }
           : current;

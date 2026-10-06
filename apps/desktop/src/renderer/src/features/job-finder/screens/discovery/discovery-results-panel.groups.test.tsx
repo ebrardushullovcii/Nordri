@@ -1165,3 +1165,21 @@ it("keeps the assessment batch running when an assessed row moves out of the unc
   });
   expect(onAssess).toHaveBeenCalledWith("second");
 });
+
+it("offers weaker matches when an assessment empties the leading list", () => {
+  const onToggle = vi.fn();
+  render(
+    <MemoryRouter>
+      <DiscoveryResultsPanel
+        browserSession={browserSession}
+        jobs={[]}
+        selectedJob={null}
+        onSelectJob={vi.fn()}
+        alsoFoundCount={1}
+        onToggleAlsoFound={onToggle}
+      />
+    </MemoryRouter>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Show weaker matches" }));
+  expect(onToggle).toHaveBeenCalledOnce();
+});

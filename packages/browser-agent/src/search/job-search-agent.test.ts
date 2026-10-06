@@ -1504,3 +1504,118 @@ test("keeps the producing page in saved postings and checkpoints after a cross-s
   });
   expect(result.jobs[0]?.producingPageUrl).toBe(destination);
 });
+
+test("carries rejected listings and duplicate/page counts without calling rejected jobs saved", async () => {
+  const pages = { current: rawPage() };
+  const posting = JobPostingSchema.parse({
+    source: "target_site",
+    sourceJobId: "warehouse",
+    applyPath: "unknown",
+    easyApplyEligible: false,
+    salaryText: null,
+    canonicalUrl: "https://jobs.example.test/job/warehouse",
+    title: "Warehouse lead",
+    company: "Example",
+    location: "Manchester",
+    description: "Warehouse team leadership",
+    discoveredAt: "2026-09-14T00:00:00.000Z",
+    searchRejection: {
+      category: "role",
+      reason: "This search asks for engineering.",
+    },
+  });
+  const jobExtractor: JobExtractor = {
+    extractJobsFromPage: () => Promise.resolve([posting]),
+  };
+  const result = await runJobSearchAgent({
+    page: {} as Page,
+    hands: hands(pages),
+    config: config(),
+    llmClient: scripted([
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "finish", args: { summary: "No engineering matches." } },
+    ]),
+    jobExtractor,
+  });
+  expect(result.jobs).toHaveLength(1);
+  expect(result.jobs[0]?.searchRejection?.category).toBe("role");
+  expect(result.duplicateListings).toBe(1);
+  expect(result.pagesCovered).toBeGreaterThan(0);
+});
+
+test("counts read catalog jobs left without a model decision as deferred", async () => {
+  const pages = { current: rawPage() };
+  const jobs = Array.from({ length: 3 }, (_, index) =>
+    JobPostingSchema.parse({
+      source: "target_site",
+      sourceJobId: String(index),
+      canonicalUrl: `https://jobs.example.test/${index}`,
+      title: "Platform Engineer",
+      company: "Example",
+      location: "Manchester",
+      workMode: [],
+      salaryText: null,
+      summary: null,
+      postedAt: null,
+      applyPath: "unknown",
+      easyApplyEligible: false,
+      description: "Platform engineering",
+      discoveredAt: "2026-10-05T10:00:00.000Z",
+    }),
+  );
+  const result = await runJobSearchAgent({
+    page: {} as Page,
+    hands: hands(pages),
+    config: config({ sourceCatalog: jobs }),
+    jobExtractor: { extractJobsFromPage: () => Promise.resolve([]) },
+    llmClient: scripted([
+      { name: "list_catalog_jobs", args: {} },
+      {
+        name: "save_catalog_jobs",
+        args: {
+          ids: [0],
+          rejected: [
+            { id: 1, category: "role", reason: "Outside these roles." },
+          ],
+        },
+      },
+      {
+        name: "finish",
+        args: { reason: "Stopped before assessing the last job." },
+      },
+    ]),
+  });
+  expect(result.jobs).toHaveLength(2);
+  expect(result.deferredListingPageUrls).toHaveLength(1);
+  expect(result.jobs[1]?.searchRejection?.reason).toBe("Outside these roles.");
+});
+
+test("counts another rendered result page even when pagination keeps the same address", async () => {
+  const pages = { current: rawPage() };
+  const pageHands = hands(pages);
+  pageHands.clickAction = () => {
+    pages.current = rawPage({
+      bodyText: "Another page of jobs at the same address",
+    });
+    return Promise.resolve({ ok: true, observedValue: "next" });
+  };
+  pageHands.clickElement = pageHands.clickAction;
+  const result = await runJobSearchAgent({
+    page: {} as Page,
+    hands: pageHands,
+    config: config(),
+    jobExtractor: { extractJobsFromPage: () => Promise.resolve([]) },
+    llmClient: scripted([
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "click", args: { ref: "a0" } },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "finish", args: { reason: "Both pages inspected" } },
+    ]),
+  });
+  expect(result.pagesCovered).toBe(2);
+  expect(result.coveredPageUrls).toEqual([
+    pages.current.url,
+    pages.current.url,
+  ]);
+});

@@ -955,9 +955,9 @@ function CampaignEditor(props: {
               <legend className="text-sm">Included sources</legend>
               <p className="text-xs leading-5 text-foreground-muted">
                 These sources control new searches. Saved jobs may be shared
-                with other plans. When using Profile, newly enabled sources are
-                included automatically. Choosing individual sources keeps that
-                list.
+                with other plans when they match this plan’s roles and places.
+                When using Profile, newly enabled sources are included
+                automatically. Choosing individual sources keeps that list.
               </p>
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -1012,6 +1012,12 @@ function CampaignEditor(props: {
                           ? deriveJobSourceLabel(target.startingUrl)
                           : target.label}
                       </span>
+                      {!target.enabled &&
+                      includedSourceIds.includes(target.id) ? (
+                        <span className="block text-xs text-foreground-muted">
+                          Off in Profile; this plan still searches it
+                        </span>
+                      ) : null}
                       <span className="block break-all text-xs text-foreground-muted">
                         {target.startingUrl}
                       </span>

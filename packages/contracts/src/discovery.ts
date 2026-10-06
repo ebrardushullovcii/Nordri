@@ -1058,7 +1058,30 @@ export const ListingDetailCaptureSchema = z.object({
 });
 export type ListingDetailCapture = z.infer<typeof ListingDetailCaptureSchema>;
 
+export const ListingRejectionCategorySchema = z.enum([
+  "role",
+  "place",
+  "preferences",
+  "closed",
+  "not_a_listing",
+  "person_exclusion",
+  "unreadable",
+]);
+export const RejectedListingSchema = z.object({
+  title: z.string(),
+  url: UrlStringSchema,
+  category: ListingRejectionCategorySchema,
+  reason: NonEmptyStringSchema,
+});
 export const JobPostingSchema = z.object({
+  needsRenderedPage: z.boolean().optional(),
+  searchRejection: z
+    .object({
+      category: ListingRejectionCategorySchema,
+      reason: NonEmptyStringSchema,
+    })
+    .nullable()
+    .optional(),
   /** The observed page that produced this extraction, independent of the run target. */
   producingPageUrl: UrlStringSchema.optional(),
   source: JobSourceSchema,
@@ -1486,6 +1509,8 @@ export type SavedJob = JobPosting & {
   id: string;
   /** Search plans that currently retain this shared global job row. */
   campaignIds?: string[];
+  personSupplied?: boolean | undefined;
+  planAssessments?: Record<string, MatchAssessment> | undefined;
   status: z.infer<typeof ApplicationStatusSchema>;
   matchAssessment: MatchAssessment;
   provenance: SavedJobDiscoveryProvenance[];
@@ -1501,6 +1526,10 @@ export type SavedJob = JobPosting & {
 type SavedJobInput = z.input<typeof JobPostingSchema> & {
   id: string;
   campaignIds?: string[] | undefined;
+  personSupplied?: boolean | undefined;
+  planAssessments?:
+    | Record<string, z.input<typeof MatchAssessmentSchema>>
+    | undefined;
   status: z.input<typeof ApplicationStatusSchema>;
   matchAssessment: z.input<typeof MatchAssessmentSchema>;
   provenance?: z.input<typeof SavedJobDiscoveryProvenanceSchema>[] | undefined;
@@ -1523,6 +1552,8 @@ export const SavedJobSchema: z.ZodType<SavedJob, z.ZodTypeDef, SavedJobInput> =
   JobPostingSchema.extend({
     id: NonEmptyStringSchema,
     campaignIds: z.array(NonEmptyStringSchema).default([]),
+    personSupplied: z.boolean().optional(),
+    planAssessments: z.record(MatchAssessmentSchema).optional(),
     status: ApplicationStatusSchema,
     matchAssessment: MatchAssessmentSchema,
     provenance: z.array(SavedJobDiscoveryProvenanceSchema).default([]),
@@ -2117,6 +2148,12 @@ export const AgentDebugFindingsSchema = z.object({
 export type AgentDebugFindings = z.infer<typeof AgentDebugFindingsSchema>;
 
 export const DiscoveryAgentMetadataSchema = z.object({
+  coveredPageUrls: z.array(UrlStringSchema).optional(),
+  deferredListingPageUrls: z.array(UrlStringSchema).optional(),
+  duplicateListingPageUrls: z.array(UrlStringSchema).optional(),
+  duplicateListings: z.number().int().nonnegative().optional(),
+  unreadableListings: z.array(RejectedListingSchema).optional(),
+  pagesCovered: z.number().int().nonnegative().optional(),
   steps: z.number().int().nonnegative().default(0),
   incomplete: z.boolean().default(false),
   transcriptMessageCount: z.number().int().nonnegative().default(0),
@@ -2264,7 +2301,24 @@ export const BrowserAgentRunCheckpointSchema: z.ZodType<
   phaseEvidence: SourceDebugPhaseEvidenceSchema,
 });
 
+export const DiscoverySourceListingCountsSchema = z.object({
+  sourceId: NonEmptyStringSchema,
+  label: NonEmptyStringSchema,
+  startingUrl: UrlStringSchema,
+  inspected: z.number().int().nonnegative(),
+  saved: z.number().int().nonnegative(),
+  rejected: z.number().int().nonnegative(),
+  duplicates: z.number().int().nonnegative(),
+  deferred: z.number().int().nonnegative(),
+  pagesCovered: z.number().int().nonnegative().nullable(),
+});
+export type DiscoverySourceListingCounts = z.infer<
+  typeof DiscoverySourceListingCountsSchema
+>;
 export const DiscoveryTargetExecutionSchema = z.object({
+  sourceCounts: z.array(DiscoverySourceListingCountsSchema).optional(),
+  inspectedJobIds: z.array(NonEmptyStringSchema).optional(),
+  uniqueInspectionsKnown: z.boolean().optional(),
   targetId: NonEmptyStringSchema,
   adapterKind: JobSourceAdapterKindSchema,
   resolvedAdapterKind: JobSourceSchema.nullable().default(null),
@@ -2275,6 +2329,10 @@ export const DiscoveryTargetExecutionSchema = z.object({
   startedAt: IsoDateTimeSchema.nullable().default(null),
   completedAt: IsoDateTimeSchema.nullable().default(null),
   requestedJobBudget: z.number().int().positive().nullable().default(null),
+  jobsInspected: z.number().int().nonnegative().optional(),
+  rejectedListings: z.array(RejectedListingSchema).optional(),
+  listingsDeferred: z.number().int().nonnegative().optional(),
+  pagesCovered: z.number().int().nonnegative().optional(),
   jobsReviewed: z.number().int().nonnegative().default(0),
   jobsFound: z.number().int().nonnegative().default(0),
   jobsPersisted: z.number().int().nonnegative().default(0),

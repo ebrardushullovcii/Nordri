@@ -154,6 +154,22 @@ export function withEmbeddedBrowserActivity(
   };
   return {
     ...runtime,
+    ...(runtime.readRenderedPage
+      ? {
+          readRenderedPage: (url: string, options?: { signal?: AbortSignal }) =>
+            browser.runAutomation(
+              "Reading job listing",
+              undefined,
+              (signal, _update, claimPage) =>
+                runtime.readRenderedPage!(url, {
+                  signal: options?.signal
+                    ? AbortSignal.any([signal, options.signal])
+                    : signal,
+                  onPage: claimPage,
+                }),
+            ),
+        }
+      : {}),
     async getSessionState(source) {
       const session = await runtime.getSessionState(source);
       const state = browser.getState();

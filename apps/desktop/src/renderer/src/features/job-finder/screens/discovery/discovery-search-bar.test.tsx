@@ -405,3 +405,24 @@ it("names the background plan on its Stop button", () => {
   fireEvent.click(screen.getByRole("button", { name: "Stop Local B search" }));
   expect(onStopSearch).toHaveBeenCalledOnce();
 });
+
+it("labels an explicit plan source that is off in Profile without turning it off for this search", () => {
+  const { onRunAgentDiscovery } = renderBar({
+    profileSourceEnabled: { target_wellfound: false },
+    searchPreferences: preferences({
+      discovery: {
+        historyLimit: 5,
+        targets: [target(), target({ id: "second", label: "Second" })],
+      },
+    }),
+  });
+  fireEvent.click(screen.getByRole("button", { name: /All .*sources/i }));
+  expect(
+    screen.getByText("Off in Profile; this plan still searches it"),
+  ).toBeTruthy();
+  expect((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked).toBe(
+    true,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Search now" }));
+  expect(onRunAgentDiscovery).toHaveBeenCalled();
+});

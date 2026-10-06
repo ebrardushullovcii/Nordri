@@ -787,7 +787,7 @@ export const searchForJobsTool = defineTool({
       "Searching for jobs",
     );
     return {
-      summary: `The search started (run ${started.runId}). This conversation continues when it ends; do not wait for it.`,
+      summary: `The search started. Results go to ${before.campaigns.find((plan) => plan.id === before.activeCampaignId)?.name ?? "your current plan"} in Find jobs and Shortlisted. This conversation continues when it ends.`,
       data: {
         runId: started.runId,
         running: runningSearchState(await service.getWorkspaceSnapshot()),
@@ -958,14 +958,38 @@ export const updateSourcesTool = defineTool({
       ...additions,
     ];
     session.assertCurrent();
-    await service.saveSearchPreferences({
+    const savedSnapshot = await service.saveSearchPreferences({
       ...preferences,
       discovery: { ...preferences.discovery, targets },
     });
+    const savedTargets = savedSnapshot.searchPreferences.discovery.targets;
+    const enabledCount = savedTargets.filter(
+      (target) =>
+        target.enabled &&
+        preferences.discovery.targets.some(
+          (before) => before.id === target.id && !before.enabled,
+        ),
+    ).length;
+    const disabledCount = savedTargets.filter(
+      (target) =>
+        !target.enabled &&
+        preferences.discovery.targets.some(
+          (before) => before.id === target.id && before.enabled,
+        ),
+    ).length;
     ports.publishWorkspaceUpdate();
     return {
-      summary: `Added ${plural(additions.length, "source")}; ${input.enableIds.length} turned on, ${input.disableIds.length} turned off.${targets.some((target) => preferences.discovery.targets.some((before) => before.id === target.id && before.label !== target.label)) ? " Updated source names." : ""}`,
+      summary: `Added ${plural(additions.length, "source")}; ${enabledCount} turned on, ${disabledCount} turned off.${targets.some((target) => preferences.discovery.targets.some((before) => before.id === target.id && before.label !== target.label)) ? " Updated source names." : ""}`,
       data: {
+        sources: savedTargets.map((target) => ({
+          id: target.id,
+          label: target.label,
+          enabled: target.enabled,
+        })),
+        resultsPlanName:
+          savedSnapshot.campaigns.find(
+            (plan) => plan.id === savedSnapshot.activeCampaignId,
+          )?.name ?? null,
         added: additions.map((target) => ({
           id: target.id,
           url: target.startingUrl,

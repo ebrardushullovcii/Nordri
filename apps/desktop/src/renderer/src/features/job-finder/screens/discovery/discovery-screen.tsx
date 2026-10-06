@@ -621,6 +621,44 @@ export function DiscoveryScreen(props: {
   // this visit is announced: the verdict standing when the screen opens
   // describes a search that ended before, and the results already show it.
   const { showToast } = useToast();
+  const assessedRequest = useRef<{
+    id: string;
+    previous: SavedJob["matchAssessment"];
+  } | null>(null);
+  const assessJobWithFeedback = onAssessJobListing
+    ? async (id: string) => {
+        const job = props.jobs.find((job) => job.id === id);
+        if (job)
+          assessedRequest.current = { id, previous: job.matchAssessment };
+        try {
+          await onAssessJobListing(id);
+        } catch (error) {
+          assessedRequest.current = null;
+          throw error;
+        }
+      }
+    : undefined;
+  useEffect(() => {
+    const request = assessedRequest.current;
+    if (!request) return;
+    const job = props.jobs.find((job) => job.id === request.id);
+    if (
+      !job ||
+      job.matchAssessment === request.previous ||
+      job.matchAssessment.judgment?.judgedAt ===
+        request.previous.judgment?.judgedAt
+    )
+      return;
+    assessedRequest.current = null;
+    if (!showAlsoFound && isDiscoveryAlsoFoundResult(job))
+      showToast({
+        title: `Assessed: ${job.matchAssessment.score}% fit, moved to weaker matches`,
+        action: {
+          label: "Show weaker matches",
+          onClick: () => setShowAlsoFound(true),
+        },
+      });
+  }, [props.jobs, showAlsoFound, showToast]);
   const announcedFeedbackKeyRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (announcedFeedbackKeyRef.current === undefined) {
@@ -1224,7 +1262,9 @@ export function DiscoveryScreen(props: {
               </details>
             ) : null
           }
-          {...(onAssessJobListing ? { onAssessJobListing } : {})}
+          {...(assessJobWithFeedback
+            ? { onAssessJobListing: assessJobWithFeedback }
+            : {})}
           planName={
             campaigns?.find((plan) => plan.id === activeCampaignId)?.name ??
             null
@@ -1313,7 +1353,9 @@ export function DiscoveryScreen(props: {
             {...(onOpenCompany ? { onOpenCompany } : {})}
             onOpenApplication={onOpenApplication ?? (() => undefined)}
             {...(onOpenListing ? { onOpenListing } : {})}
-            {...(onAssessJobListing ? { onAssessJobListing } : {})}
+            {...(assessJobWithFeedback
+              ? { onAssessJobListing: assessJobWithFeedback }
+              : {})}
             onBackToResults={() => {
               const row = Array.from(
                 document.querySelectorAll<HTMLElement>(
@@ -1410,6 +1452,11 @@ export function DiscoveryScreen(props: {
                           ? undefined
                           : DISCOVERY_SEARCH_SETUP_BLOCKER_ID
                   }
+                  profileSourceEnabled={Object.fromEntries(
+                    workspaceSearchPreferences.discovery.targets.map(
+                      (source) => [source.id, source.enabled],
+                    ),
+                  )}
                   searchPreferences={searchPreferences}
                   backgroundPlanName={
                     activeRun?.state === "running" &&

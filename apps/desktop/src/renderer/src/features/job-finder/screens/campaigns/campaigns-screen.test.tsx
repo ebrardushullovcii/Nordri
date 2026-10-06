@@ -2661,3 +2661,27 @@ it("names the selected weekdays beside the scheduled time on the plan card", () 
   );
   expect(screen.getByText("Runs Mon, Wed, Fri at 8:00 AM")).toBeTruthy();
 });
+
+it("labels an explicitly selected source that is off in Profile without disabling this plan", () => {
+  const plan = campaign("off", "Explicit", "precision");
+  const target = plan.searchPreferences.discovery.targets[0]!;
+  plan.sourceTargetIds = [target.id];
+  plan.sourceSelectionMode = "selected";
+  plan.searchPreferences.discovery.targets = [{ ...target, enabled: false }];
+  render(
+    <CampaignsScreen
+      activeCampaignId="off"
+      campaigns={[plan]}
+      pending={false}
+      onSaveCampaign={vi.fn()}
+      onSelectCampaign={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  expect(
+    screen.getByText("Off in Profile; this plan still searches it"),
+  ).toBeTruthy();
+  expect(screen.getByLabelText<HTMLInputElement>(target.label).checked).toBe(
+    true,
+  );
+});

@@ -1,5 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import {
+  AddBrowserJobInputSchema,
+  AddBrowserJobResultSchema,
   DesktopBrowserCommandSchema,
   DesktopBrowserImportInputSchema,
   DesktopBrowserViewportSchema,
@@ -9,6 +11,9 @@ import {
   importSignInsFromBrowser,
   listBrowserImportSources,
 } from "../services/browser/browser-profile-import";
+
+import { getJobFinderWorkspaceService } from "../services/job-finder/workspace-service";
+import { publishJobFinderWorkspaceUpdate } from "../services/job-finder/workspace-updates";
 
 export function registerBrowserRoutes(ipc: IpcMain): void {
   const host = getEmbeddedBrowser();
@@ -20,6 +25,23 @@ export function registerBrowserRoutes(ipc: IpcMain): void {
       throw new Error("Browser controls are available only in the app window.");
     }
   };
+  ipc.handle("browser:add-job", async (event, input: unknown) => {
+    assertOwner(event);
+    const { tabId } = AddBrowserJobInputSchema.parse(input);
+    const page = await host.readTab<string>(
+      tabId,
+      "document.documentElement.outerHTML",
+    );
+    if (!page)
+      throw new Error("Wait for this page to finish loading, then try again.");
+    const service = await getJobFinderWorkspaceService();
+    const result = await service.addJobFromBrowserPage({
+      html: page.value,
+      pageUrl: page.url,
+    });
+    publishJobFinderWorkspaceUpdate(event.sender);
+    return AddBrowserJobResultSchema.parse(result);
+  });
   ipc.handle("browser:get-state", (event) => {
     assertOwner(event);
     return host.getState();

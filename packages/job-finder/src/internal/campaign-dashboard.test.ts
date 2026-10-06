@@ -33,10 +33,16 @@ import {
   recordCampaignDiscoveryResult,
 } from "./workspace-campaign-methods";
 import type { WorkspaceServiceContext } from "./workspace-service-context";
+import {
+  createMatchAssessmentContextFingerprint,
+  createMatchAssessmentPostingFingerprint,
+} from "./match-assessment-session";
+import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
+import { withSavedJobSearchBehavior } from "./job-search-behavior";
 import { createSavedJob, createSeed } from "../workspace-service.test-fixtures";
 
 function savedJob(id: string, score: number) {
-  return createSavedJob({
+  const job = createSavedJob({
     id,
     source: "target_site",
     sourceJobId: id,
@@ -74,6 +80,25 @@ function savedJob(id: string, score: number) {
       },
     },
   });
+  const seed = createSeed();
+  const preferences = withSavedJobSearchBehavior(
+    enrichSearchPreferencesFromProfile(
+      normalizedPreferences(seed.searchPreferences),
+      seed.profile,
+    ),
+    seed.settings,
+  );
+  // A measured verdict for these exact goals and facts, rather than a legacy
+  // fixture score without the context needed to assign it to a plan.
+  job.matchAssessment.judgment = {
+    ...job.matchAssessment.judgment!,
+    contextFingerprint: createMatchAssessmentContextFingerprint(
+      seed.profile,
+      preferences,
+    ),
+    postingFingerprint: createMatchAssessmentPostingFingerprint(job),
+  };
+  return job;
 }
 
 /**

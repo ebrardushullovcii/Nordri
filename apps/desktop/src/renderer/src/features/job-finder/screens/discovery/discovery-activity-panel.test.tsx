@@ -429,3 +429,66 @@ it("leads with the notification sentence and keeps raw logs behind clean technic
     screen.getByText(/Could not read this source/).closest("details"),
   ).toBeNull();
 });
+
+it("shows reconciling source counts and the model's reason for an excluded listing", () => {
+  const run = DiscoveryRunRecordSchema.parse({
+    ...failedRun,
+    targetExecutions: [
+      {
+        ...failedRun.targetExecutions[0],
+        state: "completed",
+        warning: null,
+        jobsInspected: 4,
+        jobsPersisted: 1,
+        duplicatesMerged: 1,
+        jobsSkippedByLedger: 0,
+        invalidSkipped: 0,
+        listingsDeferred: 1,
+        pagesCovered: 2,
+        rejectedListings: [
+          {
+            title: "Unrelated role",
+            url: "https://example.com/other",
+            category: "role",
+            reason: "Outside your requested roles.",
+          },
+        ],
+        sourceCounts: [
+          {
+            sourceId: "other-source",
+            label: "Other board",
+            startingUrl: "https://other.example.com/jobs",
+            inspected: 4,
+            saved: 1,
+            rejected: 1,
+            duplicates: 1,
+            deferred: 1,
+            pagesCovered: 2,
+          },
+        ],
+      },
+    ],
+  });
+  render(
+    <DiscoveryHistoryModal
+      activeRun={null}
+      isDiscoveryPending={false}
+      isTargetPending={() => false}
+      liveEvents={[]}
+      onClose={vi.fn()}
+      open
+      recentRuns={[run]}
+      targets={targets}
+    />,
+  );
+  expect(
+    screen.getByText(
+      "4 inspected · 1 saved · 1 rejected · 1 duplicates · 1 deferred · 2 pages covered.",
+    ),
+  ).toBeTruthy();
+  expect(screen.getByText(/Found on Other board: 4 inspected/)).toBeTruthy();
+  expect(screen.getByText("By source: Other board — 1 job.")).toBeTruthy();
+  expect(
+    screen.getByText("Unrelated role: Outside your requested roles."),
+  ).toBeTruthy();
+});

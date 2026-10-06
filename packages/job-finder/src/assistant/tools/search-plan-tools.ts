@@ -155,13 +155,14 @@ export const saveSearchPlanTool = defineTool({
         (id) =>
           !preferences.discovery.targets.some(
             (source) =>
-              source.id === id && isRunnableJobDiscoveryTarget(source),
+              source.id === id &&
+              isRunnableJobDiscoveryTarget({ ...source, enabled: true }),
           ),
       )
     ) {
       throw new AssistantToolError(
         "missing_information",
-        "Choose at least one enabled, valid job source for this plan.",
+        "Choose at least one valid job source for this plan.",
       );
     }
     const schedule = JobSearchCampaignScheduleSchema.parse({
@@ -213,6 +214,7 @@ export const saveSearchPlanTool = defineTool({
         ...(input.locations ? { locations: input.locations } : {}),
       },
       sourceTargetIds: sourceIds,
+      ...(input.sourceIds ? { sourceSelectionMode: "selected" as const } : {}),
       schedule,
     });
     session.assertCurrent();
@@ -261,8 +263,22 @@ export const saveSearchPlanTool = defineTool({
       : null;
     ports.publishWorkspaceUpdate();
     return {
-      summary: `Saved ${saved.name}. Read back the saved schedule's days, local time, time zone and next run.`,
-      data: planForModel(saved),
+      summary: `Saved ${saved.name}. Results go to ${saved.name} in Find jobs and Shortlisted. Profile source switches were kept.`,
+      data: {
+        ...planForModel(saved),
+        resultsPlanName: saved.name,
+        profileSources: after.searchPreferences.discovery.targets.map(
+          (source) => ({
+            id: source.id,
+            label: source.label,
+            enabled: source.enabled,
+            searchedByPlan:
+              saved.sourceSelectionMode === "profile"
+                ? source.enabled
+                : saved.sourceTargetIds.includes(source.id),
+          }),
+        ),
+      },
       parts: recorded
         ? [
             recorded.part.type === "change"

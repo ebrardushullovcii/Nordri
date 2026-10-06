@@ -107,6 +107,14 @@ export function mergePendingJobs(
     const current = nextById.get(job.id);
     nextById.set(job.id, {
       ...job,
+      ...(current?.planAssessments || job.planAssessments
+        ? {
+            planAssessments: {
+              ...current?.planAssessments,
+              ...job.planAssessments,
+            },
+          }
+        : {}),
       matchAssessment: preserveCompletedAssessment(
         current?.matchAssessment,
         job.matchAssessment,
@@ -125,6 +133,14 @@ export function mergeSavedJobs(
     const currentJob = nextById.get(job.id);
     const jobWithPersistedLocalChoices = {
       ...job,
+      ...(currentJob?.planAssessments || job.planAssessments
+        ? {
+            planAssessments: {
+              ...currentJob?.planAssessments,
+              ...job.planAssessments,
+            },
+          }
+        : {}),
       matchAssessment: preserveCompletedAssessment(
         currentJob?.matchAssessment,
         job.matchAssessment,

@@ -1841,6 +1841,7 @@ export function DiscoveryResultsPanel({
         !sessionWaitingOnRuntime &&
         !isOfflineRuntime &&
         emptyRunVerdict.kind === "completed" &&
+        alsoFoundCount === 0 &&
         jobs.length === 0 ? (
           <div className="px-5 pt-4">
             <ResultsEmptyState
@@ -1863,6 +1864,7 @@ export function DiscoveryResultsPanel({
         !sessionWaitingOnRuntime &&
         !isOfflineRuntime &&
         emptyRunVerdict.kind === "none" &&
+        alsoFoundCount === 0 &&
         jobs.length === 0 ? (
           <div className="px-5 pt-4">
             <ResultsEmptyState
@@ -1873,6 +1875,16 @@ export function DiscoveryResultsPanel({
           </div>
         ) : null}
 
+        {jobs.length === 0 && alsoFoundCount > 0 && onToggleAlsoFound ? (
+          <div className="px-5 py-4">
+            <p className="mb-2 text-sm text-foreground-soft">
+              Assessed jobs are in weaker matches.
+            </p>
+            <Button size="sm" variant="secondary" onClick={onToggleAlsoFound}>
+              Show weaker matches
+            </Button>
+          </div>
+        ) : null}
         {jobs.length > 0 &&
         filteredJobs.length === 0 &&
         activeFilterCount > 0 ? (

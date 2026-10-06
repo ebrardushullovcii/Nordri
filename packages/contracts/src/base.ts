@@ -77,6 +77,9 @@ export function isPreparedApplicationStatus(record: {
  * "not recorded".
  */
 export const DiscoveryRunReportSchema = z.object({
+  rejected: z.number().int().nonnegative().nullable().optional(),
+  deferred: z.number().int().nonnegative().nullable().optional(),
+  pagesCovered: z.number().int().nonnegative().nullable().optional(),
   /** Schema generation, so a later counting change is detectable. */
   version: z.union([z.literal(1), z.literal(2)]).default(1),
   /** When the counts were frozen. */
@@ -823,7 +826,14 @@ export type WriteClipboardTextResult = z.infer<
 export function formatDiscoveryAccounting(
   report: Pick<
     DiscoveryRunReport,
-    "found" | "unique" | "new" | "retained" | "duplicates"
+    | "found"
+    | "unique"
+    | "new"
+    | "retained"
+    | "duplicates"
+    | "rejected"
+    | "deferred"
+    | "pagesCovered"
   >,
 ): string {
   const count = (value: number | null | undefined, label: string) =>
@@ -834,6 +844,13 @@ export function formatDiscoveryAccounting(
     count(report.new, "new to you"),
     count(report.retained, "kept by this plan"),
     count(report.duplicates, "duplicates merged"),
+    ...(report.rejected !== undefined
+      ? [
+          count(report.rejected, "rejected"),
+          count(report.deferred, "deferred"),
+          count(report.pagesCovered, "pages covered"),
+        ]
+      : []),
   ].join(" · ");
 }
 

@@ -403,3 +403,23 @@ it("requires a text answer first and supporting cards only", () => {
   );
   expect(ASSISTANT_SYSTEM_PROMPT).toContain("finish with a text answer");
 });
+
+it("reports source switches from saved state and counts only actual switch changes", async () => {
+  const ctx = world();
+  const snapshot = await ctx.service.getWorkspaceSnapshot();
+  const source = snapshot.searchPreferences.discovery.targets[0]!;
+  await updateSourcesTool.execute(
+    updateSourcesTool.input.parse({ disableIds: [source.id] }),
+    ctx,
+  );
+  const result = await updateSourcesTool.execute(
+    updateSourcesTool.input.parse({ disableIds: [source.id] }),
+    ctx,
+  );
+  expect(result.summary).toContain("0 turned off");
+  expect(result.data).toMatchObject({
+    sources: expect.arrayContaining([
+      expect.objectContaining({ id: source.id, enabled: false }),
+    ]),
+  });
+});

@@ -1,3 +1,9 @@
+import { enrichSearchPreferencesFromProfile } from "./workspace-helpers";
+import { withSavedJobSearchBehavior } from "./job-search-behavior";
+import { readPlanAssessment, withPlanAssessment } from "./plan-assessment";
+import { createMatchAssessmentSession } from "./match-assessment-session";
+import { createMatchAssessment } from "./matching";
+import { jobNeedsFitJudgment } from "./fit-judgment";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -431,9 +437,32 @@ export async function commitCampaignRunTerminal(input: {
       [...encounteredJobIds].filter((jobId) => priorCampaignJobIds.has(jobId)),
     );
     const candidateJobIds = new Set([...campaign.jobIds, ...encounteredJobIds]);
-    const candidateJobs = availableJobs.filter((job) =>
-      candidateJobIds.has(job.id),
+    const candidates = availableJobs
+      .filter((job) => candidateJobIds.has(job.id))
+      .map((job) => readPlanAssessment(job, campaign.id));
+    const profile = await input.ctx.repository.getProfile();
+    const preferences = withSavedJobSearchBehavior(
+      enrichSearchPreferencesFromProfile(
+        searchPreferencesForCampaignRun(campaign),
+        profile,
+      ),
+      await input.ctx.repository.getSettings(),
     );
+    const session = createMatchAssessmentSession({
+      profile,
+      searchPreferences: preferences,
+      calculate: createMatchAssessment,
+    });
+    // Discovery judges all eligible jobs before taking this commit lock.
+    // Do not make another model request while plan edits are waiting for it.
+    const candidateJobs = candidates.map((job) => {
+      // A verdict from another plan cannot say this job fits the current one.
+      const assessment = !jobNeedsFitJudgment(job, session.contextFingerprint)
+        ? job.matchAssessment
+        : session.assess({ ...job, matchAssessment: null });
+      return withPlanAssessment(job, campaign.id, assessment);
+    });
+    const assessedById = new Map(candidateJobs.map((job) => [job.id, job]));
     const measuredAt = latestRun.completedAt ?? latestRun.startedAt;
     const evaluatedRules = evaluateCampaignRules({
       rules: campaign.rules,
@@ -450,6 +479,8 @@ export async function commitCampaignRunTerminal(input: {
       .filter(
         (job) =>
           allowedByRules.has(job.id) &&
+          job.matchAssessment.judgment?.role !== "conflict" &&
+          job.matchAssessment.judgment?.locationReach !== "outside_area" &&
           // A job the model has not judged yet was not measured, so the
           // plan's minimum fit does not drop it (ADR 0041).
           (campaign.minimumFitScore === null ||
@@ -659,6 +690,14 @@ export async function commitCampaignRunTerminal(input: {
       return SavedJobSchema.parse({
         ...job,
         campaignIds: [...campaignIds].sort(),
+        ...(assessedById.get(job.id)?.planAssessments
+          ? {
+              planAssessments: {
+                ...job.planAssessments,
+                [campaign.id]: assessedById.get(job.id)!.matchAssessment,
+              },
+            }
+          : {}),
       });
     };
     await input.ctx.repository.commitSavedJobDelta({

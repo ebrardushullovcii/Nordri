@@ -2,6 +2,7 @@ import type {
   BrowserSessionRuntime,
   OpenBrowserSessionOptions,
 } from "@nordri/browser-runtime";
+import { addJobFromBrowserPage } from "./internal/workspace-browser-job";
 import { writeApplicationDocumentText } from "./internal/application-document-writer";
 import { randomUUID } from "node:crypto";
 import { recordApplicationsSentByPerson } from "./internal/application-sent-by-person";
@@ -1847,6 +1848,10 @@ export function createJobFinderWorkspaceService(
     applyAssistantResumeRevision:
       assistantEditMethods.applyAssistantResumeRevision,
     undoAssistantResumeChange: assistantEditMethods.undoAssistantResumeChange,
+    addJobFromBrowserPage: (input) =>
+      trackWorkspaceOperation("discovery", () =>
+        addJobFromBrowserPage(context, input),
+      ),
     extractJobsFromPageText: (input) => extractJobsFromPageText(context, input),
     saveJobsFromPage: (input) =>
       trackWorkspaceOperation("discovery", () =>

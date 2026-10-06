@@ -214,8 +214,21 @@ export async function runJobSearchAgent(
     config.sourceCatalogComplete && config.sourceCatalog
       ? new Set(config.sourceCatalog.map(jobKey))
       : null;
+  const inspectedCatalog = new Map<string, JobPosting>();
+  const coveredPageKeys = new Set<string>();
+  const inspectedPageUrls: string[] = [];
   const outsideCatalog = new Set<string>();
   let outsideCatalogAttempts = 0;
+  let duplicateListings = 0;
+  const duplicateListingPageUrls: string[] = [];
+  const unreadableListings: Array<{
+    title: string;
+    url: string;
+    category: "unreadable";
+    reason: string;
+  }> = [];
+  const savedCount = () =>
+    collected.filter((job) => !job.searchRejection).length;
   const keep = (job: JobPosting): boolean => {
     const key = jobKey(job);
     if (catalogKeys && !catalogKeys.has(key)) {
@@ -317,7 +330,7 @@ export async function runJobSearchAgent(
         pageTools.state.observation?.url ??
         config.startingUrls[0] ??
         "about:blank",
-      jobsFound: collected.length,
+      jobsFound: savedCount(),
       stepCount: steps,
       currentAction,
       message,
@@ -361,15 +374,20 @@ export async function runJobSearchAgent(
     seen: number,
     ignored = 0,
   ): string => {
+    const rejected = added.filter((job) => job.searchRejection);
+    const saved = added.filter((job) => !job.searchRejection);
     const dupes = seen - added.length - ignored;
     const verb = isSourceCheck ? "Read" : "Saved";
     const lines = [
-      added.length === 0
+      saved.length === 0
         ? `${verb} no new postings.`
-        : `${verb} ${added.length} new posting${added.length === 1 ? "" : "s"}${isSourceCheck ? " as samples for this check" : ""}:`,
-      ...added
+        : `${verb} ${saved.length} new posting${saved.length === 1 ? "" : "s"}${isSourceCheck ? " as samples for this check" : ""}:`,
+      ...saved
         .slice(0, 40)
         .map((job) => `- ${job.title} — ${job.company} (${job.location})`),
+      rejected.length > 0
+        ? `${rejected.length} rejected: ${rejected.map((job) => `${job.title}: ${job.searchRejection?.reason}`).join("; ")}`
+        : null,
       dupes > 0
         ? `${dupes} on this page ${dupes === 1 ? "was" : "were"} already ${isSourceCheck ? "read" : "saved"}.`
         : null,
@@ -377,10 +395,10 @@ export async function runJobSearchAgent(
         ? `Ignored ${ignored} posting${ignored === 1 ? "" : "s"} outside this source's complete public feed. They were not saved under this source. Review the configured source catalog instead.`
         : null,
       isSourceCheck
-        ? `${collected.length} sampled so far. Samples prove how the site works; they are not saved as results.`
+        ? `${savedCount()} sampled so far. Samples prove how the site works; they are not saved as results.`
         : config.retainAllFound
-          ? `${collected.length} saved so far.`
-          : `${collected.length} saved so far of the ${config.targetJobCount} asked for.`,
+          ? `${savedCount()} saved so far.`
+          : `${savedCount()} saved so far of the ${config.targetJobCount} asked for.`,
     ];
     return lines.filter((line): line is string => line !== null).join("\n");
   };
@@ -421,6 +439,11 @@ export async function runJobSearchAgent(
       const pageText = await hands.readText();
       if (!observation.url) {
         return { kind: "ok", content: "There is no page to read yet." };
+      }
+      const pageKey = `${observation.url}\n${pageText}`;
+      if (!coveredPageKeys.has(pageKey)) {
+        coveredPageKeys.add(pageKey);
+        inspectedPageUrls.push(observation.url);
       }
       // Plain innerText omits link destinations and JSON-LD. Keep that URL
       // evidence available to the extractor so a listing and its own detail
@@ -476,11 +499,27 @@ export async function runJobSearchAgent(
         const notAPosting = posting
           ? describeNonPosting(posting, observation.url, pageType)
           : null;
-        if (posting && notAPosting) {
+        if (posting && notAPosting && !posting.searchRejection) {
+          unreadableListings.push({
+            title: posting.title,
+            url: posting.canonicalUrl,
+            category: "unreadable",
+            reason: notAPosting,
+          });
           skipped.push(`"${posting.title}" (${notAPosting})`);
           continue;
         }
-        if (posting && keep(posting)) added.push(posting);
+        if (!posting) {
+          unreadableListings.push({
+            title: partial.title ?? "Unreadable listing",
+            url: observation.url,
+            category: "unreadable",
+            reason: "The listing had no usable title or address.",
+          });
+        } else if (known.has(jobKey(posting))) {
+          duplicateListings += 1;
+          duplicateListingPageUrls.push(observation.url);
+        } else if (keep(posting)) added.push(posting);
       }
       if (added.length > 0) await checkpoint();
       emit(
@@ -533,14 +572,17 @@ export async function runJobSearchAgent(
         typeof requested === "number"
           ? Math.max(1, Math.min(200, Math.floor(requested)))
           : 40;
-      const listed = collected.slice(-limit).reverse();
+      const listed = collected
+        .filter((job) => !job.searchRejection)
+        .slice(-limit)
+        .reverse();
       return Promise.resolve({
         kind: "ok" as const,
         content:
           listed.length === 0
             ? "Nothing saved yet."
             : [
-                `${collected.length} saved. Newest first:`,
+                `${savedCount()} saved. Newest first:`,
                 ...listed.map(
                   (job) =>
                     `- ${job.title} — ${job.company} (${job.location}) ${job.canonicalUrl}`,
@@ -737,7 +779,12 @@ export async function runJobSearchAgent(
   };
 
   const catalogTools = config.sourceCatalog
-    ? createSearchCatalogTools({ jobs: config.sourceCatalog, keep, checkpoint })
+    ? createSearchCatalogTools({
+        jobs: config.sourceCatalog,
+        keep,
+        checkpoint,
+        onInspect: (job) => inspectedCatalog.set(jobKey(job), job),
+      })
     : [];
   const prompts = createJobSearchPrompts(config);
   const messages: AgentLoopMessage[] = [
@@ -747,7 +794,7 @@ export async function runJobSearchAgent(
   if (config.sourceCatalog) {
     messages.push({
       role: "user",
-      content: `The site's public feed already supplied ${config.sourceCatalog.length} postings. Use list_catalog_jobs to review them in pages, read_catalog_job for details, and save_catalog_jobs for the ids that fit this request. Nothing from this catalog is saved until you select it. Prefer this feed over browsing the same listings again. Known posting dates and update dates are distinct; never invent missing dates. You still have browser tools if the feed lacks necessary evidence.`,
+      content: `The site's public feed already supplied ${config.sourceCatalog.length} postings. Use list_catalog_jobs to review them in pages, read_catalog_job for details, and save_catalog_jobs for the ids that fit this request. Nothing from this catalog is saved until you select it. Review every catalog page. For each job, save its id or report its rejection category and reason with save_catalog_jobs; an undecided read is counted as deferred. Prefer this feed over browsing the same listings again. Known posting dates and update dates are distinct; never invent missing dates. You still have browser tools if the feed lacks necessary evidence.`,
     });
     if (config.sourceCatalogComplete) {
       messages.push({
@@ -760,7 +807,7 @@ export async function runJobSearchAgent(
   if (collected.length > 0) {
     messages.push({
       role: "user",
-      content: `This run is resuming: ${collected.length} jobs were already saved before it paused. Carry on from where it left off; saved_jobs lists them.`,
+      content: `This run is resuming: ${savedCount()} jobs were already saved before it paused. Carry on from where it left off; saved_jobs lists them.`,
     });
   }
 
@@ -859,7 +906,7 @@ export async function runJobSearchAgent(
         pageTools.state.observation?.url
           ? `The page is still ${pageTools.state.observation.url}.`
           : null,
-        `${collected.length} saved so far.`,
+        `${savedCount()} saved so far.`,
       ]
         .filter((line): line is string => line !== null)
         .join(" "),
@@ -968,7 +1015,24 @@ export async function runJobSearchAgent(
         })
       : null;
 
+    const coveredPageUrls = [
+      ...inspectedPageUrls,
+      ...pageTools.state.visitedUrls.filter(
+        (url) => !inspectedPageUrls.includes(url),
+      ),
+    ];
     return {
+      deferredListingPageUrls: [...inspectedCatalog]
+        .filter(([key]) => !known.has(key))
+        .map(
+          ([, job]) =>
+            job.producingPageUrl ?? config.startingUrls[0] ?? job.canonicalUrl,
+        ),
+      duplicateListings,
+      duplicateListingPageUrls,
+      coveredPageUrls,
+      unreadableListings,
+      pagesCovered: coveredPageUrls.length,
       jobs: [...collected],
       steps,
       incomplete: !finishedCleanly,

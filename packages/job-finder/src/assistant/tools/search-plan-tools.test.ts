@@ -269,3 +269,78 @@ it("does not attach a new plan's receipt to a different plan created during the 
   expect(result.data).toMatchObject({ name: "My synthetic plan" });
   expect(ctx.receipts[0]?.targetId).not.toBe("concurrent_plan");
 });
+
+it("names the results plan and reads back Profile switches for explicitly selected off sources", async () => {
+  const ctx = world();
+  const before = await ctx.service.getWorkspaceSnapshot();
+  const source = before.searchPreferences.discovery.targets[0]!;
+  await ctx.service.saveSearchPreferences({
+    ...before.searchPreferences,
+    discovery: {
+      ...before.searchPreferences.discovery,
+      targets: before.searchPreferences.discovery.targets.map((target) =>
+        target.id === source.id ? { ...target, enabled: false } : target,
+      ),
+    },
+  });
+  const result = await saveSearchPlanTool.execute(
+    saveSearchPlanTool.input.parse({
+      name: "Design only",
+      sourceIds: [source.id],
+      targetRoles: ["Designer"],
+      locations: ["Berlin"],
+    }),
+    ctx,
+  );
+  expect(result.summary).toContain(
+    "Results go to Design only in Find jobs and Shortlisted",
+  );
+  expect(result.data).toMatchObject({
+    resultsPlanName: "Design only",
+    profileSources: expect.arrayContaining([
+      expect.objectContaining({
+        id: source.id,
+        enabled: false,
+        searchedByPlan: true,
+      }),
+    ]),
+  });
+  const after = await ctx.service.getWorkspaceSnapshot();
+  expect(
+    after.searchPreferences.discovery.targets.find(
+      (target) => target.id === source.id,
+    )?.enabled,
+  ).toBe(false);
+});
+
+it("makes an existing inherited plan explicitly search a chosen Profile-off source", async () => {
+  const ctx = world();
+  const before = await ctx.service.getWorkspaceSnapshot();
+  const plan = before.campaigns.find(
+    (plan) => plan.id === before.activeCampaignId,
+  )!;
+  const source = before.searchPreferences.discovery.targets[0]!;
+  await ctx.service.saveSearchPreferences({
+    ...before.searchPreferences,
+    discovery: {
+      ...before.searchPreferences.discovery,
+      targets: before.searchPreferences.discovery.targets.map((target) => ({
+        ...target,
+        enabled: false,
+      })),
+    },
+  });
+  await saveSearchPlanTool.execute(
+    saveSearchPlanTool.input.parse({
+      planId: plan.id,
+      name: plan.name,
+      sourceIds: [source.id],
+    }),
+    ctx,
+  );
+  const after = await ctx.service.getWorkspaceSnapshot();
+  expect(after.campaigns.find((saved) => saved.id === plan.id)).toMatchObject({
+    sourceSelectionMode: "selected",
+    sourceTargetIds: [source.id],
+  });
+});
