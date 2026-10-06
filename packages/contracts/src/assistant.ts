@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ResumeBatchCheckpointSchema } from "./resume";
 
 import { IsoDateTimeSchema, NonEmptyStringSchema } from "./base";
 
@@ -1126,16 +1127,13 @@ export type AssistantMentionSearchResult = z.infer<
 >;
 
 /** Transient resume work owned by the UI; never resumed after restart. */
-export const AssistantResumeBatchStateSchema = z
-  .object({
+export const AssistantResumeBatchStateSchema =
+  ResumeBatchCheckpointSchema.extend({
     id: IdSchema,
     jobIds: z.array(IdSchema),
-    activeJobIds: z.array(IdSchema).max(2),
     completedJobIds: z.array(IdSchema),
-    done: z.boolean(),
-    stopRequested: z.boolean(),
-  })
-  .strict();
+    activeJobIds: z.array(IdSchema).max(2),
+  }).strict();
 export type AssistantResumeBatchState = z.infer<
   typeof AssistantResumeBatchStateSchema
 >;

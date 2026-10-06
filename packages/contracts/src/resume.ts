@@ -721,6 +721,20 @@ export const ResumeBatchCheckpointSchema = z.object({
   completedJobIds: z.array(NonEmptyStringSchema),
   done: z.boolean(),
   stopRequested: z.boolean(),
+  requests: z
+    .array(
+      z.object({
+        jobId: NonEmptyStringSchema,
+        regenerate: z.boolean().optional(),
+        level: z.enum(["light", "tailored", "aggressive"]).optional(),
+        language: NonEmptyStringSchema.optional(),
+      }),
+    )
+    .optional(),
+  durationsMs: z.array(z.number().nonnegative().finite()).optional(),
+  resumedBatchIds: z.array(NonEmptyStringSchema).optional(),
+  /** Liveness is rederived from this process before a saved receipt is displayed. */
+  running: z.boolean().optional(),
 });
 export type ResumeBatchCheckpoint = z.infer<typeof ResumeBatchCheckpointSchema>;
 
@@ -1328,3 +1342,43 @@ export const ResumeResearchArtifactSummarySchema =
 export type ResumeResearchArtifactSummary = z.infer<
   typeof ResumeResearchArtifactSummarySchema
 >;
+
+/** Two completed resumes establish an observed average; two writers share the remainder. */
+export function estimateResumeBatchMinutesLeft(
+  durationsMs: readonly number[],
+  remainingCount: number,
+): number | null {
+  if (durationsMs.length < 2 || remainingCount <= 0) return null;
+  const average =
+    durationsMs.reduce((sum, duration) => sum + duration, 0) /
+    durationsMs.length;
+  return Math.max(
+    1,
+    Math.ceil((average * Math.ceil(remainingCount / 2)) / 60_000),
+  );
+}
+
+/** Older translated fields have no original wording to compare against. */
+export function resumeComparisonNeedsRefresh(draft: ResumeDraft): boolean {
+  if (!draft.writtenLanguage) return false;
+  return draft.sections.some(
+    (section) =>
+      section.included &&
+      (section.kind === "skills" ||
+        section.kind === "keywords" ||
+        section.kind === "certifications") &&
+      ((!!section.text && section.sourceRefs.length === 0) ||
+        section.bullets.some(
+          (bullet) =>
+            bullet.included && !!bullet.text && bullet.sourceRefs.length === 0,
+        ) ||
+        section.entries.some(
+          (entry) =>
+            entry.included &&
+            entry.sourceRefs.length === 0 &&
+            (!!entry.title ||
+              !!entry.summary ||
+              entry.bullets.some((bullet) => bullet.included && !!bullet.text)),
+        )),
+  );
+}

@@ -223,6 +223,7 @@ export function buildResumeImportStageInstructions(
     case "background":
       return [
         "Return only background candidates for skills, education, certifications, links, projects, and languages.",
+        "Read the languages section even when it is below projects or labelled Spoken languages. Return one language record per language with its stated proficiency; a mention in notes is not an imported record. Preserve parenthesized software levels word for word, including advanced, basic or learning, in skill values.",
         "Valid target sections: skill, education, certification, link, project, language.",
         'Use target {"section":"skill","key":"skills","recordId":null} for a complete skills array, and optional skillGroups.coreSkills, skillGroups.tools, skillGroups.languagesAndFrameworks, skillGroups.softSkills, or skillGroups.highlightedSkills for grouped skill arrays.',
         'Use target {"section":"education","key":"record","recordId":"education_1"} for each education object with schoolName, degree, fieldOfStudy, location, startDate, endDate, and summary fields.',

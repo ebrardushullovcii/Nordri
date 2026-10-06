@@ -1,3 +1,4 @@
+import { estimateResumeBatchMinutesLeft } from "@nordri/contracts";
 import { verifyPersonAnswerAuthority } from "./person-answer-authority";
 import { readAssistantWorkState } from "./work-state";
 import { buildChangePreview } from "./change-diff";
@@ -1908,10 +1909,14 @@ export class AssistantSessionHost {
       (count, batch) => count + batch.failures.length,
       0,
     );
+    const minutesLeft = estimateResumeBatchMinutesLeft(
+      batches.flatMap((batch) => batch.durationsMs),
+      total - settled,
+    );
     return {
       label: batches.every((batch) => batch.cancelled)
         ? `Finishing ${active} active resume${active === 1 ? "" : "s"}; queued jobs stopped`
-        : `Writing resumes: ${settled} of ${total} finished${failed ? `; ${failed} failed` : ""}`,
+        : `Writing resumes: ${settled} of ${total} finished${failed ? `; ${failed} failed` : ""}${minutesLeft === null ? "" : ` · about ${minutesLeft} min left`}`,
       toolName: "generate_resumes",
       startedAt: batches.map((batch) => batch.startedAt).sort()[0]!,
     };

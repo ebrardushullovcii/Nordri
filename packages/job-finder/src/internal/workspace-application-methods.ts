@@ -1,3 +1,8 @@
+import {
+  mergeResumeBatchCheckpoints,
+  markResumeBatchRunning,
+  withResumeBatchLiveness,
+} from "./resume-batch-checkpoint";
 import { checkSameCompanySends } from "./same-company-sends";
 import { searchPreferencesForCampaignRun } from "./campaign-dashboard";
 import { withPlanAssessment } from "./plan-assessment";
@@ -3572,6 +3577,26 @@ export function createWorkspaceApplicationMethods(
     jobId: string,
     options?: { language?: string | null },
   ): Promise<JobFinderWorkspaceSnapshot> {
+    const intelligence = withResumeBatchLiveness(
+      ctx.repository,
+      await ctx.repository.getIntelligenceState(),
+    );
+    const continuedBatch = intelligence.resumeBatchCheckpoint?.running
+      ? intelligence.resumeBatchCheckpoints?.findLast(
+          (batch) =>
+            batch.running &&
+            !batch.done &&
+            !!batch.resumedBatchIds?.length &&
+            batch.jobIds.includes(jobId) &&
+            !batch.completedJobIds.includes(jobId),
+        )
+      : undefined;
+    const request = continuedBatch?.requests?.findLast(
+      (entry) => entry.jobId === jobId,
+    );
+    if (options === undefined && request?.language)
+      options = { language: request.language };
+
     const requestedJob = (await ctx.repository.listSavedJobs()).find(
       (entry) => entry.id === jobId,
     );
@@ -4588,11 +4613,20 @@ export function createWorkspaceApplicationMethods(
     async saveResumeBatchCheckpoint(checkpoint) {
       await ctx.withIntelligenceTransition(async () => {
         const current = await ctx.repository.getIntelligenceState();
+        const merged = mergeResumeBatchCheckpoints(
+          current.resumeBatchCheckpoints ??
+            (current.resumeBatchCheckpoint
+              ? [current.resumeBatchCheckpoint]
+              : []),
+          checkpoint,
+        );
         await ctx.repository.saveIntelligenceState({
           ...current,
-          resumeBatchCheckpoint: checkpoint,
+          resumeBatchCheckpoint: merged.checkpoint,
+          resumeBatchCheckpoints: merged.checkpoints,
         });
       });
+      markResumeBatchRunning(ctx.repository, checkpoint);
     },
     async removeJobFromReview(jobId) {
       removedResumeJobIds.add(jobId);

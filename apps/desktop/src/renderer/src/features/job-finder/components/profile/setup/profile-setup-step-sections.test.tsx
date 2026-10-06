@@ -756,6 +756,13 @@ describe("ProfileSetupImportStep", () => {
       );
     });
 
+    // R3-170: imported optional proof stays out of the required setup path.
+    const optional = container?.querySelector("details");
+    expect(optional).toBeTruthy();
+    expect(optional?.open).toBe(false);
+    expect(optional?.querySelector("summary")?.textContent).toContain(
+      "optional suggestions",
+    );
     // The item is listed with its own Optional severity badge; the card no
     // longer prints a second sentence counting the same suggestion.
     expect(container?.textContent).toContain("Optional");

@@ -17,6 +17,7 @@ import type {
 } from "@nordri/contracts";
 import {
   getResumePreviewTargetContext,
+  resumeComparisonNeedsRefresh,
   buildResumeIssueApprovalContentHash,
   isBlockingResumeClaimAssessment,
   isResumeClaimAssessmentApprovable,
@@ -1027,24 +1028,18 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
     );
   };
 
+  const rewriteFailed =
+    !props.isWorkspacePending &&
+    !!(
+      (languageRequest && props.actionMessage) ||
+      props.workspace.tailoredAsset?.failureMessage
+    );
+  const comparisonNeedsRefresh = resumeComparisonNeedsRefresh(draft);
+
   const editorPanel = (
     <ResumeWorkspaceEditorPanel
       actionMessage={
-        props.isWorkspacePending
-          ? (props.actionMessage ?? null)
-          : (languageRequest && props.actionMessage) ||
-              props.workspace.tailoredAsset?.failureMessage
-            ? FAILURE_SENTENCES.assistant_unavailable
-            : (props.actionMessage ?? null)
-      }
-      onRetryAction={
-        props.isWorkspacePending
-          ? undefined
-          : languageRequest
-            ? () => writeLanguage(languageRequest.language)
-            : props.workspace.tailoredAsset?.failureMessage
-              ? () => props.onRegenerateDraft(props.jobId)
-              : undefined
+        rewriteFailed || languageRequest ? null : (props.actionMessage ?? null)
       }
       actionSavedFilePath={props.actionSavedFilePath ?? null}
       {...(props.onRevealSavedFile
@@ -1054,7 +1049,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       {...(undoAiEditAction ? { undoAiEditAction } : {})}
       onOpenAssistant={openAssistant}
       coverageComparison={
-        props.workspace.validation?.coverageComparison ?? null
+        comparisonNeedsRefresh
+          ? null
+          : (props.workspace.validation?.coverageComparison ?? null)
       }
       draft={draft}
       hasUnsavedChanges={hasUnsavedChanges}
@@ -1238,12 +1235,58 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           />
           {!props.originalResumeRoute ? (
             <ResumeWorkspaceLanguagePicker
-              language={draft.language ?? null}
+              language={
+                languageRequest
+                  ? languageRequest.language
+                  : (draft.language ?? null)
+              }
               writtenLanguage={draft.writtenLanguage ?? null}
               listingLanguage={draft.listingLanguage ?? null}
               disabled={props.isWorkspacePending || backgroundDraft !== null}
               onWrite={writeLanguage}
             />
+          ) : null}
+          {rewriteFailed ? (
+            <div
+              role="alert"
+              data-resume-rewrite-failure
+              className="mt-2 flex flex-wrap items-center gap-2 px-5 text-sm"
+            >
+              <p>{FAILURE_SENTENCES.assistant_unavailable}</p>
+              <Button
+                size="compact"
+                variant="outline"
+                type="button"
+                onClick={() =>
+                  languageRequest
+                    ? writeLanguage(languageRequest.language)
+                    : props.onRegenerateDraft(props.jobId)
+                }
+              >
+                Try again
+              </Button>
+            </div>
+          ) : languageRequest && props.isWorkspacePending ? (
+            <p role="status" className="mt-2 px-5 text-sm">
+              {props.actionMessage}
+            </p>
+          ) : null}
+          {comparisonNeedsRefresh && !languageRequest && !rewriteFailed ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 px-5 text-sm">
+              <p>
+                This older draft needs a rewrite to compare it with your saved
+                facts.
+              </p>
+              <Button
+                disabled={props.isWorkspacePending}
+                size="compact"
+                variant="outline"
+                type="button"
+                onClick={() => props.onRegenerateDraft(props.jobId)}
+              >
+                Rewrite to refresh the comparison
+              </Button>
+            </div>
           ) : null}
           {backgroundDraft ? (
             <div
@@ -1283,7 +1326,9 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
       >
         <ResumeWorkspaceStudioShell
           approvalBlockedReason={approvalBlockedReason}
-          approvalStateLabel={approvalStateLabel}
+          approvalStateLabel={
+            rewriteFailed ? "Rewrite failed" : approvalStateLabel
+          }
           approvedExportPageCount={approvedExport?.pageCount ?? null}
           canApproveResume={Boolean(
             selectedTemplateApprovalEligible &&
@@ -1446,7 +1491,12 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
               />
             </ResumeWorkspaceContextDisclosure>
           }
-          studioStatusMessage={studioStatusMessage}
+          rewriteFailed={rewriteFailed}
+          studioStatusMessage={
+            rewriteFailed
+              ? "Your previous resume was kept."
+              : studioStatusMessage
+          }
           templatePanel={templatePanel}
           validationIssues={visibleValidationIssues}
         />

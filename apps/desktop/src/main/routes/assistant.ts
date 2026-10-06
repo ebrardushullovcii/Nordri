@@ -28,6 +28,7 @@ import {
 
 import {
   clearUiResumeBatch,
+  readUiResumeBatch,
   syncUiResumeBatch,
 } from "../services/assistant/ui-resume-batch";
 
@@ -79,8 +80,25 @@ export function registerAssistantRouteHandlers(ipcMain: IpcMain): void {
         queueOwners.add(event.sender);
         const clearOwnedQueue = () => {
           if (queueOwnerId === event.sender.id) {
+            const interrupted = readUiResumeBatch();
             clearUiResumeBatch();
             queueOwnerId = null;
+            if (interrupted) {
+              void getJobFinderWorkspaceService()
+                .then((service) =>
+                  service.saveResumeBatchCheckpoint({
+                    ...interrupted,
+                    running: false,
+                    activeJobIds: [],
+                  }),
+                )
+                .catch((error: unknown) =>
+                  console.warn(
+                    "Resume batch interruption could not be saved.",
+                    error,
+                  ),
+                );
+            }
           }
         };
         event.sender.on("destroyed", clearOwnedQueue);

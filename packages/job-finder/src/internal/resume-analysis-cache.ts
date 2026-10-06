@@ -17,7 +17,7 @@ import {
 import type { WorkspaceServiceContext } from "./workspace-service-context";
 import { createUniqueId } from "./shared";
 
-export const RESUME_ANALYSIS_PROMPT_VERSION = "resume-analysis-prompts-v1";
+export const RESUME_ANALYSIS_PROMPT_VERSION = "resume-analysis-prompts-v2";
 export const RESUME_ANALYSIS_SCHEMA_VERSION = "resume-analysis-schema-v1";
 export const RESUME_ANALYSIS_POLICY_VERSION = "resume-analysis-policy-v2";
 export const RESUME_VISION_RENDER_VERSION = "resume-vision-render-v1";

@@ -1,3 +1,4 @@
+import { withResumeBatchLiveness } from "./resume-batch-checkpoint";
 import { groupCompanyConflicts } from "./same-company-sends";
 import { readPlanAssessment } from "./plan-assessment";
 import { readSalaryDisclosurePreference } from "./salary-disclosure-preference";
@@ -1313,7 +1314,7 @@ export function createWorkspaceSnapshotProfileMethods(
       });
 
     const listableIntelligence = {
-      ...intelligence,
+      ...withResumeBatchLiveness(ctx.repository, intelligence),
       companies: intelligence.companies.filter((company) =>
         isListableCompanyName(company.canonicalName),
       ),

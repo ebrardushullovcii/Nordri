@@ -35,6 +35,7 @@ export interface TailoredDraftPreparationViewState {
   /** Stop was pressed: nothing new starts; drafts already started finish. */
   stopRequested?: boolean;
   totalCount: number;
+  durationsMs?: number[];
 }
 
 export interface TailoredDraftPreparationProgress {
@@ -572,9 +573,12 @@ export async function prepareTailoredDraftBatch(
   options: {
     onProgress?: (progress: TailoredDraftPreparationProgress) => void;
     shouldStop?: () => boolean;
+    includeExisting?: boolean;
   } = {},
 ): Promise<TailoredDraftPreparationResult> {
-  const candidates = getTailoredDraftPreparationCandidates(queue);
+  const candidates = options.includeExisting
+    ? [...queue]
+    : getTailoredDraftPreparationCandidates(queue);
   let attemptedCount = 0;
   let completedCount = 0;
   let fallbackCount = 0;

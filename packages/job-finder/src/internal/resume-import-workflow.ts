@@ -480,6 +480,30 @@ function promoteEducationScalarCandidates(
   return promoted;
 }
 
+/** A refresh offers a new read for review; it never replaces confirmed facts. */
+function refreshSuggestions(
+  trigger: ResumeImportRun["trigger"],
+  candidates: ResumeImportFieldCandidate[],
+  originalProfile: CandidateProfile,
+): ResumeImportFieldCandidate[] {
+  const alreadyRead =
+    originalProfile.baseResume.lastAnalyzedAt !== null ||
+    originalProfile.baseResume.extractionStatus === "ready";
+  return trigger !== "refresh" || !alreadyRead
+    ? candidates
+    : candidates.map((candidate) =>
+        candidate.resolution === "auto_applied" &&
+        !hasExplicitUserDecision(candidate)
+          ? {
+              ...candidate,
+              resolution: "needs_review",
+              resolutionReason: "resume_refresh_review",
+              resolvedAt: null,
+            }
+          : candidate,
+      );
+}
+
 type ResumeImportTrigger = ResumeImportRun["trigger"];
 
 type ResumeImportBranchResult =
@@ -1162,12 +1186,16 @@ async function completeDeferredVisionBranch(input: {
           candidates,
         );
         run = current.run;
-        const heldCandidates = holdChangedImportPreferences(
-          current.candidates,
+        const heldCandidates = refreshSuggestions(
+          run.trigger,
+          holdChangedImportPreferences(
+            current.candidates,
+            input.baselineProfile,
+            input.baselineSearchPreferences,
+            latestProfile,
+            latestSearchPreferences,
+          ),
           input.baselineProfile,
-          input.baselineSearchPreferences,
-          latestProfile,
-          latestSearchPreferences,
         );
         reconciledCandidates = heldCandidates;
         run = ResumeImportRunSchema.parse({
@@ -1559,6 +1587,11 @@ async function runResumeImportWorkflowInProcess(
       input.searchPreferences,
       latestProfile,
       latestPreferences,
+    );
+    cachedArtifacts.candidates = refreshSuggestions(
+      input.trigger,
+      cachedArtifacts.candidates,
+      input.profile,
     );
     const merged = applyResolvedResumeImportCandidatesToWorkspace({
       profile: input.profile,
@@ -2287,6 +2320,11 @@ async function runResumeImportWorkflowInProcess(
       latestProfile,
       latestPreferences,
     );
+    reconciledCandidates = refreshSuggestions(
+      input.trigger,
+      reconciledCandidates,
+      input.profile,
+    );
     const merged = applyResolvedResumeImportCandidatesToWorkspace({
       profile: input.profile,
       searchPreferences: latestPreferences,
@@ -2397,6 +2435,11 @@ async function runResumeImportWorkflowInProcess(
         input.searchPreferences,
         retryProfile,
         retrySearchPreferences,
+      );
+      reconciledCandidates = refreshSuggestions(
+        input.trigger,
+        reconciledCandidates,
+        input.profile,
       );
       const retryMerged = applyResolvedResumeImportCandidatesToWorkspace({
         profile: retryProfile,

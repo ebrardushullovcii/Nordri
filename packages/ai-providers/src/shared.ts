@@ -654,6 +654,8 @@ export interface ResumeClaimCheckInput {
   /** The candidate's evidence, each entry with an id the verdict can cite. */
   evidence: ReadonlyArray<{ id: string; text: string }>;
   resumeText: string | null;
+  /** All visible lines, including other batches, for repetition and context. */
+  resumeLines?: ReadonlyArray<{ section: string; text: string }>;
   /** At most one batch; callers split larger sets. */
   claims: ReadonlyArray<{ id: string; section: string; text: string }>;
 }

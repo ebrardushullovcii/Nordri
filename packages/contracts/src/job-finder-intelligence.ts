@@ -1906,6 +1906,7 @@ export const JobFinderIntelligenceStateSchema = z
     outcomeAnalytics: OutcomeAnalyticsOverviewSchema.nullable().default(null),
     resumeStrategies: z.array(ResumeStrategySchema).max(200).default([]),
     resumeBatchCheckpoint: ResumeBatchCheckpointSchema.nullable().optional(),
+    resumeBatchCheckpoints: z.array(ResumeBatchCheckpointSchema).optional(),
     resumeStrategySelections: z
       .array(ResumeStrategySelectionSchema)
       .max(10_000)

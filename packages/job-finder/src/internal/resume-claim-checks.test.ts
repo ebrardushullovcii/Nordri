@@ -343,7 +343,7 @@ describe("resume claim checks before a draft is kept (ADR 0041)", () => {
           bullet.included,
         ]),
       ).toContainEqual([line.invented, false]);
-      expect(checkResumeClaims).toHaveBeenCalledOnce();
+      expect(checkResumeClaims).toHaveBeenCalledTimes(2);
     });
 
     test("a fix that rewords a line already there hides the line too", async () => {

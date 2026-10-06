@@ -595,6 +595,29 @@ describe("ResumeWorkspaceScreen", () => {
     expect(onRegenerateDraft).not.toHaveBeenCalled();
   });
 
+  it("offers one rewrite for an older translation and hides unreliable additions", () => {
+    const workspace = buildWorkspace();
+    workspace.draft.writtenLanguage = "German";
+    workspace.draft.language = "German";
+    const skills = {
+      ...workspace.draft.sections[0]!,
+      id: "legacy_skills",
+      kind: "skills" as const,
+      entries: [],
+      bullets: [],
+    };
+    workspace.draft.sections.push(skills);
+    skills.text = "Polnisch C1, Englisch B1";
+    skills.sourceRefs = [];
+    const onRegenerateDraft = vi.fn();
+    renderScreen({ workspace, onRegenerateDraft });
+    expect(screen.queryByText("Keywords added:")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Rewrite to refresh the comparison" }),
+    );
+    expect(onRegenerateDraft).toHaveBeenCalledWith(workspace.job.id);
+  });
+
   it("a failed language choice leaves the saved draft clean and does not save again", () => {
     const onSaveDraftAndThen = vi.fn(); // Failure: no success callback.
     const onDirtyChange = vi.fn();
@@ -605,7 +628,7 @@ describe("ResumeWorkspaceScreen", () => {
     expect(onSaveDraftAndThen).toHaveBeenCalledTimes(1);
     expect(
       screen.getByLabelText<HTMLSelectElement>("Resume language").value,
-    ).toBe("");
+    ).toBe("German");
     expect(onDirtyChange).not.toHaveBeenCalledWith(true);
   });
 
@@ -2290,6 +2313,17 @@ describe("ResumeWorkspaceScreen", () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/did not cover the whole resume/)).toBeNull();
+    const failure = screen.getByRole("alert");
+    expect(
+      document
+        .querySelector("[data-resume-language-picker]")
+        ?.parentElement?.contains(failure),
+    ).toBe(true);
+    expect(screen.queryByText("Ready to approve")).toBeNull();
+    expect(
+      screen.getByLabelText<HTMLSelectElement>("Resume language").value,
+    ).toBe("German");
+
     rerender(
       buildScreenElement({
         onSaveDraftAndThen,

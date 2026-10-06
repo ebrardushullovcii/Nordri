@@ -6,7 +6,12 @@ let batch: AssistantResumeBatchState | null = null;
 export function syncUiResumeBatch(
   state: AssistantResumeBatchState,
 ): AssistantResumeBatchState {
-  if (batch && !batch.done && batch.id !== state.id) {
+  if (
+    batch &&
+    !batch.done &&
+    batch.running !== false &&
+    batch.id !== state.id
+  ) {
     throw new Error("A resume batch is already running.");
   }
   batch = structuredClone({
@@ -18,7 +23,9 @@ export function syncUiResumeBatch(
 }
 
 export function readUiResumeBatch(): AssistantResumeBatchState | null {
-  return batch && !batch.done ? structuredClone(batch) : null;
+  return batch && !batch.done && batch.running !== false
+    ? structuredClone(batch)
+    : null;
 }
 
 export function stopUiResumeBatch(): AssistantResumeBatchState | null {

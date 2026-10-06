@@ -1,3 +1,4 @@
+import { estimateResumeBatchMinutesLeft } from "@nordri/contracts";
 import type { ReviewQueueItem, TailoredAsset } from "@nordri/contracts";
 import { Button } from "@renderer/components/ui";
 import { cn } from "@renderer/lib/cn";
@@ -341,6 +342,17 @@ export function ReviewQueueListPanel({
                   {draftPreparation.completedCount +
                     draftPreparation.failedCount}{" "}
                   of {draftPreparation.totalCount} finished
+                  {(() => {
+                    const minutes = estimateResumeBatchMinutesLeft(
+                      draftPreparation.durationsMs ?? [],
+                      draftPreparation.totalCount -
+                        draftPreparation.completedCount -
+                        draftPreparation.failedCount,
+                    );
+                    return !draftPreparation.stopRequested && minutes !== null
+                      ? ` · about ${minutes} min left`
+                      : "";
+                  })()}
                 </p>
                 {draftPreparation.stopRequested ? null : (
                   <Button

@@ -120,6 +120,7 @@ interface ResumeWorkspaceStudioShellProps {
   selectedTemplateApprovalEligible: boolean;
   supportingDetailsPanel?: ReactNode;
   studioStatusMessage: string;
+  rewriteFailed?: boolean;
   templatePanel: ReactNode;
   validationIssues?: readonly ResumeValidationIssue[];
 }
@@ -861,41 +862,45 @@ export function ResumeWorkspaceStudioShell(
         ) : (
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <Badge variant="outline">
-              {props.canClearApproval && props.hasUnsavedChanges
-                ? "Unsaved changes"
-                : props.canClearApproval
-                  ? "Approved"
-                  : approvalBlockedByValidation
-                    ? "Needs fixes"
-                    : approvalBlockedByDecisions
-                      ? "Needs decisions"
-                      : props.exportBlockedReason
-                        ? "Lines to confirm"
-                        : canApproveResume
-                          ? props.hasUnsavedChanges
-                            ? "Unsaved changes"
-                            : "Ready to approve"
-                          : "Choose template"}
+              {props.rewriteFailed
+                ? "Rewrite failed"
+                : props.canClearApproval && props.hasUnsavedChanges
+                  ? "Unsaved changes"
+                  : props.canClearApproval
+                    ? "Approved"
+                    : approvalBlockedByValidation
+                      ? "Needs fixes"
+                      : approvalBlockedByDecisions
+                        ? "Needs decisions"
+                        : props.exportBlockedReason
+                          ? "Lines to confirm"
+                          : canApproveResume
+                            ? props.hasUnsavedChanges
+                              ? "Unsaved changes"
+                              : "Ready to approve"
+                            : "Choose template"}
             </Badge>
             <strong
               className="min-w-0 text-(length:--text-body) leading-5 text-(--text-headline)"
               id="resume-next-step-title"
             >
-              {props.canClearApproval && props.hasUnsavedChanges
-                ? "Saving reopens approval for this resume."
-                : props.canClearApproval
-                  ? "Resume approved. Continue when you’re ready."
-                  : canApproveResume
-                    ? props.hasUnsavedChanges
-                      ? "Approve when ready — your edits will be saved first."
-                      : "Approve the resume shown in the preview."
-                    : approvalBlockedByValidation
-                      ? "Fix the first validation error before approval."
-                      : approvalBlockedByDecisions
-                        ? "Choose whether to leave each hidden role off this resume before approving."
-                        : props.exportBlockedReason
-                          ? "Keep or remove the flagged lines, then approve."
-                          : "Choose an apply-safe template before approval."}
+              {props.rewriteFailed
+                ? "Your previous resume was kept. Try the rewrite again."
+                : props.canClearApproval && props.hasUnsavedChanges
+                  ? "Saving reopens approval for this resume."
+                  : props.canClearApproval
+                    ? "Resume approved. Continue when you’re ready."
+                    : canApproveResume
+                      ? props.hasUnsavedChanges
+                        ? "Approve when ready — your edits will be saved first."
+                        : "Approve the resume shown in the preview."
+                      : approvalBlockedByValidation
+                        ? "Fix the first validation error before approval."
+                        : approvalBlockedByDecisions
+                          ? "Choose whether to leave each hidden role off this resume before approving."
+                          : props.exportBlockedReason
+                            ? "Keep or remove the flagged lines, then approve."
+                            : "Choose an apply-safe template before approval."}
             </strong>
             {/* Compact widths used to carry a second, contiguous approval band
               directly under this row — 53px of state plus 63px repeating the

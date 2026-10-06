@@ -57,9 +57,31 @@ export async function withResumeClaimChecks(input: {
 }): Promise<ResumeDraft> {
   const { draft, profile } = input;
   const isPersonsOwn = buildPersonsOwnResumeClaimMatcher({ draft, profile });
-  const claims = buildResumeClaimDescriptors(draft).filter(
-    (claim) => !isPersonsOwn(claim),
-  );
+  const allLines = buildResumeClaimDescriptors(draft);
+  const resumeLines = draft.sections
+    .filter((section) => section.included)
+    .flatMap((section) =>
+      [
+        section.text,
+        ...section.bullets
+          .filter((bullet) => bullet.included)
+          .map((bullet) => bullet.text),
+        ...section.entries
+          .filter((entry) => entry.included)
+          .flatMap((entry) => [
+            [entry.title, entry.subtitle, entry.location, entry.dateRange]
+              .filter(Boolean)
+              .join(" — "),
+            entry.summary,
+            ...entry.bullets
+              .filter((bullet) => bullet.included)
+              .map((bullet) => bullet.text),
+          ]),
+      ]
+        .filter((text): text is string => !!text?.trim())
+        .map((text) => ({ section: section.label, text })),
+    );
+  const claims = allLines.filter((claim) => !isPersonsOwn(claim));
   if (claims.length === 0 && (draft.claimChecks ?? []).length === 0) {
     return draft;
   }
@@ -72,7 +94,11 @@ export async function withResumeClaimChecks(input: {
   // resume stretch. A change to either has the lines checked again.
   const evidenceKey = fnv1a32(
     JSON.stringify([
-      "resume-fact-check-2026-10-05",
+      "resume-fact-check-2026-10-05-context-v2",
+      resumeLines.map((line) => [
+        line.section,
+        resumeClaimContentHash(line.text),
+      ]),
       evidence.map((entry) => entry.text),
       profile?.baseResume.textContent ?? "",
       tailoringStrength,
@@ -124,6 +150,7 @@ export async function withResumeClaimChecks(input: {
           ],
         },
         evidence,
+        resumeLines,
         resumeText: profile?.baseResume.textContent ?? null,
         claims: batch.map(([, claim], index) => ({
           id: `line_${index + 1}`,
@@ -236,7 +263,7 @@ export async function withResumeClaimFixes(
       shown.push(fix);
       return { ...bullet, text: fix };
     });
-  // A summary has no "hide": only a rewrite replaces it.
+  // An empty model fix removes a generated summary with nothing safe to keep.
   const fixText = (
     text: string | null,
     origin: ResumeLine["origin"],
@@ -245,7 +272,10 @@ export async function withResumeClaimFixes(
   ): string | null => {
     if (!text?.trim()) return text;
     const fix = fixFor({ text, origin, field, sectionId });
-    return fix ? fix : text;
+    if (fix === null) return text;
+    if (!fix || repeatsAShownLine(fix, text)) return null;
+    shown.push(fix);
+    return fix;
   };
 
   const fixed: ResumeDraft = {

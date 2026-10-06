@@ -144,3 +144,30 @@ test("fact-check instructions contain general rules without tester facts", () =>
   ])
     expect(prompt).not.toContain(fact);
 });
+
+test("late qualifications and full metrics reach the checker without silent truncation", () => {
+  const longEvidence = Array.from({ length: 30 }, (_, index) => ({
+    id: `source_${index}`,
+    text: "Evidence ".repeat(160),
+  }));
+  longEvidence.push({
+    id: "renewal",
+    text: "ILS renewed 2025; clinical training 2019.",
+  });
+  const source =
+    "Earlier source text ".repeat(500) + "Certification issued 2017.";
+  const resumeLines = [
+    { section: "Education", text: "MSc Business" },
+    { section: "Summary", text: "MSc Business" },
+  ];
+  const payload = buildResumeClaimCheckPayload({
+    ...input,
+    evidence: longEvidence,
+    resumeText: source,
+    resumeLines,
+  });
+  expect(payload.evidence).toEqual(longEvidence);
+  expect(payload.importedResume).toBe(source);
+  expect(payload.resumeLines).toEqual(resumeLines);
+  expect(buildResumeClaimCheckPrompt()).toContain("lines outside this batch");
+});

@@ -1058,3 +1058,13 @@ export const ResumeImportBenchmarkReportSchema = z.object({
 export type ResumeImportBenchmarkReport = z.infer<
   typeof ResumeImportBenchmarkReportSchema
 >;
+
+export function hasModelReadResumeHeader(run: ResumeImportRun | null): boolean {
+  return !!run?.timing?.textStages.some(
+    (stage) =>
+      stage.stage === "identity_summary" &&
+      stage.status === "completed" &&
+      stage.providerKind === "openai_compatible" &&
+      !stage.fallbackKind,
+  );
+}

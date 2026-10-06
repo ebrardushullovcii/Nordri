@@ -1,4 +1,5 @@
 import {
+  hasModelReadResumeHeader,
   PROFILE_SETUP_PLACEHOLDER_HEADLINE,
   PROFILE_SETUP_PLACEHOLDER_SUMMARY,
   isInterruptedResumeImportRun,
@@ -569,7 +570,9 @@ export function ProfileResumePanel({
             {/* F80: "Refresh" alone is a verb with no object, and the full
                 panel below already calls the same action "Refresh from
                 resume". One name for one action. */}
-            Refresh from resume
+            {hasModelReadResumeHeader(latestResumeImportRun)
+              ? "Refresh from resume"
+              : "Read my resume again"}
           </Button>
         </div>
       </section>
@@ -691,7 +694,9 @@ export function ProfileResumePanel({
                 variant="primary"
               >
                 <Sparkles className="size-4" />
-                Refresh from resume
+                {hasModelReadResumeHeader(latestResumeImportRun)
+                  ? "Refresh from resume"
+                  : "Read my resume again"}
               </Button>
             </div>
             <ResumeImportProgress

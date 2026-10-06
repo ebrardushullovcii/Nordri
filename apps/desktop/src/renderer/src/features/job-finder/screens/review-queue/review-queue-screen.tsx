@@ -28,7 +28,6 @@ import {
   hasResumeGenerationFailure,
   isQueueStageReady,
   isResumeGenerationInProgress,
-  isTailoredDraftPreparationEligible,
 } from "./review-queue-status";
 import { LockedScreenLayout } from "../../components/locked-screen-layout";
 import { PageHeaderStack } from "../../components/page-header";
@@ -330,16 +329,20 @@ export function ReviewQueueScreen(props: {
     queue,
   ]);
 
-  const interruptedJobs =
+  const interruptedJobIds =
     props.draftPreparation.status === "idle" &&
     props.resumeBatchCheckpoint &&
-    !props.resumeBatchCheckpoint.done
-      ? queue.filter(
-          (item) =>
-            props.resumeBatchCheckpoint!.jobIds.includes(item.jobId) &&
-            isTailoredDraftPreparationEligible(item, preparedJobIds),
+    !props.resumeBatchCheckpoint.done &&
+    !props.resumeBatchCheckpoint.running
+      ? props.resumeBatchCheckpoint.jobIds.filter(
+          (id) =>
+            !props.resumeBatchCheckpoint!.completedJobIds.includes(id) &&
+            !preparedJobIds.has(id),
         )
       : [];
+  const interruptedJobs = queue.filter((item) =>
+    interruptedJobIds.includes(item.jobId),
+  );
   // Below the `xl` two-pane breakpoint the job column stacks under the list,
   // so selecting a job moved the one next action below the fold with nothing
   // saying so. Find jobs and Applications both reveal their stacked detail
@@ -375,26 +378,23 @@ export function ReviewQueueScreen(props: {
         />
       }
     >
-      {interruptedJobs.length > 0 ? (
+      {interruptedJobIds.length > 0 ? (
         <div
           className="mb-3 rounded-(--radius-field) border border-warning/30 px-4 py-3 text-sm"
           role="status"
         >
           <p>
-            The previous resume batch stopped when the app closed. Finished
-            resumes were kept.
+            {props.resumeBatchCheckpoint?.stopRequested
+              ? "The previous resume batch was stopped. Finished resumes were kept."
+              : "The previous resume batch stopped when the app closed. Finished resumes were kept."}
           </p>
           <p className="text-foreground-muted">
-            Still need resumes:{" "}
-            {interruptedJobs
-              .map((item) => `${item.title} at ${item.company}`)
-              .join("; ")}
-            .
+            {interruptedJobs.length === interruptedJobIds.length
+              ? `Still need resumes: ${interruptedJobs.map((item) => `${item.title} at ${item.company}`).join("; ")}.`
+              : `${interruptedJobIds.length} unfinished ${interruptedJobIds.length === 1 ? "resume is" : "resumes are"} saved in this batch.`}
           </p>
           <Button
-            onClick={() =>
-              onPrepareTailoredDrafts(interruptedJobs.map((item) => item.jobId))
-            }
+            onClick={() => onPrepareTailoredDrafts(interruptedJobIds)}
             size="sm"
             type="button"
           >

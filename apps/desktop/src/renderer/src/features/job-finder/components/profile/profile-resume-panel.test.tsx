@@ -265,7 +265,7 @@ describe("ProfileResumePanel", () => {
 
     const refreshButton = [
       ...(container?.querySelectorAll("button") ?? []),
-    ].find((button) => button.textContent?.trim() === "Refresh from resume");
+    ].find((button) => button.textContent?.trim() === "Read my resume again");
     expect(refreshButton).toBeDefined();
     expect(refreshButton?.hasAttribute("disabled")).toBe(false);
     expect(container?.textContent).toContain("Ready to refresh");
@@ -329,7 +329,7 @@ describe("ProfileResumePanel", () => {
 
     const buttons = [...(container?.querySelectorAll("button") ?? [])];
     expect(buttons.map((button) => button.textContent?.trim())).toEqual(
-      expect.arrayContaining(["Replace resume", "Refresh from resume"]),
+      expect.arrayContaining(["Replace resume", "Read my resume again"]),
     );
     expect(buttons.every((button) => button.hasAttribute("disabled"))).toBe(
       true,

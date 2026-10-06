@@ -41,3 +41,11 @@ it("does not expose mutable state or keep work after the renderer reloads", () =
   clearUiResumeBatch();
   expect(readUiResumeBatch()).toBeNull();
 });
+
+it("an interrupted receipt does not keep the old UI scheduler locked", () => {
+  syncUiResumeBatch({ ...state, running: false, activeJobIds: [] });
+  expect(readUiResumeBatch()).toBeNull();
+  expect(() =>
+    syncUiResumeBatch({ ...state, id: "continued", running: true }),
+  ).not.toThrow();
+});

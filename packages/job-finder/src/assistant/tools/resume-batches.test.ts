@@ -381,3 +381,38 @@ it("language-only assistant action saves a translated existing draft without reg
   expect(ctx.regenerate).not.toHaveBeenCalled();
   expect(setLevel).not.toHaveBeenCalled();
 });
+
+it("R3-183 persists assistant requests before dispatch and keeps cancelled unfinished jobs recoverable", async () => {
+  const ctx = await world(3);
+  const gate = hold();
+  const save = vi.spyOn(ctx.service, "saveResumeBatchCheckpoint");
+  ctx.regenerate.mockImplementation(async (id) => {
+    await gate.promise;
+    return ctx.written(id);
+  });
+  await generateResumesTool.execute(
+    { jobIds: ctx.ids, regenerate: true, level: "light", language: "German" },
+    ctx,
+  );
+  await vi.waitFor(() => expect(ctx.regenerate).toHaveBeenCalledTimes(2));
+  expect(save.mock.calls[0]![0]).toMatchObject({
+    done: false,
+    requests: ctx.ids.map((jobId) => ({
+      jobId,
+      level: "light",
+      language: "German",
+      regenerate: true,
+    })),
+  });
+  cancelBackgroundBatch(ctx.runs[0]!.id);
+  gate.resolve();
+  await finished(ctx.runs[0]!);
+  await vi.waitFor(() =>
+    expect(save.mock.calls.at(-1)![0]).toMatchObject({
+      done: false,
+      stopRequested: true,
+      completedJobIds: ctx.ids.slice(0, 2),
+    }),
+  );
+  expect(save.mock.calls.at(-1)![0].durationsMs).toHaveLength(2);
+});

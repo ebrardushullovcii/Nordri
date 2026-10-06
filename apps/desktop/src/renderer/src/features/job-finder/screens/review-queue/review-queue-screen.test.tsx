@@ -953,3 +953,65 @@ it("lists unfinished jobs after restart and continues only their batch", () => {
   fireEvent.click(screen.getByRole("button", { name: "Continue batch" }));
   expect(onPrepareTailoredDrafts).toHaveBeenCalledWith(["unfinished"]);
 });
+
+it("does not call a live assistant queue interrupted, and recovers unfinished existing drafts", () => {
+  const item = createEligibleItem("rewrite");
+  const checkpoint = {
+    id: "assistant",
+    jobIds: [item.jobId],
+    activeJobIds: [],
+    completedJobIds: [],
+    done: false,
+    stopRequested: false,
+    running: true,
+    requests: [{ jobId: item.jobId, regenerate: true, language: "German" }],
+  };
+  renderScreen({ queue: [item], resumeBatchCheckpoint: checkpoint });
+  expect(screen.queryByRole("button", { name: "Continue batch" })).toBeNull();
+  cleanup();
+  renderScreen({
+    queue: [
+      { ...item, assetStatus: "ready", resumeReview: { status: "draft" } },
+    ],
+    resumeBatchCheckpoint: { ...checkpoint, running: false },
+  });
+  expect(screen.getByRole("button", { name: "Continue batch" })).toBeTruthy();
+});
+
+it("R3-184 shows measured time left only after two resumes finish", () => {
+  const preparation = {
+    ...createIdleDraftPreparation(),
+    status: "running" as const,
+    totalCount: 8,
+    completedCount: 2,
+    attemptedCount: 4,
+    durationsMs: [120000, 180000],
+  };
+  renderScreen({
+    queue: [createEligibleItem("one")],
+    draftPreparation: preparation,
+  });
+  expect(screen.getByText(/about 8 min left/)).toBeTruthy();
+});
+
+it("offers the saved batch when its jobs are outside the current campaign", () => {
+  const onPrepareTailoredDrafts = vi.fn();
+  renderScreen({
+    queue: [createEligibleItem("another_campaign")],
+    resumeBatchCheckpoint: {
+      id: "saved_batch",
+      jobIds: ["elsewhere"],
+      activeJobIds: [],
+      completedJobIds: [],
+      done: false,
+      stopRequested: false,
+      running: false,
+    },
+    onPrepareTailoredDrafts,
+  });
+  expect(
+    screen.getByText("1 unfinished resume is saved in this batch."),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Continue batch" }));
+  expect(onPrepareTailoredDrafts).toHaveBeenCalledWith(["elsewhere"]);
+});

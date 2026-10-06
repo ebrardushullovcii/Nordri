@@ -1317,12 +1317,23 @@ export function createPrimaryPageActions(
     const preparedJobIds = collectPreparedApplicationJobIds(
       workspace.applicationRecords,
     );
-    const queue = getCampaignReviewQueue().filter(
+    const checkpoint = workspace.intelligence?.resumeBatchCheckpoint;
+    const continuing =
+      !!selectedJobIds &&
+      !!checkpoint &&
+      !checkpoint.done &&
+      !checkpoint.running &&
+      [...selectedJobIds].every((id) => checkpoint.jobIds.includes(id));
+    const queue = (
+      continuing ? workspace.reviewQueue : getCampaignReviewQueue()
+    ).filter(
       (item) =>
         !preparedJobIds.has(item.jobId) &&
         (!selectedJobIds || selectedJobIds.has(item.jobId)),
     );
-    const candidates = getTailoredDraftPreparationCandidates(queue);
+    const candidates = continuing
+      ? queue.filter((item) => !checkpoint.completedJobIds.includes(item.jobId))
+      : getTailoredDraftPreparationCandidates(queue);
     if (candidates.length === 0) {
       return;
     }
@@ -1336,6 +1347,18 @@ export function createPrimaryPageActions(
       completedJobIds: [],
       done: false,
       stopRequested: false,
+      running: true,
+      durationsMs: continuing ? [...(checkpoint.durationsMs ?? [])] : [],
+      ...(continuing
+        ? {
+            requests: checkpoint.requests ?? [],
+            resumedBatchIds: (
+              workspace.intelligence.resumeBatchCheckpoints ?? [checkpoint]
+            )
+              .filter((entry) => !entry.done)
+              .map((entry) => entry.id),
+          }
+        : {}),
     };
     uiResumeBatch = batch;
     const syncBatch = async () => {
@@ -1363,6 +1386,7 @@ export function createPrimaryPageActions(
           prepareTailoredDraftBatch(
             candidates,
             async (jobId) => {
+              let startedAt: number | null = null;
               try {
                 batch.activeJobIds.push(jobId);
                 await syncBatch();
@@ -1373,19 +1397,44 @@ export function createPrimaryPageActions(
                   tailoredDraftPreparationDisposedRef.current
                 )
                   return null;
+                const request = batch.requests?.findLast(
+                  (entry) => entry.jobId === jobId,
+                );
+                if (request?.level) {
+                  await actions.setJobResumeApplicationMode(
+                    jobId,
+                    "tailored_per_job",
+                    request.level === "light"
+                      ? "conservative"
+                      : request.level === "tailored"
+                        ? "balanced"
+                        : "aggressive",
+                  );
+                }
                 const current = latestWorkspaceRef.current ?? workspace;
                 if (
                   current.reviewQueue.find((item) => item.jobId === jobId)
-                    ?.resumeApplicationMode === "original_resume"
+                    ?.resumeApplicationMode === "original_resume" &&
+                  !request?.level
                 ) {
                   completedJobIds.add(jobId);
                   batch.completedJobIds.push(jobId);
                   return "original";
                 }
+                startedAt = Date.now();
                 const generated = await withPendingScope(
                   jobFinderPendingActions.resumeJob(jobId),
-                  () => actions.generateResume(jobId),
+                  () =>
+                    continuing &&
+                    current.resumeDrafts.some((draft) => draft.jobId === jobId)
+                      ? actions.regenerateResumeDraft(jobId)
+                      : actions.generateResume(jobId),
                 );
+                const failed = generated?.tailoredAssets?.find(
+                  (entry) => entry.jobId === jobId,
+                )?.failureMessage;
+                if (failed) return false;
+                batch.durationsMs!.push(Math.max(0, Date.now() - startedAt));
                 completedJobIds.add(jobId);
                 batch.completedJobIds.push(jobId);
                 if (
@@ -1418,6 +1467,7 @@ export function createPrimaryPageActions(
               }
             },
             {
+              includeExisting: continuing,
               onProgress: ({
                 completedCount,
                 fallbackCount,
@@ -1432,6 +1482,7 @@ export function createPrimaryPageActions(
                 setTailoredDraftPreparation((current) => ({
                   ...current,
                   attemptedCount: currentIndex,
+                  durationsMs: [...(batch.durationsMs ?? [])],
                   completedCount,
                   ...(fallbackCount ? { fallbackCount } : {}),
                   ...(originalChoiceCount ? { originalChoiceCount } : {}),
@@ -1520,7 +1571,11 @@ export function createPrimaryPageActions(
           }));
         })
         .finally(async () => {
-          batch.done = true;
+          batch.running = false;
+          batch.done =
+            !batch.stopRequested &&
+            !tailoredDraftPreparationStopRequested &&
+            !tailoredDraftPreparationDisposedRef.current;
           batch.activeJobIds = [];
           await syncBatch().catch(() => undefined);
           isTailoredDraftPreparationRunActive = false;

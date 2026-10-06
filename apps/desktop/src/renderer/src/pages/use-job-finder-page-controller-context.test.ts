@@ -4,7 +4,10 @@ import {
   syncUiResumeBatch,
 } from "../../../main/services/assistant/ui-resume-batch";
 import type { AssistantResumeBatchState } from "@nordri/contracts";
-import { ApplicationCrmBulkStageMutationInputSchema } from "@nordri/contracts";
+import {
+  ApplicationCrmBulkStageMutationInputSchema,
+  JobFinderIntelligenceStateSchema,
+} from "@nordri/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MutableRefObject, SetStateAction } from "react";
 import type {
@@ -1613,5 +1616,64 @@ describe("tracker bulk notices and reset completion", () => {
       "Your workspace was not deleted.",
     );
     expect(resetWorkspace).toHaveBeenCalledOnce();
+  });
+});
+
+it("R3-183 continues an interrupted existing rewrite with its saved level and language request", async () => {
+  const workspace = createBatchWorkspace([
+    createReviewQueueItem("old", {
+      assetStatus: "ready",
+      resumeReview: { status: "draft" },
+    }),
+  ]);
+  workspace.resumeDrafts = [
+    { jobId: "old" },
+  ] as JobFinderWorkspaceSnapshot["resumeDrafts"];
+  workspace.intelligence = JobFinderIntelligenceStateSchema.parse({
+    resumeBatchCheckpoint: {
+      id: "assistant_batch",
+      jobIds: ["old"],
+      activeJobIds: ["old"],
+      completedJobIds: [],
+      done: false,
+      stopRequested: false,
+      running: false,
+      requests: [
+        { jobId: "old", regenerate: true, level: "light", language: "German" },
+      ],
+      durationsMs: [150000, 180000],
+    },
+  });
+  const regenerateResumeDraft = vi.fn().mockResolvedValue(workspace);
+  const setJobResumeApplicationMode = vi.fn().mockResolvedValue(workspace);
+  const generateResume = vi.fn();
+  const sync = vi.fn((batch: AssistantResumeBatchState) =>
+    Promise.resolve(syncUiResumeBatch(batch)),
+  );
+  window.nordri.assistant.syncResumeBatch = sync;
+  const run = buildContext({
+    workspace,
+    actions: {
+      regenerateResumeDraft,
+      setJobResumeApplicationMode,
+      generateResume,
+    },
+  });
+  run.context.onPrepareTailoredDrafts(["old"]);
+  await vi.waitFor(() =>
+    expect(run.getTailoredDraftPreparation().status).toBe("completed"),
+  );
+  expect(regenerateResumeDraft).toHaveBeenCalledWith("old");
+  expect(generateResume).not.toHaveBeenCalled();
+  expect(setJobResumeApplicationMode).toHaveBeenCalledWith(
+    "old",
+    "tailored_per_job",
+    "conservative",
+  );
+  expect(sync.mock.calls[0]![0]).toMatchObject({
+    resumedBatchIds: ["assistant_batch"],
+    requests: [
+      { jobId: "old", language: "German", level: "light", regenerate: true },
+    ],
   });
 });

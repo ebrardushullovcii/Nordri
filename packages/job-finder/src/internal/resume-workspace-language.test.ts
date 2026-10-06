@@ -336,3 +336,35 @@ test("translated imported lines and keywords keep their original field sources",
     buildResumeCoverageComparison({ profile, draft: again }).addedKeywords,
   ).toEqual([]);
 });
+
+test("R3-183 a continued generation reads its persisted language request", async () => {
+  const seed = createSeed();
+  const base = createAiClient();
+  const createResumeDraft = vi.fn<JobFinderAiClient["createResumeDraft"]>(
+    async (input) => {
+      expect(input.language).toBe("German");
+      return {
+        ...(await base.createResumeDraft(input)),
+        languagePresentation: { language: "German", translations: [] },
+      };
+    },
+  );
+  const { workspaceService } = createWorkspaceServiceHarness({
+    seed,
+    aiClient: { ...base, createResumeDraft },
+  });
+  await workspaceService.saveResumeBatchCheckpoint({
+    id: "continued",
+    jobIds: ["job_ready"],
+    activeJobIds: [],
+    completedJobIds: [],
+    done: false,
+    stopRequested: false,
+    running: true,
+    resumedBatchIds: ["interrupted"],
+    requests: [{ jobId: "job_ready", language: "German", regenerate: true }],
+  });
+  await workspaceService.generateResume("job_ready");
+  await workspaceService.regenerateResumeDraft("job_ready");
+  expect(createResumeDraft).toHaveBeenCalledTimes(2);
+});

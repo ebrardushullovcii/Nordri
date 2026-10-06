@@ -1,3 +1,4 @@
+import { resumeComparisonNeedsRefresh } from "@nordri/contracts";
 import {
   resumeFactIsCovered,
   resumeSentences,
@@ -2259,8 +2260,12 @@ export function buildResumeCoverageComparison(input: {
         issue.category === "duplicate_bullet" ||
         issue.category === "duplicate_section_content",
     ).length,
-    addedKeywords: compareResumeTextSets(tailoredKeywords, originalKeywords),
-    removedKeywords: compareResumeTextSets(originalKeywords, tailoredKeywords),
+    addedKeywords: resumeComparisonNeedsRefresh(input.draft)
+      ? []
+      : compareResumeTextSets(tailoredKeywords, originalKeywords),
+    removedKeywords: resumeComparisonNeedsRefresh(input.draft)
+      ? []
+      : compareResumeTextSets(originalKeywords, tailoredKeywords),
     pageImpact:
       pageCount === null
         ? "unknown"

@@ -592,11 +592,38 @@ export const generateResumesTool = defineTool({
       completedJobIds: [],
       failures: [],
       skipped: [...skipped],
+      durationsMs: [],
     };
     const predecessors = [...backgroundBatches.values()].filter(
       (previous) => !previous.done,
     );
     backgroundBatches.set(runId, batch);
+    const persist = () =>
+      service.saveResumeBatchCheckpoint({
+        id: runId,
+        jobIds,
+        activeJobIds: [...batch.activeJobIds],
+        completedJobIds: [
+          ...batch.completedJobIds,
+          ...batch.skipped.map((entry) => entry.jobId),
+        ],
+        done: batch.done && !batch.cancelled,
+        stopRequested: batch.cancelled,
+        requests: jobIds.map((jobId) => ({
+          jobId,
+          regenerate: input.regenerate,
+          ...(input.level ? { level: input.level } : {}),
+          ...(input.language !== undefined ? { language: input.language } : {}),
+        })),
+        durationsMs: [...batch.durationsMs],
+        running: !batch.done,
+      });
+    try {
+      await persist();
+    } catch (error) {
+      backgroundBatches.delete(runId);
+      throw error;
+    }
     const queue = [...jobIds];
     const cancel = () => {
       batch.cancelled = true;
@@ -618,6 +645,7 @@ export const generateResumesTool = defineTool({
     const worker = async () => {
       while (queue.length > 0 && !batch.cancelled) {
         const jobId = queue.shift()!;
+        let startedAt: number | null = null;
         try {
           // Earlier drafts may take minutes; dispatch under the latest saved
           // settings and application standing rather than the initial snapshot.
@@ -660,6 +688,8 @@ export const generateResumesTool = defineTool({
             continue;
           }
           batch.activeJobIds.add(jobId);
+          await persist();
+          startedAt = Date.now();
           if (input.level) {
             await setResumeLevelTool.execute(
               { jobIds: [jobId], level: input.level },
@@ -710,21 +740,31 @@ export const generateResumesTool = defineTool({
             );
           }
           batch.completedJobIds.push(jobId);
+          batch.durationsMs.push(Math.max(0, Date.now() - startedAt));
         } catch (error) {
           batch.failures.push(
             `${jobId}: ${error instanceof Error ? error.message.slice(0, 200) : "failed"}`,
           );
         } finally {
           batch.activeJobIds.delete(jobId);
+          await persist();
           ports.publishWorkspaceUpdate();
         }
       }
     };
-    void Promise.all([worker(), worker()]).finally(() => {
-      batch.done = true;
-      session.signal.removeEventListener("abort", cancel);
-      ports.publishWorkspaceUpdate();
-    });
+    void Promise.all([worker(), worker()])
+      .finally(async () => {
+        batch.done = true;
+        session.signal.removeEventListener("abort", cancel);
+        await persist();
+        ports.publishWorkspaceUpdate();
+      })
+      .catch((error: unknown) => {
+        batch.cancelled = true;
+        batch.done = true;
+        console.warn("Resume batch checkpoint could not be saved.", error);
+        ports.publishWorkspaceUpdate();
+      });
     return {
       summary: `Started writing ${plural(jobIds.length, "resume")} in the background (run ${runId}).${skipped.length ? ` ${describeResumeBatchSkips(skipped)}` : ""} This conversation continues when they are done.`,
       data: { runId, jobIds, skipped },
@@ -746,8 +786,9 @@ interface BackgroundResumeBatch {
   completedJobIds: string[];
   failures: string[];
   skipped: ResumeBatchSkip[];
+  durationsMs: number[];
 }
-/** Batches survive the originating turn, but never an app restart. */
+/** Live scheduling state; durable checkpoints are saved by the service. */
 const backgroundBatches = new Map<string, BackgroundResumeBatch>();
 
 function resumeBatchSkipReason(

@@ -288,3 +288,31 @@ test("every current-role suggestion names its entry and displayed dates", () => 
     expect(issue.message).toContain("2025 – Present");
   }
 });
+
+test("older translated fields without source links do not claim existing languages were added", () => {
+  const seed = createSeed();
+  const profile = {
+    ...seed.profile,
+    spokenLanguages: [
+      {
+        id: "pl",
+        language: "Polish",
+        proficiency: "C1",
+        interviewPreference: false,
+        notes: null,
+      },
+    ],
+  };
+  const draft = seedResumeDraft({
+    profile,
+    job: seed.savedJobs[0]!,
+    templateId: seed.settings.resumeTemplateId,
+  });
+  draft.writtenLanguage = "German";
+  const skills = draft.sections.find((section) => section.kind === "skills")!;
+  skills.text = "Polnisch C1";
+  skills.sourceRefs = [];
+  expect(
+    buildResumeCoverageComparison({ profile, draft }).addedKeywords,
+  ).toEqual([]);
+});
