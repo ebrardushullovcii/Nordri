@@ -102,3 +102,24 @@ describe("judgeJobFitsInBatches", () => {
     expect(judgments.size).toBe(0);
   });
 });
+
+test("reports settled fit checks while other batches still wait", async () => {
+  const seed = createSeed();
+  const progress: number[] = [];
+  await judgeJobFitsInBatches({
+    aiClient: {
+      judgeJobFits: (input) =>
+        Promise.resolve(input.jobs.map(({ jobId }) => verdictFor(jobId))),
+    },
+    profile: seed.profile,
+    searchPreferences: seed.searchPreferences,
+    jobs: jobs(42),
+    contextFingerprint: "ctx",
+    concurrency: 1,
+    onProgress: (completed, total) => {
+      expect(total).toBe(42);
+      progress.push(completed);
+    },
+  });
+  expect(progress).toEqual([20, 40, 42]);
+});

@@ -484,7 +484,15 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
           >
             {presentation.statusLine}
           </h3>
-          {presentation.reasonSentence ? (
+          {presentation.reasonSentence &&
+          !(
+            visibleApplyResult?.state === "submitted" &&
+            visibleApplyResult.privacyReceipt?.submissionOutcome?.outcome ===
+              "submitted" &&
+            visibleApplyResult.privacyReceipt.submissionOutcome.evidence
+              .length > 0 &&
+            !props.personSendReceiptSummary
+          ) ? (
             <p
               className="text-(length:--text-small) leading-6 text-foreground-soft"
               data-testid="applications-recovery-reason"
@@ -492,14 +500,14 @@ export function ApplicationsDetailPanelRecoveryActionsSection(props: {
               {presentation.reasonSentence}
             </p>
           ) : null}
-          {visibleApplyResult?.state === "submitted" &&
+          {!props.personSendReceiptSummary &&
+          visibleApplyResult?.state === "submitted" &&
           visibleApplyResult.privacyReceipt?.submissionOutcome?.outcome ===
             "submitted" ? (
             <div className="grid min-w-0 gap-1" data-site-confirmation>
               {visibleApplyResult.privacyReceipt.submissionOutcome.evidence
                 .filter(
                   (entry, index, entries) =>
-                    entry.summary !== presentation.reasonSentence &&
                     entries.findIndex(
                       (other) => other.summary === entry.summary,
                     ) === index,

@@ -1235,6 +1235,7 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
           />
           {!props.originalResumeRoute ? (
             <ResumeWorkspaceLanguagePicker
+              key={props.jobId}
               language={
                 languageRequest
                   ? languageRequest.language
@@ -1489,7 +1490,15 @@ export function ResumeWorkspaceScreen(props: ResumeWorkspaceScreenProps) {
               />
             </ResumeWorkspaceContextDisclosure>
           }
-          studioStatusMessage={rewriteFailed ? "" : studioStatusMessage}
+          studioStatusMessage={
+            props.workspace.listingCheckState === "checking"
+              ? "Checking listing fit in the background. You can edit your resume now."
+              : props.workspace.listingCheckState === "failed"
+                ? "Listing fit could not be checked. Your saved resume is available."
+                : rewriteFailed
+                  ? ""
+                  : studioStatusMessage
+          }
           templatePanel={templatePanel}
           validationIssues={visibleValidationIssues}
         />

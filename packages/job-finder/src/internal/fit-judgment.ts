@@ -96,6 +96,7 @@ export async function judgeJobFitsInBatches<
   batchSize?: number;
   concurrency?: number;
   retryDelayMs?: number;
+  onProgress?: (completed: number, total: number) => void;
 }): Promise<Map<string, FitJudgment>> {
   const judgments = new Map<string, FitJudgment>();
   const judgeJobFits = input.aiClient.judgeJobFits?.bind(input.aiClient);
@@ -152,13 +153,18 @@ export async function judgeJobFitsInBatches<
     }
   };
 
+  let completed = 0;
   let next = 0;
   const worker = async (): Promise<void> => {
     while (next < batches.length) {
       input.signal?.throwIfAborted();
       const batch = batches[next];
       next += 1;
-      if (batch) await judgeBatch(batch);
+      if (batch) {
+        await judgeBatch(batch);
+        completed += batch.length;
+        input.onProgress?.(completed, input.jobs.length);
+      }
     }
   };
   await Promise.all(

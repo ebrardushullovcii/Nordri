@@ -90,7 +90,13 @@ export function createMatchAssessmentContextFingerprint(
     `match_context_v4_logic${MATCH_ASSESSMENT_LOGIC_REVISION}`,
     {
       profile,
-      searchPreferences,
+      searchPreferences: {
+        ...searchPreferences,
+        discovery: {
+          remoteCountsAsAnyLocation:
+            searchPreferences.discovery.remoteCountsAsAnyLocation !== false,
+        },
+      },
     },
   );
 }

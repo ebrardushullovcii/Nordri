@@ -940,3 +940,29 @@ it("keeps an omitted page read explicitly partial even when the model returns a 
     "partial listing text",
   );
 });
+
+it("publishes listing progress after every read including a failure", async () => {
+  const jobs = [
+    cardOnlyJob(),
+    cardOnlyJob({
+      id: "second",
+      canonicalUrl: "https://jobs.example.test/second",
+    }),
+  ];
+  const progress: number[] = [];
+  await enrichSavedJobListingDetails({
+    jobs,
+    maxJobs: 2,
+    concurrency: 1,
+    fetchHtml: (url) =>
+      Promise.resolve({ status: 404, html: "", finalUrl: url }),
+    assess: (posting) =>
+      jobs.find((job) => job.canonicalUrl === posting.canonicalUrl)!
+        .matchAssessment,
+    onProgress: (completed, total) => {
+      expect(total).toBe(2);
+      progress.push(completed);
+    },
+  });
+  expect(progress).toEqual([1, 2]);
+});

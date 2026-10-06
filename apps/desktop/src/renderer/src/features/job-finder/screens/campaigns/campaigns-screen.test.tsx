@@ -901,7 +901,7 @@ describe("CampaignsScreen", () => {
       .parentElement as HTMLElement;
     fireEvent.click(screen.getByText("What the last run found"));
     expect(within(digest).getByText("3")).toBeTruthy();
-    expect(within(digest).getByText("9")).toBeTruthy();
+    expect(within(digest).queryByText("Seen before")).toBeNull();
     expect(within(digest).getByText("4")).toBeTruthy();
     expect(screen.getByText(/The source stopped responding/)).toBeTruthy();
   });
@@ -2112,9 +2112,7 @@ describe("a finished run reports one set of numbers", () => {
         "50 found · 43 new · 15 kept · 7 already here · 15-job plan limit reached",
       ),
     ).toBeTruthy();
-    const seenBeforeTile = within(digest).getByText("Seen before")
-      .parentElement as HTMLElement;
-    expect(seenBeforeTile.textContent).toContain("7");
+    expect(within(digest).queryByText("Seen before")).toBeNull();
   });
 
   it("does not count a failed source as completed and names its reason", () => {

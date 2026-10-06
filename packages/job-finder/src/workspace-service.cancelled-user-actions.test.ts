@@ -500,7 +500,7 @@ test("Undo of withdrawal replaces the preparation summary without reopening the 
   });
 });
 
-test("withdrawal recovery preserves a later result and an already sent tracker stage", async () => {
+test("withdrawal recovery updates a sent tracker stage and preserves a later result", async () => {
   const { repository, workspaceService } = harness();
   await workspaceService.mutateApplicationCrm({
     applicationRecordId: "application_a",
@@ -525,7 +525,12 @@ test("withdrawal recovery preserves a later result and an already sent tracker s
     (await repository.listApplyJobResults()).find(
       (entry) => entry.id === "result_a",
     )?.summary,
-  ).toBe("You marked this application withdrawn.");
+  ).toBe("Withdrawal undone. Tracked as sent.");
+  expect(
+    (await repository.listApplicationRecords()).find(
+      (entry) => entry.id === record.id,
+    )?.nextActionLabel,
+  ).toBeNull();
   await repository.upsertApplicationRecord({
     ...record,
     crm: { ...record.crm!, stage: "reviewing" },
@@ -546,7 +551,7 @@ test("withdrawal recovery preserves a later result and an already sent tracker s
     (await repository.listApplyJobResults()).find(
       (entry) => entry.id === "result_a",
     )?.summary,
-  ).toBe("You marked this application withdrawn.");
+  ).toBe("Withdrawal undone. Tracked as sent.");
   expect(
     (await repository.listApplyJobResults()).find(
       (entry) => entry.id === "later_result",

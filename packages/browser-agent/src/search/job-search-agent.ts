@@ -261,6 +261,7 @@ export async function runJobSearchAgent(
   const outsideCatalog = new Set<string>();
   let outsideCatalogAttempts = 0;
   let duplicateListings = 0;
+  const duplicateKeys = new Set<string>();
   const duplicateListingPageUrls: string[] = [];
   const unreadableListings: Array<{
     title: string;
@@ -611,6 +612,17 @@ export async function runJobSearchAgent(
           }),
         );
         if (posting) posting.producingPageUrl = observation.url;
+        // A saved identity is a duplicate even when a later page cannot
+        // supply its own posting link. Do not count it as rejected as well.
+        if (posting && known.has(jobKey(posting))) {
+          const key = jobKey(posting);
+          if (!duplicateKeys.has(key)) {
+            duplicateKeys.add(key);
+            duplicateListings += 1;
+            duplicateListingPageUrls.push(observation.url);
+          }
+          continue;
+        }
         const notAPosting = posting
           ? describeNonPosting(posting, observation.url, pageType)
           : null;
@@ -631,10 +643,15 @@ export async function runJobSearchAgent(
             category: "unreadable",
             reason: "The listing had no usable title or address.",
           });
-        } else if (known.has(jobKey(posting))) {
-          duplicateListings += 1;
-          duplicateListingPageUrls.push(observation.url);
-        } else if (keep(posting)) added.push(posting);
+        } else if (keep(posting)) {
+          // A later read can recover an identity rejected on an earlier page.
+          for (let index = unreadableListings.length - 1; index >= 0; index -= 1) {
+            if (unreadableListings[index]?.url === posting.canonicalUrl) {
+              unreadableListings.splice(index, 1);
+            }
+          }
+          added.push(posting);
+        }
       }
       if (added.length > 0) await checkpoint();
       emit(

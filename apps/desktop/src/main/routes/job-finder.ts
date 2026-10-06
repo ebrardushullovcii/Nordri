@@ -2143,11 +2143,11 @@ export function registerJobFinderRouteHandlers(
 
   ipcMain.handle(
     "job-finder:queue-job-for-review",
-    async (_event, payload: unknown) => {
+    async (event, payload: unknown) => {
       const { jobId } = JobFinderJobActionInputSchema.parse(payload);
       const jobFinderWorkspaceService = await getJobFinderWorkspaceService();
       const snapshot = await jobFinderWorkspaceService.queueJobForReview(jobId);
-
+      publishJobFinderWorkspaceUpdate(event.sender);
       return workspaceMutationResponse(snapshot);
     },
   );

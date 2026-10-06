@@ -300,6 +300,14 @@ export function buildCanonicalAwareProfilePayload(input: {
   latestResumeImportReviewCandidates: readonly ResumeImportFieldCandidateSummary[];
   profile: CandidateProfile;
 }) {
+  // Saving only sources must preserve the profile's exact saved values.
+  // Round-tripping untouched editor fields can normalize resume inputs.
+  const hasDirtyField = (value: unknown): boolean =>
+    value === true ||
+    (typeof value === "object" &&
+      value !== null &&
+      Object.values(value).some(hasDirtyField));
+  if (!hasDirtyField(input.dirtyFields)) return { payload: input.profile };
   const mergeOutcome = mergeDirtyEditorValues(
     createProfileEditorValues(
       input.profile,

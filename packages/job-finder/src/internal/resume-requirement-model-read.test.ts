@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { createWorkspaceServiceHarness } from "../workspace-service.test-harness";
 import { createAiClient } from "../workspace-service.test-runtimes";
 import { createSeed } from "../workspace-service.test-fixtures";
-it("checks semantic requirement evidence with one model call before Resume Studio shows it", async () => {
+it("opens Resume Studio while one model check supplies semantic requirement evidence", async () => {
   const seed = createSeed();
   const job = seed.savedJobs[0]!;
   job.matchAssessment = {
@@ -37,10 +37,16 @@ it("checks semantic requirement evidence with one model call before Resume Studi
   });
   const workspace = await workspaceService.getResumeWorkspace(job.id);
   expect(assessJobFit).toHaveBeenCalledTimes(1);
-  expect(workspace.job.matchAssessment.requirementsSource).toBe("model");
-  expect(workspace.job.matchAssessment.requirements[0]?.status).toBe(
-    "supported",
-  );
+  expect(workspace.listingCheckState).toBe("checking");
+  await vi.waitFor(async () => {
+    expect(
+      (await repository.listSavedJobs()).find((saved) => saved.id === job.id)
+        ?.matchAssessment.requirementsSource,
+    ).toBe("model");
+  });
+  const checked = await workspaceService.getResumeWorkspace(job.id);
+  expect(checked.job.matchAssessment.requirementsSource).toBe("model");
+  expect(checked.job.matchAssessment.requirements[0]?.status).toBe("supported");
   await workspaceService.getResumeWorkspace(job.id);
   expect(assessJobFit).toHaveBeenCalledTimes(1);
   expect(
@@ -66,7 +72,8 @@ it("checks semantic requirement evidence with one model call before Resume Studi
   await workspaceService.selectCampaign(next.id);
   await workspaceService.getResumeWorkspace(job.id);
   expect(assessJobFit).toHaveBeenCalledTimes(2);
-  expect(assessJobFit.mock.calls[1]?.[0].searchPreferences.targetRoles).toEqual(
-    ["Warehouse lead"],
-  );
+  const nextInput: unknown = assessJobFit.mock.calls[1]?.[0];
+  expect(nextInput).toHaveProperty("searchPreferences.targetRoles", [
+    "Warehouse lead",
+  ]);
 });

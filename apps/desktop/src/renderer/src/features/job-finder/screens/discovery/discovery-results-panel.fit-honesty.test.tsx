@@ -215,3 +215,11 @@ describe("Find jobs fit honesty", () => {
     ).toBe("78% fit");
   });
 });
+
+it("does not show a strong recommendation beside an unjudged fit", () => {
+  const job = unboundJob();
+  job.matchAssessment.recommendation = "strong_fit";
+  renderResults([job], job);
+  expect(screen.getAllByText("Fit not assessed").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Strong fit")).toBeNull();
+});

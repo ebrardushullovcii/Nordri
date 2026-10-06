@@ -281,12 +281,16 @@ export function getRunOptions(
   );
   const seen = new Set<string>();
 
-  return runs.filter((run) => {
-    if (seen.has(run.id)) {
-      return false;
-    }
+  return runs
+    .filter((run) => {
+      if (seen.has(run.id)) {
+        return false;
+      }
 
-    seen.add(run.id);
-    return true;
-  });
+      seen.add(run.id);
+      return true;
+    })
+    .sort(
+      (left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt),
+    );
 }

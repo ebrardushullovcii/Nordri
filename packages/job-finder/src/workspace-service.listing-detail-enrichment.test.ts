@@ -144,11 +144,14 @@ describe("listing detail enrichment inside a discovery run", () => {
     const run = discoveryState.recentRuns.at(-1);
     expect(run?.summary.outcome).toBe("completed");
     const messages = (run?.activity ?? []).map((event) => event.message);
-    expect(
-      messages.some((message) =>
-        /^Reading listing details for \d+ jobs?$/u.test(message),
-      ),
-    ).toBe(true);
+    const progress = (run?.activity ?? [])
+      .map((event) => event.progress)
+      .filter((entry) => entry?.phase === "reading_listings");
+    expect(progress.map((entry) => entry?.completed)).toEqual([
+      0,
+      ...Array.from({ length: fetched.length }, (_, index) => index + 1),
+    ]);
+    expect(progress.every((entry) => entry!.total <= 60)).toBe(true);
     expect(
       messages.some((message) =>
         /^Read \d+ of \d+ listing pages?/u.test(message),

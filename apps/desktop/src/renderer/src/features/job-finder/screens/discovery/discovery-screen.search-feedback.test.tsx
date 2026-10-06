@@ -70,8 +70,8 @@ vi.mock("./discovery-filters-panel", () => ({
   ),
 }));
 vi.mock("./discovery-results-panel", () => ({
-  DiscoveryResultsPanel: () => (
-    <section aria-label="Job results">Job results</section>
+  DiscoveryResultsPanel: ({ liveStatusLine }: { liveStatusLine?: string }) => (
+    <section aria-label="Job results">Job results {liveStatusLine}</section>
   ),
 }));
 
@@ -764,4 +764,77 @@ describe("source-specific stale errors and provider timeouts", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search now" }));
     expect(onRunAgentDiscovery).toHaveBeenCalledOnce();
   });
+});
+
+it.each(["reading_listings", "judging_fit"] as const)(
+  "shows live %s counts after sources complete",
+  (phase) => {
+    const run = DiscoveryRunRecordSchema.parse({
+      id: "progress",
+      state: "running",
+      startedAt: "2026-10-05T10:00:00.000Z",
+      targetIds: [],
+      activity: [
+        {
+          id: "progress-event",
+          runId: "progress",
+          timestamp: "2026-10-05T10:00:30.000Z",
+          kind: "progress",
+          stage: "extraction",
+          message: "Work continues",
+          progress: { phase, completed: 12, total: 60 },
+        },
+      ],
+    });
+    renderScreen({ activeRun: run, isDiscoveryAllPending: true });
+    expect(
+      screen.getByText(
+        new RegExp(
+          `${phase === "reading_listings" ? "Reading listings" : "Judging fit"} 12 of 60`,
+        ),
+      ),
+    ).toBeTruthy();
+  },
+);
+
+it("announces jobs moved to weaker matches once when a search finishes", () => {
+  const before = createJob("one");
+  const after = {
+    ...before,
+    discoveryMethod: "json_ld",
+    matchAssessment: {
+      score: 20,
+      recommendation: "skip",
+      contextFingerprint: "context",
+      postingFingerprint: "posting",
+      judgment: {
+        source: "batch",
+        score: 20,
+        role: "conflict",
+        preferences: "conflict",
+        locationReach: "outside_area",
+      },
+    },
+  } as unknown as SavedJob;
+  const view = render(
+    <ToastProvider>
+      {buildScreen({ activeRun: runningRun, jobs: [before] })}
+    </ToastProvider>,
+  );
+  view.rerender(
+    <ToastProvider>
+      {buildScreen({ activeRun: null, jobs: [after] })}
+    </ToastProvider>,
+  );
+  expect(
+    screen.getAllByText("1 job moved to weaker matches after the fit check."),
+  ).toHaveLength(1);
+  view.rerender(
+    <ToastProvider>
+      {buildScreen({ activeRun: null, jobs: [after] })}
+    </ToastProvider>,
+  );
+  expect(
+    screen.getAllByText("1 job moved to weaker matches after the fit check."),
+  ).toHaveLength(1);
 });

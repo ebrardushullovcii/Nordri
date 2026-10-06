@@ -104,6 +104,7 @@ export interface ListingDetailEnrichmentSummary {
 }
 
 export interface EnrichSavedJobListingDetailsInput {
+  onProgress?: (completed: number, total: number) => void;
   /**
    * Read again even inside the retry back-off after a failed attempt. Used
    * when the person acts on a job right now and the body matters at once.
@@ -804,6 +805,7 @@ export async function enrichSavedJobListingDetails(
   const capped = queue.slice(0, maxJobs);
   summary.skipped += queue.length - capped.length;
 
+  let completed = 0;
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (cursor < capped.length) {
@@ -958,6 +960,11 @@ export async function enrichSavedJobListingDetails(
             describeError(error),
           ),
         );
+      } finally {
+        if (attemptedAt) {
+          completed += 1;
+          input.onProgress?.(completed, capped.length);
+        }
       }
     }
   };

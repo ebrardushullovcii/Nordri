@@ -338,7 +338,7 @@ describe("ApplicationsDetailFactStrip", () => {
     const primaryLabels = within(primaryDl)
       .getAllByRole("term")
       .map((term) => term.textContent);
-    expect(primaryLabels).toEqual(["Latest activity", "Preparation status"]);
+    expect(primaryLabels).toEqual(["Preparation status"]);
 
     fireEvent.click(screen.getByText("More about this application"));
 
@@ -523,7 +523,9 @@ describe("ApplicationsDetailFactStrip", () => {
     expect(screen.queryByText("Signal Systems")).toBeNull();
     expect(screen.queryByText("Needs action")).toBeNull();
 
-    const runCell = container.querySelector('dd[title="run_abcdefgh"]');
+    const runCell = screen
+      .getByText("Latest preparation run")
+      .parentElement?.querySelector("dd");
     expect(runCell?.textContent).toContain("Submitted");
     expect(container.textContent).not.toContain("run_");
   });
@@ -551,7 +553,9 @@ describe("ApplicationsDetailFactStrip", () => {
     expect(text).not.toMatch(/In progress/);
     expect(text).not.toMatch(/Filling/);
     expect(screen.getByText("Could not apply")).not.toBeNull();
-    const runCell = container.querySelector('dd[title="run_abcdefgh"]');
+    const runCell = screen
+      .getByText("Latest preparation run")
+      .parentElement?.querySelector("dd");
     expect(runCell?.textContent).toContain("Failed");
   });
 
@@ -1067,4 +1071,25 @@ it("labels a ready application's latest run Ready to send", () => {
   );
   expect(screen.getByText("Ready to send")).toBeTruthy();
   expect(screen.queryByText("Awaiting Review")).toBeNull();
+});
+
+it("leaves site confirmation to recovery and does not expose internal run IDs", () => {
+  const result = {
+    ...baseApplyResult,
+    state: "submitted" as const,
+    runId: "internal-run-secret",
+    summary: "Submitted",
+    detail: "The site confirmed receipt.",
+  };
+  renderStrip({
+    record: {
+      ...baseRecord,
+      status: "submitted",
+      lastActionLabel: "The site confirmed receipt.",
+    },
+    visibleApplyResult: result,
+  });
+  expect(screen.queryByText("The site confirmed receipt.")).toBeNull();
+  expect(screen.queryByText(/Run internal/)).toBeNull();
+  expect(document.body.innerHTML).not.toContain("internal-run-secret");
 });

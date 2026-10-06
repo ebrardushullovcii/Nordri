@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 
 const LANGUAGES = [
@@ -23,12 +23,22 @@ export function ResumeWorkspaceLanguagePicker(props: {
   disabled: boolean;
   onWrite: (language: string | null) => void;
 }) {
+  const [requestedLanguage, setRequestedLanguage] = useState<
+    string | null | undefined
+  >(undefined);
+  // A failed rewrite keeps the previous written draft. Keep the person's
+  // request visible until a newly written draft arrives.
+  useEffect(() => {
+    setRequestedLanguage(undefined);
+  }, [props.writtenLanguage]);
+  const language =
+    requestedLanguage === undefined ? props.language : requestedLanguage;
   const [custom, setCustom] = useState(false);
   const [customLanguage, setCustomLanguage] = useState("");
   const listingLanguage = props.listingLanguage ?? null;
   const choices =
-    props.language && !LANGUAGES.includes(props.language)
-      ? [...LANGUAGES, props.language]
+    language && !LANGUAGES.includes(language)
+      ? [...LANGUAGES, language]
       : LANGUAGES;
   return (
     // Sits between the header panel and the status strip: the same 8px gap
@@ -43,13 +53,14 @@ export function ResumeWorkspaceLanguagePicker(props: {
           aria-label="Resume language"
           className="h-8 rounded-(--radius-field) border border-(--field-border) bg-(--field) px-2.5 text-xs outline-none focus-visible:border-(--field-focus-border)"
           disabled={props.disabled}
-          value={custom ? "custom" : (props.language ?? "")}
+          value={custom ? "custom" : (language ?? "")}
           onChange={(event) => {
             if (event.target.value === "custom") {
               setCustom(true);
               return;
             }
             setCustom(false);
+            setRequestedLanguage(event.target.value || null);
             props.onWrite(event.target.value || null);
           }}
         >
@@ -78,6 +89,7 @@ export function ResumeWorkspaceLanguagePicker(props: {
           <Button
             disabled={props.disabled || !customLanguage.trim()}
             onClick={() => {
+              setRequestedLanguage(customLanguage.trim());
               props.onWrite(customLanguage.trim());
               setCustom(false);
             }}

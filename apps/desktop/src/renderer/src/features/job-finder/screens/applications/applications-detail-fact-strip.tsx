@@ -17,7 +17,6 @@ import {
 import {
   applyResultIsFieldSavePause,
   FIELD_SAVE_PAUSE_ACTIVITY,
-  formatVisibleRunId,
   getCustomerFacingApplyText,
   applyResultIsServiceWorkerBlocked,
 } from "./applications-detail-panel-helpers";
@@ -196,6 +195,9 @@ export function ApplicationsDetailFactStrip(props: {
       visibleApplyResult?.summary === selectedRecord.lastActionLabel);
   const latestActivityContent =
     isResolvedAwaitingReview ||
+    selectedRecord.status === "submitted" ||
+    Boolean(selectedRecord.personSendReceipt) ||
+    visibleApplyResult?.state === "submitted" ||
     plannedStanding !== null ||
     ["failed", "cancelled", "skipped"].includes(visibleApplyResult?.state ?? "")
       ? null
@@ -302,7 +304,6 @@ export function ApplicationsDetailFactStrip(props: {
       ).length ?? 0,
     );
     const runNote = [
-      resolvedRunId ? `Run ${formatVisibleRunId(resolvedRunId)}` : null,
       `${questionsFound} ${questionsFound === 1 ? "question" : "questions"} found`,
       `${answersFilled} ${answersFilled === 1 ? "answer" : "answers"} filled`,
       // The autosave pause already has its cause stated once above; repeating
@@ -325,7 +326,6 @@ export function ApplicationsDetailFactStrip(props: {
               : formatStatusLabel(visibleApplyResult.state),
       label: "Latest preparation run",
       ...(runNote.length > 0 ? { note: runNote } : {}),
-      ...(resolvedRunId ? { title: resolvedRunId } : {}),
     });
   }
 

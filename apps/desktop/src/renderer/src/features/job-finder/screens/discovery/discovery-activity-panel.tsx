@@ -379,19 +379,6 @@ export function DiscoveryHistoryModal(props: {
     () => new Map(props.targets.map((target) => [target.id, target.label])),
     [props.targets],
   );
-  const sourceContributions = new Map<
-    string,
-    { label: string; saved: number }
-  >();
-  for (const execution of selectedRun?.targetExecutions ?? []) {
-    for (const counts of execution.sourceCounts ?? []) {
-      const previous = sourceContributions.get(counts.sourceId);
-      sourceContributions.set(counts.sourceId, {
-        label: counts.label,
-        saved: (previous?.saved ?? 0) + counts.saved,
-      });
-    }
-  }
   const sourceHealth = useMemo(() => {
     if (!selectedRun) {
       return [];
@@ -717,7 +704,6 @@ export function DiscoveryHistoryModal(props: {
                         selectedRun.summary.changeDigest.reactivated,
                       ],
                       ["Inactive", selectedRun.summary.changeDigest.inactive],
-                      ["Known", selectedRun.summary.changeDigest.known],
                       ["Skipped", selectedRun.summary.changeDigest.skipped],
                     ];
                     // A row of zeros is not evidence. Only the states this run
@@ -766,29 +752,6 @@ export function DiscoveryHistoryModal(props: {
                     >
                       Source health
                     </h3>
-                    <p className="text-[0.82rem] leading-5 text-foreground-soft">
-                      By source:{" "}
-                      {(sourceContributions.size > 0
-                        ? [...sourceContributions.values()].map(
-                            (source) =>
-                              `${source.label} — ${source.saved} ${source.saved === 1 ? "job" : "jobs"}`,
-                          )
-                        : sourceHealth.map((source) => {
-                            const label =
-                              targetLabels.get(source.targetId) ??
-                              "Configured source";
-                            const execution = selectedRun.targetExecutions.find(
-                              (candidate) =>
-                                candidate.targetId === source.targetId,
-                            );
-                            const contributed =
-                              (execution?.jobsPersisted ?? 0) +
-                              (execution?.jobsStaged ?? 0);
-                            return `${label} — ${contributed} ${contributed === 1 ? "job" : "jobs"}`;
-                          })
-                      ).join("; ")}
-                      .
-                    </p>
                     <div className="grid gap-2 md:grid-cols-2">
                       {sourceHealth.map((source) => {
                         const sourceLabel =

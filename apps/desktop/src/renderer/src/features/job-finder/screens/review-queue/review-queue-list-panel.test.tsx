@@ -623,5 +623,30 @@ it("names all 33 missing resumes, the two starting now and the 31 waiting", () =
     screen.getByRole("button", { name: "Create 33 missing resumes" }),
   );
   expect(onPrepareTailoredDrafts).toHaveBeenCalledOnce();
-  expect(onPrepareTailoredDrafts).toHaveBeenCalledWith();
+  expect(onPrepareTailoredDrafts).toHaveBeenCalledWith(
+    Array.from({ length: 33 }, (_, index) => `missing_${index}`),
+  );
+});
+
+it("uses singular waiting copy for three missing resumes", () => {
+  renderPanel({
+    queue: [
+      createEligibleItem("1"),
+      createEligibleItem("2"),
+      createEligibleItem("3"),
+    ],
+    onPrepareTailoredDrafts: vi.fn(),
+  });
+  expect(screen.getByText(/1 waits its turn/)).toBeTruthy();
+  expect(screen.queryByText(/1 wait their turn/)).toBeNull();
+});
+it("excludes jobs offered by Continue batch from Create missing resumes", () => {
+  renderPanel({
+    queue: [createEligibleItem("1"), createEligibleItem("2")],
+    interruptedResumeJobIds: ["1", "2"],
+    onPrepareTailoredDrafts: vi.fn(),
+  });
+  expect(
+    screen.queryByRole("button", { name: /Create .*missing resumes/ }),
+  ).toBeNull();
 });

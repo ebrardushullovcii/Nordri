@@ -440,6 +440,7 @@ export function ReviewQueueScreen(props: {
           key={props.campaignId}
           campaignId={props.campaignId}
           draftPreparation={visibleDraftPreparation}
+          interruptedResumeJobIds={interruptedJobIds}
           isApplyToAllPending={applyAllPending || isApplyPending}
           applicationBatchLimit={applicationBatchLimit}
           isJobPending={isJobPending}

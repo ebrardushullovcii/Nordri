@@ -2364,6 +2364,13 @@ export type DiscoveryTargetExecution = z.infer<
 >;
 
 export const DiscoveryActivityEventSchema = z.object({
+  progress: z
+    .object({
+      phase: z.enum(["reading_listings", "judging_fit"]),
+      completed: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+    })
+    .optional(),
   id: NonEmptyStringSchema,
   runId: NonEmptyStringSchema,
   timestamp: IsoDateTimeSchema,

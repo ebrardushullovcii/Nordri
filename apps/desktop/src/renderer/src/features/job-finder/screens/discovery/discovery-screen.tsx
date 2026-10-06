@@ -621,6 +621,42 @@ export function DiscoveryScreen(props: {
   // this visit is announced: the verdict standing when the screen opens
   // describes a search that ended before, and the results already show it.
   const { showToast } = useToast();
+  const searchVisibleJobs = useRef<{ runId: string; ids: Set<string> } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (activeRun?.state === "running") {
+      if (searchVisibleJobs.current?.runId !== activeRun.id) {
+        searchVisibleJobs.current = {
+          runId: activeRun.id,
+          ids: new Set(
+            props.jobs
+              .filter((job) => !isDiscoveryAlsoFoundResult(job))
+              .map((job) => job.id),
+          ),
+        };
+      }
+      for (const job of props.jobs) {
+        if (!isDiscoveryAlsoFoundResult(job))
+          searchVisibleJobs.current.ids.add(job.id);
+      }
+      return;
+    }
+    const previous = searchVisibleJobs.current;
+    if (!previous) return;
+    searchVisibleJobs.current = null;
+    const moved = props.jobs.filter(
+      (job) => previous.ids.has(job.id) && isDiscoveryAlsoFoundResult(job),
+    ).length;
+    if (moved > 0 && !showAlsoFound)
+      showToast({
+        title: `${moved} ${moved === 1 ? "job moved" : "jobs moved"} to weaker matches after the fit check.`,
+        action: {
+          label: "Show weaker matches",
+          onClick: () => setShowAlsoFound(true),
+        },
+      });
+  }, [activeRun, props.jobs, showAlsoFound, showToast]);
   const assessedRequest = useRef<{
     id: string;
     previous: SavedJob["matchAssessment"];
@@ -717,6 +753,14 @@ export function DiscoveryScreen(props: {
     if (activeRun?.state !== "running") return null;
     const events =
       liveEvents.length > 0 ? liveEvents : (activeRun.activity ?? []);
+    const phaseProgress = events.at(-1)?.progress;
+    if (phaseProgress) {
+      const phase =
+        phaseProgress.phase === "reading_listings"
+          ? "Reading listings"
+          : "Judging fit";
+      return `${phase} ${phaseProgress.completed} of ${phaseProgress.total}.`;
+    }
     const latest = [...events].reverse().find((event) => event.targetId);
     const target = latest?.targetId
       ? searchPreferences.discovery.targets.find(

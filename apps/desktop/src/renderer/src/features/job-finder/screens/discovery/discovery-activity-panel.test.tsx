@@ -150,7 +150,7 @@ describe("DiscoveryHistoryModal", () => {
         "inspected not recorded · 3 saved · rejected not recorded · 0 duplicates · deferred not recorded · pages covered not recorded.",
       ),
     ).toBeTruthy();
-    expect(screen.getByText("By source: Greenhouse roles — 3 jobs.")).toBeTruthy();
+    expect(screen.queryByText(/By source:/)).toBeNull();
     expect(
       screen.getByText("Could not read this source").closest("details"),
     ).not.toBeNull();
@@ -294,8 +294,8 @@ describe("DiscoveryHistoryModal", () => {
     ).toBeTruthy();
     expect(screen.getByText(/^Finished( · .*)?$/u)).toBeTruthy();
     expect(
-      screen.getByText("By source: Greenhouse roles — 0 jobs."),
-    ).toBeTruthy();
+      screen.queryByText(/By source:/),
+    ).toBeNull();
     expect(
       screen.getByText(
         "No jobs matched this plan in either of its last two runs. Broaden the plan or try another source.",
@@ -494,7 +494,7 @@ it("shows reconciling source counts and the model's reason for an excluded listi
     ),
   ).toBeTruthy();
   expect(screen.getByText(/Found on Other board: 4 inspected/)).toBeTruthy();
-  expect(screen.getByText("By source: Other board — 1 job.")).toBeTruthy();
+  expect(screen.queryByText(/By source:/)).toBeNull();
   expect(
     screen.getByText("Unrelated role: Outside your requested roles."),
   ).toBeTruthy();

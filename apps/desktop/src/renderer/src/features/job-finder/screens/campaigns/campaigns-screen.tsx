@@ -49,7 +49,6 @@ import {
   getDiscoveryRunReportCounts,
   hasDiscoveryRunReportCounts,
   readDiscoveryRunReportCounts,
-  resolveDiscoveryRunAlreadyHereCount,
   type DiscoveryRunReportCounts,
 } from "../../lib/discovery-run-count-label";
 
@@ -2285,24 +2284,6 @@ export function CampaignsScreen(props: {
                             Closed
                           </dt>
                           <dd>{campaign.latestDigest.counts.inactive}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-foreground-muted">
-                            Seen before
-                          </dt>
-                          {/* Same field the headline above prints. The change
-                            digest's own tally counts sightings, not the
-                            listings this run found already saved, so reading
-                            it here printed "Seen before 0" under "7 already
-                            here" for one run. */}
-                          <dd>
-                            {resolveDiscoveryRunAlreadyHereCount(
-                              readPlanRunReport(
-                                props.discoveryRuns,
-                                campaign.latestDigest,
-                              ),
-                            ) ?? campaign.latestDigest.counts.known}
-                          </dd>
                         </div>
                         <div>
                           <dt className="text-xs text-foreground-muted">

@@ -197,3 +197,16 @@ test("the plan card keeps new-to-device and retained counts distinct in the shar
     "25 new to you · 22 kept by this plan · 27 duplicates merged",
   );
 });
+
+test("keeps modern accounting labels when unique inspections are unknown", () => {
+  const run = round3SearchRun();
+  run.summary.report!.unique = null;
+  const label = formatDiscoveryRunReportLabel(getDiscoveryRunReportCounts(run));
+  expect(label).toContain("52 postings seen");
+  expect(label).toContain("27 duplicates merged");
+  expect(label).toContain("0 rejected");
+  expect(label).not.toContain("already here");
+  expect(describePlanRunCounts(getDiscoveryRunReportCounts(run))).toContain(
+    "52 postings seen",
+  );
+});

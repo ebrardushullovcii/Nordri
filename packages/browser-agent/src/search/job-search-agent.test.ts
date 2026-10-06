@@ -1951,3 +1951,36 @@ test("a rejection that matches no listing on the page never drops the page's sav
   expect(result.jobs.length).toBeGreaterThan(0);
   expect(result.jobs.every((job) => !job.searchRejection)).toBe(true);
 });
+
+test("a known posting wins over a later no-own-link rejection", async () => {
+  const pages = { current: rawPage() };
+  const canonicalUrl = pages.current.url;
+  const posting = JobPostingSchema.parse({
+    source: "target_site",
+    sourceJobId: "known",
+    canonicalUrl,
+    title: "Platform Engineer",
+    company: "Example",
+    location: "Manchester",
+    description: "Platform engineering",
+    salaryText: null,
+    applyPath: "unknown",
+    easyApplyEligible: false,
+    discoveredAt: "2026-10-05T10:00:00.000Z",
+  });
+  const result = await runJobSearchAgent({
+    page: {} as Page,
+    hands: hands(pages),
+    config: config(),
+    llmClient: scripted([
+      { name: "extract_jobs", args: { pageType: "job_detail" } },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "extract_jobs", args: { pageType: "search_results" } },
+      { name: "finish", args: { summary: "Checked the page." } },
+    ]),
+    jobExtractor: { extractJobsFromPage: () => Promise.resolve([posting]) },
+  });
+  expect(result.jobs).toHaveLength(1);
+  expect(result.duplicateListings).toBe(1);
+  expect(result.unreadableListings).toEqual([]);
+});

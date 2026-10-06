@@ -752,3 +752,25 @@ it("shows a person's captured confirmation once", () => {
     view.getAllByText("The site confirmed receipt. Reference SYN-1."),
   ).toHaveLength(1);
 });
+
+it("uses captured receipt evidence once when the run detail says the same confirmation differently", () => {
+  const result = buildResult({
+    state: "submitted",
+    detail: "The employer site confirmed receipt.",
+    privacyReceipt: {
+      finalSubmitOccurred: true,
+      submissionOutcome: {
+        outcome: "submitted",
+        evidence: [
+          { id: "one", summary: "Application received. Reference SYN-2." },
+          { id: "two", summary: "Application received. Reference SYN-2." },
+        ],
+      },
+    } as unknown as NonNullable<ApplyResult["privacyReceipt"]>,
+  });
+  const view = renderSection({ visibleApplyResult: result });
+  expect(view.queryByText("The employer site confirmed receipt.")).toBeNull();
+  expect(
+    view.getAllByText("Application received. Reference SYN-2."),
+  ).toHaveLength(1);
+});

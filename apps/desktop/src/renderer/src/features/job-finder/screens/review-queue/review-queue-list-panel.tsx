@@ -48,6 +48,7 @@ import {
 
 interface ReviewQueueListPanelProps {
   campaignId?: string;
+  interruptedResumeJobIds?: readonly string[];
   draftPreparation?: TailoredDraftPreparationViewState;
   isJobPending: (jobId: string) => boolean;
   /** Writes missing first resumes for the chosen jobs, or all eligible jobs. */
@@ -76,6 +77,7 @@ interface ReviewQueueListPanelProps {
 
 export function ReviewQueueListPanel({
   campaignId = "",
+  interruptedResumeJobIds = [],
   draftPreparation = {
     attemptedCount: 0,
     completedCount: 0,
@@ -208,10 +210,10 @@ export function ReviewQueueListPanel({
   const draftEligibleCount = useMemo(
     () =>
       countTailoredDraftPreparationEligible(
-        queue,
+        queue.filter((item) => !interruptedResumeJobIds.includes(item.jobId)),
         unavailableApplicationJobIds,
       ),
-    [queue, unavailableApplicationJobIds],
+    [queue, unavailableApplicationJobIds, interruptedResumeJobIds],
   );
   const [resumeSelection, setResumeSelection] = useState<{
     campaignId: string;
@@ -225,7 +227,9 @@ export function ReviewQueueListPanel({
           isTailoredDraftPreparationEligible(
             item,
             unavailableApplicationJobIds,
-          ) && !isJobPending(item.jobId),
+          ) &&
+          !isJobPending(item.jobId) &&
+          !interruptedResumeJobIds.includes(item.jobId),
       )
       .map((item) => item.jobId),
   );
@@ -405,7 +409,9 @@ export function ReviewQueueListPanel({
                     className="whitespace-normal text-sm font-medium normal-case tracking-normal"
                     data-testid="create-missing-resumes"
                     disabled={draftPreparationBlocker !== null}
-                    onClick={() => onPrepareTailoredDrafts()}
+                    onClick={() =>
+                      onPrepareTailoredDrafts([...eligibleResumeIds])
+                    }
                     size="sm"
                     type="button"
                     variant="secondary"
@@ -480,7 +486,7 @@ export function ReviewQueueListPanel({
           ) : draftEligibleCount > 0 ? (
             <p className="m-0 text-xs text-foreground-muted">
               {draftEligibleCount > 2
-                ? `${draftEligibleCount} missing resumes. 2 start now; ${draftEligibleCount - 2} wait their turn. `
+                ? `${draftEligibleCount} missing resumes. 2 start now; ${draftEligibleCount - 2} ${draftEligibleCount === 3 ? "waits its turn" : "wait their turn"}. `
                 : "Up to two at once. "}
               Stop any time; finished resumes are kept.
             </p>

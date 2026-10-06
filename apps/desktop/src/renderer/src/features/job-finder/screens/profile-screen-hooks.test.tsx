@@ -961,3 +961,13 @@ describe("useProfileScreenForms save-state truth on load", () => {
     expect(result.current.hasUnsavedChanges).toBe(true);
   });
 });
+
+it("preserves every saved profile value when only job sources are edited", () => {
+  const result = buildCanonicalAwareProfilePayload({
+    profile,
+    draftValues: createProfileEditorValues(profile, []),
+    dirtyFields: {},
+    latestResumeImportReviewCandidates: [],
+  });
+  expect(result.payload).toBe(profile);
+});

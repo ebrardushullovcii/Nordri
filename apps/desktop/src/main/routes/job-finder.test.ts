@@ -3952,3 +3952,21 @@ it("publishes one workspace refresh after a burst of answer draft saves", async 
     vi.useRealTimers();
   }
 });
+
+it("publishes a browser-bar shortlist immediately while listing checks run", async () => {
+  const snapshot = createEmptyWorkspace("2026-10-05T10:00:00.000Z");
+  const queueJobForReview = vi.fn().mockResolvedValue(snapshot);
+  mockGetJobFinderWorkspaceService.mockResolvedValue({ queueJobForReview });
+  const handlers = new Map<string, RegisteredHandler>();
+  registerJobFinderRouteHandlers({
+    handle: (channel: string, handler: RegisteredHandler) =>
+      handlers.set(channel, handler),
+  } as unknown as IpcMain);
+  const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
+  await handlers.get("job-finder:queue-job-for-review")!(
+    { sender },
+    { jobId: "synthetic_job" },
+  );
+  expect(queueJobForReview).toHaveBeenCalledWith("synthetic_job");
+  expect(sender.send).toHaveBeenCalled();
+});

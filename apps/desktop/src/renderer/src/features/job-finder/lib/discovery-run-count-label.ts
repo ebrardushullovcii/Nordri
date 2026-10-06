@@ -151,7 +151,7 @@ export function formatDiscoveryRunReportLabel(
     return `Counts ${MISSING_RUN_COUNT_LABEL} for this run`;
   }
 
-  if (counts.unique != null) {
+  if (counts.unique != null || counts.rejected !== undefined) {
     return formatDiscoveryAccounting(counts);
   }
   // "N found · M new"; "kept" only when fewer were kept than found, and

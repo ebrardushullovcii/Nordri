@@ -1309,12 +1309,7 @@ export async function restoreWithdrawnApplicationPreparation(
       const record = (await repository.listApplicationRecords()).find(
         (entry) => entry.id === recordId,
       );
-      if (
-        !record ||
-        record.crm?.stage === "withdrawn" ||
-        isApplicationTrackedAsSentByPerson(record.crm)
-      )
-        return;
+      if (!record || record.crm?.stage === "withdrawn") return;
       const latest = (await repository.listApplyJobResults())
         .filter((entry) => entry.applicationRecordId === recordId)
         .sort(
@@ -1328,12 +1323,16 @@ export async function restoreWithdrawnApplicationPreparation(
       )
         return;
       const now = new Date().toISOString();
+      const trackedAsSent = isApplicationTrackedAsSentByPerson(record.crm);
       await repository.upsertApplyJobResult(
         ApplyJobResultSchema.parse({
           ...latest,
-          summary: WITHDRAWAL_UNDONE_SUMMARY,
-          detail:
-            "Your previous tracker stage is restored. Prepare this application again using your saved answers and files.",
+          summary: trackedAsSent
+            ? "Withdrawal undone. Tracked as sent."
+            : WITHDRAWAL_UNDONE_SUMMARY,
+          detail: trackedAsSent
+            ? "Your previous tracker stage is restored. You marked this application as sent."
+            : "Your previous tracker stage is restored. Prepare this application again using your saved answers and files.",
           updatedAt: now,
         }),
       );
@@ -1341,7 +1340,7 @@ export async function restoreWithdrawnApplicationPreparation(
         ApplicationRecordSchema.parse({
           ...record,
           lastActionLabel: "Withdrawal undone.",
-          nextActionLabel: "Prepare again",
+          nextActionLabel: trackedAsSent ? null : "Prepare again",
           lastUpdatedAt: now,
         }),
       );

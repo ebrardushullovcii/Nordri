@@ -2150,8 +2150,9 @@ export function DiscoveryResultsPanel({
                                 baseline for every row, so only a stronger or
                                 weaker verdict earns a badge in the list; the
                                 inspector keeps the full assessment. */}
-                              {job.matchAssessment.recommendation !==
-                              "review_before_applying" ? (
+                              {!assessment.isScoreWithheld &&
+                              job.matchAssessment.recommendation !==
+                                "review_before_applying" ? (
                                 <StatusBadge
                                   tone={
                                     assessment.isProvisional

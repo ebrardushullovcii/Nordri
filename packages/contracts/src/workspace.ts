@@ -1143,6 +1143,7 @@ export type JobFinderResumeWorkspaceStrategyContext = z.infer<
 >;
 
 export const JobFinderResumeWorkspaceSchema = z.object({
+  listingCheckState: z.enum(["checking", "failed"]).nullable().optional(),
   job: SavedJobSchema,
   draft: ResumeDraftSchema,
   validation: ResumeValidationResultSchema.nullable().default(null),

@@ -1546,6 +1546,7 @@ export function createWorkspaceDiscoveryMethods(
     // Verdicts the model gave during this run, so a job judged to choose
     // which ones a result limit keeps is not judged again (ADR 0041).
     const runJudgments = new Map<string, FitJudgment>();
+    let fitJudgmentsAttempted = 0;
     const assessmentPlanId =
       effectiveCampaign?.campaignId ?? (await ctx.getActiveCampaignId());
     const assessDiscoveryPosting = (posting: JobPosting) =>
@@ -2421,16 +2422,58 @@ export function createWorkspaceDiscoveryMethods(
           ) {
             return;
           }
+          // Retention judgments must leave capacity for the jobs the person
+          // already supplied or selected, which the final phase checks first.
+          const reservedPersonJudgments = mergeSavedJobs(
+            workingSavedJobs,
+            workingPendingJobs,
+          ).filter(
+            (job) =>
+              personPickedJob(job) &&
+              !runJudgments.has(job.id) &&
+              (jobNeedsFitJudgment(job, assessmentSession.contextFingerprint) ||
+                jobNeedsListingDetail(job)),
+          ).length;
           const unjudged = postings
             .map((posting) => ({ ...posting, id: toSavedJobId(posting) }))
             .filter((posting) => !runJudgments.has(posting.id))
-            .slice(0, FIT_JUDGMENTS_PER_RUN);
+            .slice(
+              0,
+              Math.max(
+                0,
+                FIT_JUDGMENTS_PER_RUN -
+                  fitJudgmentsAttempted -
+                  reservedPersonJudgments,
+              ),
+            );
+          fitJudgmentsAttempted += unjudged.length;
+          const fitProgress = (completed: number, total: number) =>
+            emitActivity(
+              createDiscoveryEvent({
+                runId,
+                timestamp: new Date().toISOString(),
+                kind: "progress",
+                stage: "extraction",
+                targetId: target.id,
+                adapterKind: target.adapterKind,
+                message: `Judging fit ${completed} of ${total}.`,
+                progress: { phase: "judging_fit", completed, total },
+                url: null,
+                jobsFound: null,
+                jobsPersisted: null,
+                jobsStaged: null,
+                duplicatesMerged: null,
+                invalidSkipped: null,
+              }),
+            );
+          if (unjudged.length > 0) fitProgress(0, unjudged.length);
           try {
             const judgments = await judgeJobFitsInBatches({
               aiClient: ctx.aiClient,
               profile,
               searchPreferences: enrichedPreferences,
               jobs: unjudged,
+              onProgress: fitProgress,
               contextFingerprint: assessmentSession.contextFingerprint,
               signal: executionSignal,
             });
@@ -3372,7 +3415,10 @@ export function createWorkspaceDiscoveryMethods(
             ) ||
             compareMatchScores(left.matchAssessment, right.matchAssessment),
         );
-      const readEvent = (message: string) =>
+      const readEvent = (
+        message: string,
+        progress?: DiscoveryActivityEvent["progress"],
+      ) =>
         createDiscoveryEvent({
           runId,
           timestamp: new Date().toISOString(),
@@ -3383,6 +3429,7 @@ export function createWorkspaceDiscoveryMethods(
           adapterKind: null,
           resolvedAdapterKind: null,
           message,
+          ...(progress ? { progress } : {}),
           url: null,
           jobsFound:
             activeRun.summary.jobsPersisted + activeRun.summary.jobsStaged,
@@ -3394,6 +3441,7 @@ export function createWorkspaceDiscoveryMethods(
       // No reader configured means no reads: the desktop composes the
       // plain-HTTP reader in; tests and other hosts opt in explicitly so a
       // fixture URL is never fetched for real.
+      let listingReadsReserved = 0;
       if (
         ctx.fetchListingHtml &&
         enrichmentCandidates.length > 0 &&
@@ -3406,19 +3454,21 @@ export function createWorkspaceDiscoveryMethods(
           enrichmentCandidates.length,
           LISTING_DETAIL_READS_PER_RUN,
         );
-        emitActivity(
-          readEvent(
-            readsThisRun < enrichmentCandidates.length
-              ? `Reading listing details for ${readsThisRun} of ${enrichmentCandidates.length} jobs; the rest are read on the next search`
-              : `Reading listing details for ${readsThisRun} ${
-                  readsThisRun === 1 ? "job" : "jobs"
-                }`,
-          ),
-        );
+        listingReadsReserved = readsThisRun;
+        const readingProgress = (completed: number, total: number) =>
+          emitActivity(
+            readEvent(`Reading listings ${completed} of ${total}.`, {
+              phase: "reading_listings",
+              completed,
+              total,
+            }),
+          );
+        readingProgress(0, readsThisRun);
         try {
           const enrichment = await enrichSavedJobListingDetails({
             jobs: enrichmentCandidates,
             maxJobs: readsThisRun,
+            onProgress: readingProgress,
             fetchHtml: fetchListingHtml,
             readPage: createModelListingPageReader(ctx.aiClient),
             ...(ctx.browserRuntime.readRenderedPage
@@ -3525,6 +3575,10 @@ export function createWorkspaceDiscoveryMethods(
           try {
             const routeRead = await readSightingApplyRoutes({
               jobs: multiSourceJobs,
+              maxReads: Math.max(
+                0,
+                LISTING_DETAIL_READS_PER_RUN - listingReadsReserved,
+              ),
               fetchHtml: ctx.fetchListingHtml,
               canReadUrl: canReadListingUrl,
               readPage: createModelListingPageReader(ctx.aiClient),
@@ -3603,15 +3657,19 @@ export function createWorkspaceDiscoveryMethods(
                 Number(runRetainedJobIds.has(left.id)),
           )
           // Jobs the person supplied or picked come first within the cap.
-          .slice(0, FIT_JUDGMENTS_PER_RUN);
+          .slice(0, Math.max(0, FIT_JUDGMENTS_PER_RUN - fitJudgmentsAttempted));
         if (toJudge.length > 0) {
-          emitActivity(
-            readEvent(
-              `Judging how ${toJudge.length} ${
-                toJudge.length === 1 ? "job fits" : "jobs fit"
-              } your profile and goals`,
-            ),
-          );
+          fitJudgmentsAttempted += toJudge.length;
+          let fitCompleted = 0;
+          const fitProgress = (completed: number) =>
+            emitActivity(
+              readEvent(`Judging fit ${completed} of ${toJudge.length}.`, {
+                phase: "judging_fit",
+                completed,
+                total: toJudge.length,
+              }),
+            );
+          fitProgress(0);
           try {
             const judgments = await judgeJobFitsInBatches({
               aiClient: ctx.aiClient,
@@ -3622,6 +3680,10 @@ export function createWorkspaceDiscoveryMethods(
               ),
               contextFingerprint: assessmentSession.contextFingerprint,
               signal: executionSignal,
+              onProgress: (completed) => {
+                fitCompleted = completed;
+                fitProgress(fitCompleted);
+              },
             });
             // Changed goals or profile require another full comparison for
             // a job previously read in full. A batch verdict cannot replace
@@ -3652,6 +3714,9 @@ export function createWorkspaceDiscoveryMethods(
                   } catch (error) {
                     if (executionSignal.aborted) throw error;
                     // Keep the last completed full assessment until a later pass.
+                  } finally {
+                    fitCompleted += 1;
+                    fitProgress(fitCompleted);
                   }
                 }
               }),
