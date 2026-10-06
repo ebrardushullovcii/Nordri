@@ -1,3 +1,4 @@
+import { refreshApprovedApplicationLetter } from "./approved-application-letter";
 import {
   mergeResumeBatchCheckpoints,
   markResumeBatchRunning,
@@ -366,6 +367,7 @@ type WorkspaceApplicationMethods = Omit<
     | "focusPreparedApplicationPage"
     | "inspectPreparedApplicationPage"
     | "submitPreparedApplication"
+    | "refreshApprovedApplicationLetter"
     | "recordLiveAssistantApplicationAction"
   >,
   | "startApplyCopilotRun"
@@ -6725,6 +6727,7 @@ export function createWorkspaceApplicationMethods(
             ? { instructions: applyInstructions }
             : {}),
         };
+        let preparedReviewCardApproved: ApplicationReviewCard | null = null;
         const applyFlowInputApproved = {
           ...applyFlowFactsApproved,
           onWaitingForBrowserTab: () =>
@@ -6736,6 +6739,9 @@ export function createWorkspaceApplicationMethods(
             }),
           prepareApplicationForm: createApplyFormPreparer({
             executionInput: applyFlowFactsApproved,
+            onPrepared: ({ reviewCard }) => {
+              preparedReviewCardApproved = reviewCard;
+            },
             applicationRecordId: selectedApplicationRecord.id,
             searchPreferences,
             aiClient: ctx.aiClient,
@@ -6799,6 +6805,7 @@ export function createWorkspaceApplicationMethods(
           fallbackUrl: job.applicationUrl ?? job.canonicalUrl,
         });
         const runArtifacts = buildApplyCopilotArtifacts({
+          reviewCard: preparedReviewCardApproved,
           existingAnswerRecords:
             await ctx.repository.listApplicationAnswerRecords({
               applicationRecordId: selectedApplicationRecord.id,
@@ -8937,6 +8944,24 @@ export function createWorkspaceApplicationMethods(
         });
       }
       return ctx.getWorkspaceSnapshot();
+    },
+    async refreshApprovedApplicationLetter(document) {
+      await refreshApprovedApplicationLetter(ctx, document, async () => {
+        const facts = await resolveJobApplyPrerequisites(document.job.jobId);
+        const settings = await ctx.repository.getSettings();
+        const intermediate = await buildIntermediateMutationExecutionOptions({
+          job: facts.job,
+          resumeArtifact: facts.resumeArtifact,
+        });
+        return {
+          job: facts.job,
+          profile: facts.profile,
+          resumeArtifact: facts.resumeArtifact,
+          settings,
+          mode: "prepare_only",
+          ...intermediate,
+        };
+      });
     },
     /**
      * Sends one application the person already looked over.

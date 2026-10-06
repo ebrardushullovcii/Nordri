@@ -1866,3 +1866,113 @@ test("review keeps the latest value across handles and removes cleared fields", 
     }),
   ).toMatchObject({ answers: [], attachments: [] });
 });
+
+test.each(["file", "text"] as const)(
+  "Prepare again reads the latest approved library letter and uses it as %s unchanged",
+  async (delivery) => {
+    const page = rawPage("Application");
+    page.controls = [
+      {
+        ...page.controls[0]!,
+        inputType: delivery === "file" ? "file" : "text",
+        label: "Cover letter",
+        required: true,
+        value: "",
+      },
+    ];
+    const currentSession = {
+      ...session(),
+      readPage: () => Promise.resolve(page),
+    };
+    const fill = vi.fn(async (_ref: string, value: string) => {
+      page.controls[0]!.value = value;
+      return { ok: true as const, observedValue: value };
+    });
+    const upload = vi.fn(
+      async (_ref: string, file: { name: string; bytes: Uint8Array }) => {
+        page.controls[0]!.value = file.name;
+        return { ok: true as const, observedValue: file.name };
+      },
+    );
+    currentSession.fillText = fill;
+    currentSession.uploadFile = upload;
+    const approved = "  My exact approved revision two.\n";
+    const writeLetter = vi.fn();
+    const getApprovedText = vi.fn(async () => approved);
+    let turn = 0;
+    const llmClient: LLMClient = {
+      chatWithTools: async (_messages, tools) => {
+        const classification =
+          tools[0]?.function.name === "report_question_kinds";
+        const tool = classification
+          ? "report_question_kinds"
+          : ++turn === 1
+            ? "fill_fields"
+            : "finish";
+        const args = classification
+          ? {
+              questions: [
+                { index: 0, asksAboutPay: false, declarationKind: null },
+              ],
+            }
+          : tool === "fill_fields"
+            ? {
+                fields: [
+                  delivery === "file"
+                    ? { tool: "upload", ref: "c0", documentId: "letter" }
+                    : { tool: "type", ref: "c0", text: "Model rewrite" },
+                ],
+              }
+            : { reason: "Send application not pressed per fill-only mode" };
+        return {
+          toolCalls: [
+            {
+              id: `call-${turn}`,
+              type: "function",
+              function: { name: tool, arguments: JSON.stringify(args) },
+            },
+          ],
+        };
+      },
+    };
+    const prepared = vi.fn();
+    const result = await runAgentApplicationPreparation({
+      session: currentSession,
+      executionInput: executionInput(),
+      applicationRecordId: "application",
+      startedAt: "2026-10-06T10:00:00.000Z",
+      siteLabel: "Synthetic careers",
+      llmClient,
+      onPrepared: prepared,
+      letters: {
+        preference: {
+          tone: "direct",
+          length: "short",
+          language: null,
+          sample: null,
+        },
+        getApprovedText,
+        writeLetter,
+        renderLetter: async ({ text }) => ({
+          ok: true,
+          fileName: "approved.txt",
+          mimeType: "text/plain",
+          loadBytes: async () => new TextEncoder().encode(text),
+        }),
+      },
+    });
+    expect(result.state).toBe("ready");
+    expect(getApprovedText).toHaveBeenCalledWith(
+      executionInput().job.id,
+      "application",
+    );
+    expect(writeLetter).not.toHaveBeenCalled();
+    expect(prepared.mock.calls[0]![0].reviewCard.letter.text).toBe(approved);
+    expect(result.summary).not.toContain("fill-only");
+    if (delivery === "file")
+      expect(new TextDecoder().decode(upload.mock.calls[0]![1].bytes)).toBe(
+        approved,
+      );
+    else expect(fill).toHaveBeenCalledWith("c0", approved);
+  },
+);

@@ -1,3 +1,4 @@
+import { withJobFinderWorkspaceUpdates } from "../services/job-finder/workspace-updates";
 import { ApplicationLetterGroundingError } from "@nordri/job-finder";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -13,6 +14,7 @@ import {
   EditApplicationDocumentInputSchema,
   ListApplicationDocumentsInputSchema,
   ProposeApplicationDocumentInputSchema,
+  type ApplicationDocumentRevision,
   type ApplyRunDetails,
   type ApplicationQuestionRecord,
   type JobFinderWorkspaceSnapshot,
@@ -32,6 +34,9 @@ interface ApplicationDocumentRouteDependencies {
     jobId: string,
     applicationRecordId: string,
   ) => Promise<ApplyRunDetails>;
+  refreshApprovedLetter?: (
+    document: ApplicationDocumentRevision,
+  ) => Promise<void>;
   selectExportPath: (
     event: IpcMainInvokeEvent,
     defaultFileName: string,
@@ -79,6 +84,10 @@ export function registerApplicationDocumentRouteHandlers(
     getApplyRunDetails: async (runId, jobId, applicationRecordId) => {
       const workspace = await getJobFinderWorkspaceService();
       return workspace.getApplyRunDetails(runId, jobId, applicationRecordId);
+    },
+    refreshApprovedLetter: async (document) => {
+      const workspace = await getJobFinderWorkspaceService();
+      await workspace.refreshApprovedApplicationLetter(document);
     },
     selectExportPath,
     writeDocumentText: async (input) => {
@@ -261,15 +270,19 @@ export function registerApplicationDocumentRouteHandlers(
 
   ipcMain.handle(
     "job-finder:approve-application-document",
-    async (_event, payload) => {
+    async (event, payload) => {
       try {
         const input = ApproveApplicationDocumentInputSchema.parse(payload);
-        return ApplicationDocumentRevisionSchema.parse(
-          await dependencies.library.approve(
-            input.documentId,
-            input.expectedRevision,
-          ),
+        const approved = await dependencies.library.approve(
+          input.documentId,
+          input.expectedRevision,
         );
+        if (dependencies.refreshApprovedLetter) {
+          await withJobFinderWorkspaceUpdates(event.sender, () =>
+            dependencies.refreshApprovedLetter!(approved),
+          );
+        }
+        return ApplicationDocumentRevisionSchema.parse(approved);
       } catch (error) {
         return wrapStorageError(error);
       }

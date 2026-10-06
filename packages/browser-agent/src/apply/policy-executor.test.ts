@@ -1,3 +1,5 @@
+import { createApplyUserPrompt } from "./apply-prompts";
+import { replaceApprovedApplicationLetter } from "./approved-letter";
 import {
   CandidateProfileSchema,
   type CandidateProfile,
@@ -3945,9 +3947,14 @@ test("uncertain eligibility shows the posting and permit facts beside the questi
   }
 });
 
-test.each(["file", "text"] as const)(
-  "uses a person's approved letter as %s without asking again",
-  async (delivery) => {
+test.each([
+  ["file", "saved answer"],
+  ["text", "saved answer"],
+  ["file", "document library"],
+  ["text", "document library"],
+] as const)(
+  "uses a person's approved letter as %s from %s without asking again",
+  async (delivery, source) => {
     const page = rawPage({
       controls: [
         rawControl({
@@ -3978,6 +3985,21 @@ test.each(["file", "text"] as const)(
         },
       },
     ];
+    if (source === "document library") {
+      config.sources.approvedLetterText = approvedText;
+      // The library letter wins over an older one-use answer.
+      config.sources.reusableAnswers = config.sources.reusableAnswers.map(
+        (answer) => ({ ...answer, answer: "Earlier letter" }),
+      );
+    }
+    if (source === "document library") {
+      const prompt = createApplyUserPrompt(config);
+      expect(prompt).toContain(approvedText);
+      expect(prompt).toContain(
+        "even when an earlier letter is already present",
+      );
+      expect(prompt).toContain("do not rewrite it or ask for approval again");
+    }
     config.writing = {
       coverLetterPolicy: "never",
       writtenAnswerLength: "short",
@@ -4115,4 +4137,90 @@ test("the model's hiring-country question cannot copy residence without a check"
   expect(check).toHaveBeenCalledOnce();
   expect(choose).not.toHaveBeenCalled();
   expect(outcome.kind).toBe("suggestion");
+});
+
+test.each(["text", "file"] as const)(
+  "replaces the retained %s letter through the executor without sending",
+  async (delivery) => {
+    const page = rawPage({
+      controls: [
+        rawControl({
+          index: 0,
+          label: "Cover letter",
+          inputType: delivery === "file" ? "file" : "text",
+          value: "Earlier letter",
+        }),
+      ],
+    });
+    const { config, hands } = configFor(page);
+    config.sources.approvedLetterText = "  My exact approved letter.\n";
+    config.letters = {
+      preference: {
+        tone: "direct",
+        length: "short",
+        language: null,
+        sample: null,
+      },
+      provide: async (request) => ({
+        ok: true,
+        text: request.approvedText!,
+        document: {
+          id: "approved",
+          kind: "cover_letter",
+          label: "Approved letter",
+          fileName: "approved.txt",
+          mimeType: "text/plain",
+          loadBytes: async () => new TextEncoder().encode(request.approvedText),
+        },
+      }),
+    };
+    const chatWithTools = vi.fn(async () => ({
+      toolCalls: [
+        {
+          id: "classify",
+          type: "function" as const,
+          function: {
+            name: "report_question_kinds",
+            arguments: JSON.stringify({
+              questions: [
+                { index: 0, asksAboutPay: false, declarationKind: null },
+              ],
+            }),
+          },
+        },
+      ],
+    }));
+    const fill = vi.spyOn(hands, "fillText");
+    const upload = vi.spyOn(hands, "uploadFile");
+    const click = vi.spyOn(hands, "clickAction");
+    const result = await replaceApprovedApplicationLetter({
+      config,
+      client: { chatWithTools },
+      fields: ["Cover letter"],
+    });
+    expect(result).not.toBeNull();
+    expect(chatWithTools).toHaveBeenCalledTimes(1);
+    if (delivery === "file")
+      expect(new TextDecoder().decode(upload.mock.calls[0]![1].bytes)).toBe(
+        config.sources.approvedLetterText,
+      );
+    else
+      expect(fill).toHaveBeenCalledWith(
+        "c0",
+        config.sources.approvedLetterText,
+      );
+    expect(click).not.toHaveBeenCalled();
+  },
+);
+
+test("does not guess a replacement when a recorded letter field is on another step", async () => {
+  const { config, hands } = configFor(rawPage({ controls: [] }));
+  const fill = vi.spyOn(hands, "fillText");
+  const result = await replaceApprovedApplicationLetter({
+    config,
+    client: { chatWithTools: vi.fn() },
+    fields: ["Cover letter"],
+  });
+  expect(result).toBeNull();
+  expect(fill).not.toHaveBeenCalled();
 });

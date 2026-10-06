@@ -66,7 +66,7 @@ test("country and two half-written answers restore while submit waits for both d
 test("conflict wording is visible but remains unconfirmed until the person uses and submits it", async () => {
   const onAnswer = vi.fn();
   const wording =
-    "I can work 20–30 hours from Toronto. Can the role support this?";
+    "I enjoy improving reporting systems. I am looking for 20–30 hours a week, remote or in Toronto.";
   const question = ApplicationAttemptQuestionSchema.parse({
     id: "motivation",
     prompt: "Why this role?",
@@ -92,6 +92,12 @@ test("conflict wording is visible but remains unconfirmed until the person uses 
   expect(view.getByText(wording)).toBeTruthy();
   expect((view.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
   fireEvent.click(view.getByRole("button", { name: "Use this wording" }));
+  expect((view.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+    wording,
+  );
+  expect(
+    (view.getByRole("textbox") as HTMLTextAreaElement).value,
+  ).not.toContain("The job requires");
   expect(onAnswer).not.toHaveBeenCalled();
   fireEvent.click(view.getByRole("button", { name: /Answer and continue/ }));
   await waitFor(() =>

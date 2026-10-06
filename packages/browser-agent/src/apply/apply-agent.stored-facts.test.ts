@@ -1,10 +1,12 @@
+import * as questionClassification from "./question-classification";
+import { questionPrompt } from "./policy-executor";
 import { readFileSync } from "node:fs";
 import {
   CandidateProfileSchema,
   type RawApplyControl,
   type RawApplyPage,
 } from "@nordri/contracts";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import type { LLMClient } from "../agent/contracts";
 import { runApplyAgent } from "./apply-agent";
 import { buildApplyFormObservation } from "./page-hands";
@@ -22,7 +24,7 @@ type FixtureField = {
 };
 type FixtureGroup = { label: string; repeat?: string; fields: FixtureField[] };
 
-async function ledgerleafRun() {
+async function ledgerleafRun(conditionalContact = false) {
   const fixtureRoot = new URL(
     "../../../../apps/desktop/test-fixtures/",
     import.meta.url,
@@ -119,8 +121,8 @@ async function ledgerleafRun() {
     options: field.options ?? [],
     selectedOptionLabel: values.get(field.name) ?? "",
   });
-  const currentFields = () =>
-    steps[step].flatMap((group) =>
+  const currentFields = () => [
+    ...steps[step].flatMap((group) =>
       group.repeat === "work" && addedHistory
         ? [
             {
@@ -159,7 +161,21 @@ async function ledgerleafRun() {
                 }))
               : [field],
           ),
-    );
+    ),
+    ...(conditionalContact &&
+    step === 0 &&
+    values.get("email") &&
+    !values.get("phone")
+      ? [
+          {
+            name: "contactNote",
+            label: "Contact note (optional)",
+            type: "text",
+            required: false,
+          },
+        ]
+      : []),
+  ];
   const source = (): RawApplyPage => ({
     url: "http://127.0.0.1:47950/ledgerleaf/apply/1",
     title: "Apply",
@@ -293,6 +309,7 @@ async function ledgerleafRun() {
   const calls = {
     turns: 0,
     classifications: 0,
+    questionsRead: [] as string[][],
     checks: [] as Array<Array<{ question: string; proposedAnswer: string }>>,
     misses: [] as string[],
   };
@@ -315,6 +332,9 @@ async function ledgerleafRun() {
           question: string;
           nativeRequired: boolean;
         }>;
+        calls.questionsRead.push(
+          questions.map((question) => question.question),
+        );
         return reply(name, {
           questions: questions.map((question) => ({
             index: question.index,
@@ -349,16 +369,20 @@ async function ledgerleafRun() {
         });
       }
       calls.turns += 1;
-      if (step === 0)
-        return reply("fill_fields", {
-          fields: [
-            { tool: "type", ref: "c0", text: profile.fullName },
-            { tool: "type", ref: "c1", text: profile.email },
-            { tool: "type", ref: "c2", text: profile.phone },
-            { tool: "upload", ref: "c3", documentId: "resume" },
-          ],
-          thenContinue: "a0",
-        });
+      if (step === 0) {
+        const fields = [
+          { tool: "type", ref: "c0", text: profile.fullName },
+          { tool: "type", ref: "c1", text: profile.email },
+          { tool: "type", ref: "c2", text: profile.phone },
+          { tool: "upload", ref: "c3", documentId: "resume" },
+        ].filter(
+          (field) =>
+            !values.has(currentFields()[Number(field.ref.slice(1))].name),
+        );
+        return fields.length
+          ? reply("fill_fields", { fields, thenContinue: "a0" })
+          : reply("click", { ref: "a0" });
+      }
       if (step === 1 && !addedHistory) return reply("click", { ref: "e0" });
       if (step === 1) {
         const fields = [
@@ -440,6 +464,14 @@ test("Ledgerleaf stored history does not need an answer check before the first h
   expect(values.get("workFrom")).toBe("2021-03");
   expect(calls.turns).toBe(6);
   expect(calls.classifications).toBe(4);
+  expect(result.timing?.questionReadingCalls).toBe(4);
+  expect(result.timing?.answerCheckCalls).toBe(1);
+  expect(
+    result.timing?.requests.map((request) => request.storedFactFills),
+  ).toEqual([3, 0, 3, 6, 0, 0]);
+  expect(
+    result.timing?.requests.map((request) => request.answersWaited),
+  ).toEqual([0, 0, 0, 0, 1, 0]);
   expect(calls.checks).toHaveLength(1);
   expect(calls.checks[0].map((answer) => answer.question)).toEqual([
     "Are you authorized to work in the job's country?",
@@ -457,4 +489,80 @@ test("Ledgerleaf stored history does not need an answer check before the first h
   expect(result.notes.at(-1)).toContain(
     "answers_waited_per_turn=[0,0,0,0,1,0]",
   );
+});
+
+test("Ledgerleaf recording compares the previous whole-step cache with per-question reuse", async () => {
+  const previousCache = vi
+    .spyOn(questionClassification, "createQuestionClassifier")
+    .mockImplementation((input) => {
+      const byStep = new Map<
+        string,
+        {
+          key: string;
+          result: ReturnType<
+            typeof questionClassification.classifyApplicationQuestions
+          >;
+        }
+      >();
+      return (controls, step = "") => {
+        const questions = [
+          ...new Map(
+            controls
+              .filter((control) => control.visible && questionPrompt(control))
+              .map(
+                (control) =>
+                  [
+                    questionPrompt(control),
+                    {
+                      prompt: questionPrompt(control),
+                      kind: control.kind,
+                      options: [...control.options],
+                      required: control.required,
+                    },
+                  ] as const,
+              ),
+          ).values(),
+        ];
+        const key = JSON.stringify({ step, questions });
+        const cached = byStep.get(step);
+        if (cached?.key === key) return cached.result;
+        const result = questionClassification.classifyApplicationQuestions({
+          ...input,
+          questions,
+        });
+        byStep.set(step, { key, result });
+        return result;
+      };
+    });
+  const before = await ledgerleafRun(true).finally(() =>
+    previousCache.mockRestore(),
+  );
+  const after = await ledgerleafRun(true);
+  const readCount = (run: typeof after) =>
+    run.calls.questionsRead.reduce(
+      (sum, questions) => sum + questions.length,
+      0,
+    );
+  console.log(
+    "Ledgerleaf cache comparison",
+    JSON.stringify({
+      before: {
+        calls: before.calls.classifications,
+        questions: readCount(before),
+        answerChecks: before.calls.checks.length,
+      },
+      after: {
+        calls: after.calls.classifications,
+        questions: readCount(after),
+        answerChecks: after.calls.checks.length,
+      },
+    }),
+  );
+  expect(after.calls.classifications).toBeLessThan(
+    before.calls.classifications,
+  );
+  expect(readCount(after)).toBeLessThan(readCount(before));
+  expect(before.calls.checks).toHaveLength(1);
+  expect(after.calls.checks).toHaveLength(1);
+  expect(after.values).toEqual(before.values);
 });

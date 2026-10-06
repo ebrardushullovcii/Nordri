@@ -26,7 +26,7 @@ export interface ApplicationsReviewCardProps {
    * Sending is impossible until it is prepared again.
    */
   pageClosed?: boolean | undefined;
-  onSubmit: () => Promise<void>;
+  onSubmit?: (() => Promise<void>) | undefined;
   onOpenPage?: (() => Promise<void>) | undefined;
   onPrepareAgain?: (() => Promise<void>) | undefined;
   isSubmitPending?: boolean | undefined;
@@ -43,7 +43,10 @@ export function ApplicationsReviewCard({
   const [failure, setFailure] = useState<FailureDescription | null>(null);
   const [pending, setPending] = useState(false);
   const busy = pending || isSubmitPending === true;
-  const readyToSend = card.waitingOnYou.length === 0 && pageClosed !== true;
+  const readyToSend =
+    card.waitingOnYou.length === 0 &&
+    pageClosed !== true &&
+    !card.letter?.needsRefresh;
 
   const run = async (
     action: (() => Promise<void>) | undefined,
@@ -166,6 +169,30 @@ export function ApplicationsReviewCard({
               ? "Letter draft for your review"
               : "The letter going with it"}
           </p>
+          {card.letter.needsRefresh ? (
+            <div
+              role="alert"
+              className="grid gap-2 rounded-(--radius-field) border border-warning/40 bg-warning/8 px-3.5 py-3"
+            >
+              <p>
+                The form still holds the earlier letter. Prepare again to attach
+                the letter you approved.
+              </p>
+              {onPrepareAgain ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  pending={busy}
+                  onClick={() =>
+                    void run(onPrepareAgain, "prepare this application again")
+                  }
+                >
+                  Prepare again
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           {card.letter.reviewReason ? (
             <p
               role="alert"
@@ -237,24 +264,26 @@ export function ApplicationsReviewCard({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          disabled={!readyToSend || busy}
-          onClick={() => void run(onSubmit, "send this application")}
-          pending={busy}
-          type="button"
-          variant="primary"
-        >
-          Submit application
-        </Button>
-        <p className="text-(length:--text-small) leading-5 text-foreground-soft">
-          {pageClosed
-            ? "Prepare it again before it can be sent."
-            : readyToSend
-              ? "This sends it to the employer once. Job Finder never sends it twice."
-              : "Answer what is waiting on you above first."}
-        </p>
-      </div>
+      {onSubmit ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={!readyToSend || busy}
+            onClick={() => void run(onSubmit, "send this application")}
+            pending={busy}
+            type="button"
+            variant="primary"
+          >
+            Submit application
+          </Button>
+          <p className="text-(length:--text-small) leading-5 text-foreground-soft">
+            {pageClosed || card.letter?.needsRefresh
+              ? "Prepare it again before it can be sent."
+              : readyToSend
+                ? "This sends it to the employer once. Job Finder never sends it twice."
+                : "Answer what is waiting on you above first."}
+          </p>
+        </div>
+      ) : null}
     </section>
   );
 }

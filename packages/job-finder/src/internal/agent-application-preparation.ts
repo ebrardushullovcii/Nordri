@@ -542,6 +542,10 @@ export async function runAgentApplicationPreparation(
     ...(input.signal ? { signal: input.signal } : {}),
   });
 
+  const approvedLetterText = await input.letters?.getApprovedText?.(
+    executionInput.job.id,
+    input.applicationRecordId,
+  );
   const outcome = await runApplyAgentSafely(input, {
     hands: createApplyPageHands(input.session, now),
     safety: input.session,
@@ -561,6 +565,7 @@ export async function runAgentApplicationPreparation(
         location: executionInput.job.location,
         description: executionInput.job.description,
       },
+      ...(approvedLetterText != null ? { approvedLetterText } : {}),
       reusableAnswers: executionInput.profile.answerBank.customAnswers,
       documents: toApplyDocuments(executionInput),
     },
@@ -870,6 +875,7 @@ export function buildApplyLetterDependencies(input: {
     ) => ReturnType<LLMClient["chatWithTools"]>;
   };
   documentManager: {
+    getApprovedApplicationLetter?: import("./workspace-service-contracts").JobFinderDocumentManager["getApprovedApplicationLetter"];
     renderLetterArtifact?: (renderInput: {
       text: string;
       job: SavedJob;
@@ -891,6 +897,20 @@ export function buildApplyLetterDependencies(input: {
   const renderLetterArtifact = input.documentManager.renderLetterArtifact;
 
   return {
+    ...(input.documentManager.getApprovedApplicationLetter
+      ? {
+          getApprovedText: async (
+            jobId: string,
+            applicationRecordId?: string,
+          ) =>
+            (
+              await input.documentManager.getApprovedApplicationLetter!(
+                jobId,
+                applicationRecordId,
+              )
+            )?.content ?? null,
+        }
+      : {}),
     preference: CoverLetterPreferenceSchema.parse(
       input.settings.coverLetter ?? {},
     ),
@@ -1075,7 +1095,7 @@ export function buildApplyReviewCard(input: {
   // sent. Text is clamped to what the card can hold; the record keeps the
   // full run trail.
   const clamp = (text: string, max: number): string => {
-    const trimmed = text.trim() || "-";
+    const trimmed = text.trim() ? text : "-";
     return trimmed.length <= max
       ? trimmed
       : `${trimmed.slice(0, max - 1).trimEnd()}…`;
@@ -1127,11 +1147,22 @@ export function buildApplyReviewCard(input: {
         }
       : letterEntry
         ? {
+            fields: [
+              ...filled
+                .filter((entry) => entry.questionKind === "cover_letter")
+                .map((entry) => entry.label),
+              ...attached
+                .filter((entry) => entry.reviewText)
+                .map((entry) => entry.controlLabel),
+            ],
             text: clamp(letterEntry.answer.value, 12_000),
             groundedIn: clampGrounding(letterEntry.answer.groundedIn),
           }
         : attachedLetter
           ? {
+              fields: attached
+                .filter((entry) => entry.reviewText)
+                .map((entry) => entry.controlLabel),
               text: clamp(attachedLetter.text, 12_000),
               groundedIn: clampGrounding(attachedLetter.groundedIn),
             }

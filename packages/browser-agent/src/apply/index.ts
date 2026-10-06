@@ -96,3 +96,5 @@ export {
 } from "./written-answer-grounding";
 
 export { applicationFacts } from "./application-facts";
+export { createQuestionClassifier } from "./question-classification";
+export { replaceApprovedApplicationLetter } from "./approved-letter";

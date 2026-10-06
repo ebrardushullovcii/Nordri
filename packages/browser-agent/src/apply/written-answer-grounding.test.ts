@@ -272,6 +272,11 @@ test("conflicts propose wording for person review and omission cannot hide a wor
     "keep the supported motivation from the proposed answer",
   );
   expect(prompt).toContain("Do not reduce it to limits alone");
+  expect(prompt).toContain("one first-person sentence");
+  expect(prompt).toContain(
+    "never advice, commentary, requests for review or notes addressed to the person",
+  );
+  expect(prompt).toContain("only in reason, never in reviewWording");
   expect(prompt).toContain("Do not end with a question or a question mark");
   expect(prompt).toContain("I enjoy this work.");
   expect(prompt).toContain(

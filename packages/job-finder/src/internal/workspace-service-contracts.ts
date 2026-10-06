@@ -123,6 +123,9 @@ export interface JobFinderWorkspaceResetOptions {
 }
 
 export interface JobFinderWorkspaceService {
+  refreshApprovedApplicationLetter(
+    document: import("@nordri/contracts").ApplicationDocumentRevision,
+  ): Promise<void>;
   shutdown(): Promise<void>;
   getWorkspaceSnapshot(): Promise<JobFinderWorkspaceSnapshot>;
   /**
@@ -777,6 +780,11 @@ export interface JobFinderDocumentManager {
    * Optional: a runtime that cannot render one leaves a form asking for a
    * letter file to the person rather than sending something else.
    */
+  /** Reads the latest approved letter, including an earlier approved revision. */
+  getApprovedApplicationLetter?(
+    jobId: string,
+    applicationRecordId?: string,
+  ): Promise<import("@nordri/contracts").ApplicationDocumentRevision | null>;
   renderLetterArtifact?(input: {
     text: string;
     job: SavedJob;

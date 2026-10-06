@@ -34,8 +34,9 @@ export async function classifyApplicationQuestions(input: {
   client: LLMClient;
   questions: ReadonlyArray<{
     prompt: string;
+    identity?: string;
     kind: string;
-    options: string[];
+    options: readonly string[];
     required?: boolean;
   }>;
   signal?: AbortSignal | undefined;
@@ -142,7 +143,7 @@ export async function classifyApplicationQuestions(input: {
     const kind = ApplicationAttestationKindSchema.safeParse(
       raw.declarationKind,
     );
-    result.set(question.prompt, {
+    result.set(question.identity ?? question.prompt, {
       asksAboutPay: raw.asksAboutPay === true,
       ...(raw.eligibilityKind === "work_authorization" ||
       raw.eligibilityKind === "visa_sponsorship"
@@ -161,9 +162,27 @@ export async function classifyApplicationQuestions(input: {
   return result;
 }
 
-/** Cache one in-flight or completed classification for the exact step/question set.
- * Values and page-local handles do not change what a question asks.
- */
+/** A question's meaning does not change when its handle, value or wizard step changes. */
+export function questionClassificationKey(
+  control: ApplyFormControl,
+  siblings: readonly ApplyFormControl[] = [],
+): string {
+  const options = control.choiceGroupKey
+    ? siblings
+        .filter(
+          (candidate) => candidate.choiceGroupKey === control.choiceGroupKey,
+        )
+        .map((candidate) => candidate.value || candidate.label)
+    : control.options;
+  return JSON.stringify([
+    questionPrompt(control),
+    control.groupLabel,
+    control.kind,
+    options,
+  ]);
+}
+
+/** Cache each question, including in-flight reads, and ask only about new identities. */
 export function createQuestionClassifier(input: {
   client: LLMClient;
   signal?: AbortSignal | undefined;
@@ -171,47 +190,84 @@ export function createQuestionClassifier(input: {
   controls: readonly ApplyFormControl[],
   step?: string,
 ) => Promise<ReadonlyMap<string, ApplyQuestionClassification>> {
-  const cacheByStep = new Map<
+  const byQuestion = new Map<string, Promise<ApplyQuestionClassification>>();
+  const bySet = new Map<
     string,
-    {
-      key: string;
-      result: Promise<ReadonlyMap<string, ApplyQuestionClassification>>;
-    }
+    Promise<ReadonlyMap<string, ApplyQuestionClassification>>
   >();
-  return (controls, step = "") => {
+  return (controls) => {
     const questions = [
       ...new Map(
         controls
-          .filter((control) => control.visible && questionPrompt(control))
-          .map((control) => [
-            questionPrompt(control),
-            {
-              prompt: questionPrompt(control),
-              kind: control.kind,
-              options: [...control.options],
-              required: control.required,
-            },
-          ]),
+          .filter(
+            (control) =>
+              (control.visible || control.kind === "file") &&
+              questionPrompt(control),
+          )
+          .map(
+            (control) =>
+              [
+                questionClassificationKey(control, controls),
+                {
+                  identity: questionClassificationKey(control, controls),
+                  prompt: questionPrompt(control),
+                  kind: control.kind,
+                  options: [...control.options],
+                  required: control.required,
+                },
+              ] as const,
+          ),
       ).values(),
     ];
-    const key = JSON.stringify({ step, questions });
-    const cached = cacheByStep.get(step);
-    if (cached?.key === key) return cached.result;
-    const result = classifyApplicationQuestions({
-      client: input.client,
-      questions,
-      signal: input.signal,
-    })
-      .then((classifications) => {
-        if (questions.some((question) => !classifications.has(question.prompt)))
+    const setKey = JSON.stringify(
+      questions.map((question) => question.identity),
+    );
+    const cached = bySet.get(setKey);
+    if (cached) return cached;
+    const missing = questions.filter(
+      (question) => !byQuestion.has(question.identity),
+    );
+    if (missing.length) {
+      const batch = classifyApplicationQuestions({
+        client: input.client,
+        questions: missing,
+        signal: input.signal,
+      }).then((readings) => {
+        if (missing.some((question) => !readings.has(question.identity)))
           throw new Error("The question check did not cover every question.");
-        return classifications;
+        return readings;
+      });
+      for (const question of missing) {
+        const reading = batch
+          .then((readings) => readings.get(question.identity)!)
+          .catch((error: unknown) => {
+            if (byQuestion.get(question.identity) === reading)
+              byQuestion.delete(question.identity);
+            throw error;
+          });
+        byQuestion.set(question.identity, reading);
+      }
+    }
+    const result = Promise.all(
+      questions.map(
+        async (question) =>
+          [question, await byQuestion.get(question.identity)!] as const,
+      ),
+    )
+      .then((readings) => {
+        const result = new Map<string, ApplyQuestionClassification>();
+        for (const [question, classification] of readings) {
+          result.set(question.identity, classification);
+          // Existing callers and offline test readers use the plain prompt.
+          result.set(question.prompt, classification);
+        }
+        return result;
       })
       .catch((error: unknown) => {
-        if (cacheByStep.get(step)?.result === result) cacheByStep.delete(step);
+        if (bySet.get(setKey) === result) bySet.delete(setKey);
         throw error;
       });
-    cacheByStep.set(step, { key, result });
+    bySet.set(setKey, result);
     return result;
   };
 }

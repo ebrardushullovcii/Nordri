@@ -271,3 +271,40 @@ it("Open this page opens the record's own application tab without sending", asyn
   expect(onSubmit).not.toHaveBeenCalled();
   vi.unstubAllGlobals();
 });
+
+it("shows the earlier-letter warning beside the letter and prepares again instead of sending", async () => {
+  const onPrepareAgain = vi.fn(() => Promise.resolve());
+  const onSubmit = vi.fn(() => Promise.resolve());
+  const original = card();
+  render(
+    <ApplicationsReviewCard
+      card={{
+        ...original,
+        letter: { text: "Earlier letter", groundedIn: [], needsRefresh: true },
+      }}
+      onSubmit={onSubmit}
+      onPrepareAgain={onPrepareAgain}
+    />,
+  );
+  expect(screen.getByRole("alert").textContent).toContain(
+    "The form still holds the earlier letter",
+  );
+  expect(
+    screen
+      .getByRole("button", { name: "Submit application" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Prepare again" }));
+  await waitFor(() => expect(onPrepareAgain).toHaveBeenCalledTimes(1));
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
+it("shows the answer review in prepare-only mode without a Job Finder send control", () => {
+  render(<ApplicationsReviewCard card={card()} onOpenPage={vi.fn()} />);
+  expect(screen.getByText("Read this before you send it")).toBeTruthy();
+  expect(screen.getByText("robin@example.test")).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Submit application" }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: "Open this page" })).toBeTruthy();
+});

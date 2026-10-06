@@ -56,6 +56,40 @@ describe("ApplicationDocumentLibrary", () => {
     return { profile: state.profile, job, applicationRecord, question };
   }
 
+  it("selects the latest approved letter for this application, including after a new proposal", async () => {
+    const grounding = createGrounding();
+    const proposed = await library.propose({
+      kind: "cover_letter",
+      grounding,
+      writtenContent: "The earlier letter.",
+    });
+    const edited = await library.edit(
+      proposed.id,
+      proposed.revision,
+      "  My exact approved letter.\n",
+    );
+    const approved = await library.approve(edited.id, edited.revision);
+    await library.propose({
+      kind: "cover_letter",
+      grounding,
+      documentId: approved.id,
+      expectedRevision: approved.revision,
+      writtenContent: "Not approved.",
+    });
+    expect(
+      await library.getLatestApprovedCoverLetter(
+        grounding.job.id,
+        grounding.applicationRecord.id,
+      ),
+    ).toMatchObject({ revision: 2, content: approved.content });
+    expect(
+      await library.getLatestApprovedCoverLetter(
+        "another-job",
+        grounding.applicationRecord.id,
+      ),
+    ).toBeNull();
+  });
+
   it("proposes only profile-backed text with exact job and question lineage", async () => {
     const base = createGrounding();
     const grounding = {

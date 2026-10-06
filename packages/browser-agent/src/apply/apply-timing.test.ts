@@ -42,6 +42,8 @@ test("measures decisions, auxiliary checks, reads, writes, uploads and longest s
       observationChars: 100,
       fieldsAttempted: 0,
       fieldsFilled: 0,
+      storedFactFills: 0,
+      answersWaited: 0,
       stepsAdvanced: 0,
       uploadsAttached: 0,
     },
@@ -198,8 +200,50 @@ test("field counts belong to their decision turn and snapshots do not change lat
       turn: 2,
       fieldsAttempted: 0,
       fieldsFilled: 0,
+      storedFactFills: 0,
+      answersWaited: 0,
       stepsAdvanced: 0,
       uploadsAttached: 0,
     },
   ]);
+});
+
+test("records question reading separately from answer checks and persists stored fills per turn", async () => {
+  let ms = 0;
+  const timing = createApplyTiming(() => new Date(ms));
+  const client = timing.model({
+    chatWithTools: async () => {
+      ms += 25;
+      return {};
+    },
+  });
+  await client.chatWithTools([], [], { parallelToolCalls: true });
+  timing.onStoredFactFilled();
+  timing.onStoredFactFilled();
+  timing.onAnswerWaited();
+  const tool = (name: string) => [
+    {
+      type: "function" as const,
+      function: {
+        name,
+        description: "Synthetic check",
+        parameters: { type: "object" as const, properties: {} },
+      },
+    },
+  ];
+  await client.chatWithTools([], tool("report_question_kinds"));
+  await client.chatWithTools([], tool("report_question_kinds"));
+  await client.chatWithTools([], tool("report_answer_checks"));
+  const recorded = ApplyAgentTimingSchema.parse(timing.snapshot());
+  expect(recorded).toMatchObject({
+    auxiliaryModelCalls: 3,
+    questionReadingCalls: 2,
+    questionReadingMs: 50,
+    answerCheckCalls: 1,
+    answerCheckMs: 25,
+  });
+  expect(recorded.requests[0]).toMatchObject({
+    storedFactFills: 2,
+    answersWaited: 1,
+  });
 });

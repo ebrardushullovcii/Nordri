@@ -776,6 +776,7 @@ export const SERVICE_METHOD_COVERAGE: Record<
   keyof JobFinderWorkspaceService,
   string
 > = {
+  refreshApprovedApplicationLetter: "internal",
   assessJobListing: "assess_job_listing",
   saveUserActionAnswerDraft: "internal",
   withWorkspaceRestore: "internal",

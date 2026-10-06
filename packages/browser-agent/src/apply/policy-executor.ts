@@ -1,3 +1,4 @@
+import { questionClassificationKey } from "./question-classification";
 import {
   resumeFormFileNames,
   type ApplicationAttemptQuestion,
@@ -358,13 +359,20 @@ async function withModelQuestionKinds(
       observation.controls,
       JSON.stringify({ url: observation.url, step: observation.step }),
     );
-    classification = classifications.get(questionPrompt(control));
+    classification =
+      classifications.get(
+        questionClassificationKey(control, observation.controls),
+      ) ?? classifications.get(questionPrompt(control));
     payCurrency =
       /currency/iu.test(questionPrompt(control)) &&
       (control.questionKind === "salary_expectation" ||
         observation.controls.some(
           (sibling) =>
-            classifications.get(questionPrompt(sibling))?.asksAboutPay === true,
+            (
+              classifications.get(
+                questionClassificationKey(sibling, observation.controls),
+              ) ?? classifications.get(questionPrompt(sibling))
+            )?.asksAboutPay === true,
         ));
   } catch {
     return control;
@@ -1532,7 +1540,9 @@ export async function executeApplyProposal(
                 ? "answer_library"
                 : "generated",
               sourceId: approvedApplicationLetter(config, control)
-                ? `answerLibrary.${savedAnswerForQuestion(control, config.sources.reusableAnswers)?.id}`
+                ? config.sources.approvedLetterText !== undefined
+                  ? "approved_application_letter"
+                  : `answerLibrary.${savedAnswerForQuestion(control, config.sources.reusableAnswers)?.id}`
                 : "application.letter",
               provenanceLabel: approvedApplicationLetter(config, control)
                 ? "your letter for this application"
@@ -1851,14 +1861,15 @@ export async function executeApplyProposal(
     }
 
     case "upload": {
-      const control = findControl(observation, proposal.ref);
-      if (!control) {
+      const found = findControl(observation, proposal.ref);
+      if (!found) {
         return {
           kind: "refused",
           reason: `There is no ${proposal.ref} on this page.`,
           observation,
         };
       }
+      const control = await withModelQuestionKinds(deps, observation, found);
       if (isCoverLetterControl(control)) {
         const policy = config.writing?.coverLetterPolicy ?? "when_required";
         // The person's own cover letter (Profile › Files) beats a written one
@@ -2188,6 +2199,9 @@ export function approvedApplicationLetter(
   config: ApplyAgentConfig,
   control: ApplyFormControl,
 ): string | undefined {
+  if (config.sources.approvedLetterText !== undefined) {
+    return config.sources.approvedLetterText;
+  }
   const saved = savedAnswerForQuestion(control, config.sources.reusableAnswers);
   return saved?.id.startsWith("application_") &&
     isAnswerFromThisApplication(

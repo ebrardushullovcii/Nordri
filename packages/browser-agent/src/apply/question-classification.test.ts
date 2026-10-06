@@ -129,7 +129,7 @@ test("shares one classification for concurrent decisions and changed values on t
   expect(client.chatWithTools).toHaveBeenCalledTimes(1);
 });
 
-test("invalidates when step, question wording, options or requirement changes", async () => {
+test("reuses across steps and requirement changes but reads new wording and options", async () => {
   const client = clientReplying([
     { index: 0, asksAboutPay: true, declarationKind: null },
   ]);
@@ -139,7 +139,7 @@ test("invalidates when step, question wording, options or requirement changes", 
   await classify(controls("Rate"), "step2");
   await classify(controls("Rate", ["Hourly"]), "step2");
   await classify(controls("Rate", ["Hourly"], true), "step2");
-  expect(client.chatWithTools).toHaveBeenCalledTimes(5);
+  expect(client.chatWithTools).toHaveBeenCalledTimes(3);
 });
 
 test("retries a failed classification rather than caching the failure", async () => {
@@ -176,7 +176,7 @@ test("gives a large page enough output budget to classify every question", async
   ).toBe(4800);
 });
 
-test("returning to a step reuses its classification unless its questions changed", async () => {
+test("returning to any step reuses each earlier question classification", async () => {
   const client = clientReplying([
     { index: 0, asksAboutPay: true, declarationKind: null },
   ]);
@@ -184,10 +184,10 @@ test("returning to a step reuses its classification unless its questions changed
   await classify(controls(), "step1");
   await classify(controls(), "step2");
   await classify(controls(), "step1");
-  expect(client.chatWithTools).toHaveBeenCalledTimes(2);
+  expect(client.chatWithTools).toHaveBeenCalledTimes(1);
   await classify(controls("Rate", ["Hourly"]), "step1");
   await classify(controls(), "step1");
-  expect(client.chatWithTools).toHaveBeenCalledTimes(4);
+  expect(client.chatWithTools).toHaveBeenCalledTimes(2);
 });
 
 test("keeps the model's hiring-country classification", async () => {
@@ -212,4 +212,43 @@ test("keeps the model's hiring-country classification", async () => {
     result.get("Which country would employ you for this role?")
       ?.asksHiringCountry,
   ).toBe(true);
+});
+
+test("reads only the new question when a conditional field appears and keeps earlier pay permissions", async () => {
+  const client = clientReplying([
+    { index: 0, asksAboutPay: true, declarationKind: null },
+  ]);
+  const classify = createQuestionClassifier({ client });
+  const first = controls();
+  await classify(first, "step1");
+  const extra = {
+    ...controls("Why this role?", [])[0]!,
+    ref: "conditional",
+    kind: "long_text" as const,
+  };
+  vi.mocked(client.chatWithTools).mockResolvedValueOnce({
+    toolCalls: [
+      {
+        id: "next",
+        type: "function",
+        function: {
+          name: "report_question_kinds",
+          arguments: JSON.stringify({
+            questions: [
+              { index: 0, asksAboutPay: false, declarationKind: null },
+            ],
+          }),
+        },
+      },
+    ],
+  });
+  const result = await classify([...first, extra], "step1");
+  expect(result.get("Pay")?.asksAboutPay).toBe(true);
+  expect(result.get("Why this role?")?.asksAboutPay).toBe(false);
+  const data = JSON.parse(
+    String(vi.mocked(client.chatWithTools).mock.calls[1]![0][1]!.content),
+  ) as Array<{ question: string }>;
+  expect(data.map((entry) => entry.question)).toEqual(["Why this role?"]);
+  await classify(first, "step1");
+  expect(client.chatWithTools).toHaveBeenCalledTimes(2);
 });

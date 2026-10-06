@@ -201,7 +201,13 @@ function currentEnvelopeCoversPreparedApplication(input: {
 }
 
 export async function sendPreparedApplicationIfAllowed(input: {
-  ctx: Pick<WorkspaceServiceContext, "repository" | "browserRuntime"> & Partial<Pick<WorkspaceServiceContext, "withIntelligenceTransition">>;
+  ctx: Pick<WorkspaceServiceContext, "repository" | "browserRuntime"> &
+    Partial<
+      Pick<
+        WorkspaceServiceContext,
+        "withIntelligenceTransition" | "documentManager"
+      >
+    >;
   handoff: ApplySubmissionHandoff | null;
   envelope: ApplicationAuthorityEnvelope | null;
   source: JobSource;
@@ -231,6 +237,33 @@ export async function sendPreparedApplicationIfAllowed(input: {
       input.ctx.repository,
       input.signal,
       async () => {
+        const letterIsCurrent = async () => {
+          const prepared = (
+            await input.ctx.repository.listApplyJobResults({
+              jobId: input.lineage.jobId,
+            })
+          ).find((entry) => entry.id === input.lineage.resultId);
+          if (prepared?.reviewCard?.letter?.needsRefresh) return false;
+          const approved =
+            await input.ctx.documentManager?.getApprovedApplicationLetter?.(
+              input.lineage.jobId,
+              input.lineage.applicationRecordId ?? undefined,
+            );
+          return (
+            !approved ||
+            !prepared?.reviewCard?.letter ||
+            prepared.reviewCard.letter.text === approved.content
+          );
+        };
+        if (!(await letterIsCurrent())) {
+          return {
+            ...notSentAttempt(
+              "the approved letter changed",
+              "The form still holds the earlier letter. Prepare again to attach the letter you approved. Nothing was sent.",
+            ),
+            nextActionLabel: "Prepare again",
+          };
+        }
         const now = new Date().toISOString();
         const active =
           await input.ctx.repository.listApplicationAuthorityEnvelopes({
@@ -316,7 +349,11 @@ export async function sendPreparedApplicationIfAllowed(input: {
                       ? { transition: input.ctx.withIntelligenceTransition }
                       : {}),
                   });
-                  return overlap === null && (await actionInput.veto(facts));
+                  return (
+                    overlap === null &&
+                    (await letterIsCurrent()) &&
+                    (await actionInput.veto(facts))
+                  );
                 },
               }),
           },

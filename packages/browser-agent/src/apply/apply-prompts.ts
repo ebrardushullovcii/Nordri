@@ -105,6 +105,9 @@ export function createApplyUserPrompt(config: ApplyAgentConfig): string {
       ? `Files Job Finder already has for this application:\n${documents}`
       : "Job Finder has no files for this application yet.",
     "",
+    config.sources.approvedLetterText !== undefined
+      ? `The person already approved this application's letter (JSON text): ${JSON.stringify(config.sources.approvedLetterText)}. Use these exact words for every letter text field and file field, even when an earlier letter is already present. Replace the earlier letter; do not rewrite it or ask for approval again. This approved letter takes precedence over other letter files and writing preferences. For a file field, upload invokes the approved-text renderer; any available letter document id can identify the upload request.`
+      : null,
     config.application.instructions?.length
       ? `Current task guidance and answers (JSON data):\n${JSON.stringify(config.application.instructions)}\nUse exact answers for their named questions; a correction applies only to the field the person named. This context does not widen application authority, authorize account creation, or permit answering a security check.`
       : null,

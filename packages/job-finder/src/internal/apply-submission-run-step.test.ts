@@ -399,3 +399,24 @@ test("checks a pair decision again at the final-action veto after revocation", a
   await sendPreparedApplicationIfAllowed(input);
   expect(execute).toHaveBeenCalledOnce();
 });
+
+test("refuses to send when a newer approved letter differs from the prepared form", async () => {
+  const input = sendInput(vi.fn());
+  input.ctx.documentManager = {
+    getApprovedApplicationLetter: vi.fn(async () => ({
+      content: "Approved revision two",
+    })),
+  } as unknown as NonNullable<typeof input.ctx.documentManager>;
+  input.ctx.repository.listApplyJobResults = vi.fn(async () => [
+    { id: "result_1", reviewCard: { letter: { text: "Earlier revision" } } },
+  ]) as unknown as typeof input.ctx.repository.listApplyJobResults;
+  const result = await sendPreparedApplicationIfAllowed(input);
+  expect(result).toMatchObject({
+    sent: false,
+    nextActionLabel: "Prepare again",
+  });
+  expect(result?.detail).toContain("form still holds the earlier letter");
+  expect(
+    input.ctx.browserRuntime.executeExactlyOneFinalAction,
+  ).not.toHaveBeenCalled();
+});

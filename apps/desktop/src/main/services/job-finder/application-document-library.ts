@@ -411,6 +411,33 @@ export class ApplicationDocumentLibrary {
     });
   }
 
+  async getLatestApprovedCoverLetter(
+    jobId: string,
+    applicationRecordId?: string,
+  ) {
+    const index = await this.readIndex();
+    const approved = index.revisions
+      .filter(
+        (document) =>
+          document.kind === "cover_letter" &&
+          document.job.jobId === jobId &&
+          document.status !== "proposed" &&
+          document.approvedAt !== null,
+      )
+      .sort(
+        (left, right) =>
+          right.approvedAt!.localeCompare(left.approvedAt!) ||
+          right.revision - left.revision,
+      );
+    return (
+      approved.find(
+        (document) => document.job.applicationRecordId === applicationRecordId,
+      ) ??
+      approved[0] ??
+      null
+    );
+  }
+
   propose(input: {
     kind: ApplicationDocumentKind;
     documentId?: string;

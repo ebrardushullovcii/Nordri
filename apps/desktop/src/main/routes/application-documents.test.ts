@@ -11,6 +11,7 @@ import {
   ApplyJobResultSchema,
   ApplyRunDetailsSchema,
   ApplyRunSchema,
+  type ApplicationDocumentRevision,
   type JobFinderWorkspaceSnapshot,
 } from "@nordri/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -124,6 +125,9 @@ function register(
   details: ReturnType<typeof createDetails>,
   writeDocumentText?: () => Promise<string | null>,
   realLibrary?: ApplicationDocumentLibrary,
+  refreshApprovedLetter?: (
+    document: ApplicationDocumentRevision,
+  ) => Promise<void>,
 ) {
   const handlers = new Map<string, RouteHandler>();
   const propose = vi
@@ -150,17 +154,28 @@ function register(
       realLibrary ??
       ({
         propose,
+        approve: vi.fn(() =>
+          Promise.resolve(
+            ApplicationDocumentRevisionSchema.parse({
+              ...revision,
+              status: "approved",
+              approvedAt: now,
+            }),
+          ),
+        ),
         list: vi.fn(() => Promise.resolve({ documents: [] })),
       } as unknown as ApplicationDocumentLibrary),
     getWorkspaceSnapshot,
     getApplyRunDetails,
     selectExportPath: () => Promise.resolve(null),
     ...(writeDocumentText ? { writeDocumentText } : {}),
+    ...(refreshApprovedLetter ? { refreshApprovedLetter } : {}),
   });
 
   return {
     handler: handlers.get("job-finder:propose-application-document")!,
     listHandler: handlers.get("job-finder:list-application-documents")!,
+    approveHandler: handlers.get("job-finder:approve-application-document")!,
     propose,
     getApplyRunDetails,
     getWorkspaceSnapshot,
@@ -377,4 +392,27 @@ it("keeps an unchecked letter draft and its reason through the real library", as
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
+});
+
+it("approval refreshes the prepared letter and notifies the mounted workspace", async () => {
+  const refreshApprovedLetter = vi.fn(() => Promise.resolve());
+  const { approveHandler } = register(
+    createDetails(),
+    undefined,
+    undefined,
+    refreshApprovedLetter,
+  );
+  const send = vi.fn();
+  await approveHandler({ sender: { send } } as unknown as IpcMainInvokeEvent, {
+    documentId: revision.id,
+    expectedRevision: revision.revision,
+  });
+  expect(refreshApprovedLetter).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: revision.id,
+      status: "approved",
+      content: revision.content,
+    }),
+  );
+  expect(send).toHaveBeenCalledWith("job-finder:workspace-updated");
 });

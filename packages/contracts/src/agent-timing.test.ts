@@ -131,3 +131,22 @@ test("uploads attached is optional for old records and rejects invalid counts", 
     ).toBe(false);
   }
 });
+
+test("question and answer timing plus fill sources survive persisted result parsing", () => {
+  const measured = {
+    ...timing,
+    questionReadingCalls: 5,
+    questionReadingMs: 300,
+    answerCheckCalls: 1,
+    answerCheckMs: 100,
+    requests: [{ ...timing.requests[0], storedFactFills: 3, answersWaited: 1 }],
+  };
+  expect(
+    ApplyExecutionResultSchema.parse({ ...result, agentTiming: measured })
+      .agentTiming,
+  ).toEqual(measured);
+  expect(
+    ApplyAgentTimingSchema.safeParse({ ...measured, questionReadingCalls: -1 })
+      .success,
+  ).toBe(false);
+});

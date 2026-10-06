@@ -890,11 +890,14 @@ describe("apply agent run endings", () => {
           ],
         }),
       ),
-      repeatingModel("finish", { reason: "Nothing left to fill in" }),
+      repeatingModel("finish", {
+        reason: "Send application not pressed per fill-only mode",
+      }),
     );
 
     expect(result.outcome).toBe("prepared");
-    expect(result.reason).toContain("Nothing left to fill in");
+    expect(result.reason).toContain("It is filled in and waiting");
+    expect(result.reason).not.toContain("fill-only mode");
     expect(result.reason).toContain("nothing was sent");
   });
 
@@ -1251,7 +1254,7 @@ describe("apply agent run endings", () => {
     );
 
     expect(result.outcome).toBe("prepared");
-    expect(result.reason).toContain("The form recovered and is ready");
+    expect(result.reason).toContain("It is filled in and waiting");
     expect(result.notes.join("\n")).toContain("application page did not open");
   });
 
@@ -1374,7 +1377,9 @@ describe("apply agent run endings", () => {
           allowedOrigins: ["https://apply.example.test"],
         },
       }),
-      repeatingModel("finish", { reason: "Nothing left to fill in" }),
+      repeatingModel("finish", {
+        reason: "Send application not pressed per fill-only mode",
+      }),
     );
 
     expect(result.outcome).toBe("awaiting_your_review");
@@ -1411,7 +1416,9 @@ describe("the run records its own timing", () => {
   test("the trail ends with the phases and the number of model turns", async () => {
     const result = await runApplyAgent(
       config(page()),
-      repeatingModel("finish", { reason: "Nothing left to fill in" }),
+      repeatingModel("finish", {
+        reason: "Send application not pressed per fill-only mode",
+      }),
     );
 
     const timing = result.notes.at(-1) ?? "";
@@ -1447,7 +1454,9 @@ describe("no field is written twice", () => {
     };
     const result = await runApplyAgent(
       config(page({ controls: [already] })),
-      repeatingModel("finish", { reason: "Nothing left to fill in" }),
+      repeatingModel("finish", {
+        reason: "Send application not pressed per fill-only mode",
+      }),
     );
 
     expect(result.filled).toHaveLength(0);
@@ -1456,7 +1465,9 @@ describe("no field is written twice", () => {
   test("each turn the model takes is written down", async () => {
     const result = await runApplyAgent(
       config(page()),
-      repeatingModel("finish", { reason: "Nothing left to fill in" }),
+      repeatingModel("finish", {
+        reason: "Send application not pressed per fill-only mode",
+      }),
     );
 
     expect(result.notes.some((note) => note.startsWith("turn 1: "))).toBe(true);

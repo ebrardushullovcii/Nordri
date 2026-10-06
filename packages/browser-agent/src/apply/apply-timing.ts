@@ -11,6 +11,10 @@ export function createApplyTiming(now: () => Date) {
     modelTurns: 0,
     auxiliaryModelMs: 0,
     auxiliaryModelCalls: 0,
+    questionReadingCalls: 0,
+    questionReadingMs: 0,
+    answerCheckCalls: 0,
+    answerCheckMs: 0,
     toolMs: 0,
     pageReadMs: 0,
     pageReads: 0,
@@ -32,7 +36,10 @@ export function createApplyTiming(now: () => Date) {
       key: "pageReadMs" | "writeMs" | "uploadMs";
     }
   >();
-  const activeModels = new Map<object, { startedAt: number; loop: boolean }>();
+  const activeModels = new Map<
+    object,
+    { startedAt: number; loop: boolean; kind: "question" | "answer" | "other" }
+  >();
   const step = (toolName: string, durationMs: number) => {
     timing.longestSteps = [...timing.longestSteps, { toolName, durationMs }]
       .sort((a, b) => b.durationMs - a.durationMs)
@@ -70,10 +77,14 @@ export function createApplyTiming(now: () => Date) {
     onStoredFactFilled: () => {
       const counts = answerSources.at(-1);
       if (counts) counts.storedFactFills += 1;
+      const request = timing.requests.at(-1);
+      if (request) request.storedFactFills = (request.storedFactFills ?? 0) + 1;
     },
     onAnswerWaited: () => {
       const counts = answerSources.at(-1);
       if (counts) counts.answersWaited += 1;
+      const request = timing.requests.at(-1);
+      if (request) request.answersWaited = (request.answersWaited ?? 0) + 1;
     },
     answerSourcesPerTurn: () => answerSources.map((counts) => ({ ...counts })),
     onFieldAttempt: () => {
@@ -111,9 +122,18 @@ export function createApplyTiming(now: () => Date) {
     model: (client: LLMClient): LLMClient => ({
       chatWithTools: async (messages, tools, options) => {
         const loop = options?.parallelToolCalls === true;
+        const kind = tools.some(
+          (tool) => tool.function.name === "report_question_kinds",
+        )
+          ? "question"
+          : tools.some((tool) => tool.function.name === "report_answer_checks")
+            ? "answer"
+            : "other";
         const start = now().getTime();
         const key = {};
-        activeModels.set(key, { startedAt: start, loop });
+        activeModels.set(key, { startedAt: start, loop, kind });
+        if (kind === "question") timing.questionReadingCalls! += 1;
+        if (kind === "answer") timing.answerCheckCalls! += 1;
         if (loop) {
           timing.modelTurns += 1;
           answerSources.push({ storedFactFills: 0, answersWaited: 0 });
@@ -123,6 +143,8 @@ export function createApplyTiming(now: () => Date) {
             observationChars,
             fieldsAttempted: 0,
             fieldsFilled: 0,
+            storedFactFills: 0,
+            answersWaited: 0,
             stepsAdvanced: 0,
             uploadsAttached: 0,
           });
@@ -133,6 +155,8 @@ export function createApplyTiming(now: () => Date) {
           const duration = Math.max(0, now().getTime() - start);
           activeModels.delete(key);
           timing[loop ? "modelMs" : "auxiliaryModelMs"] += duration;
+          if (kind === "question") timing.questionReadingMs! += duration;
+          if (kind === "answer") timing.answerCheckMs! += duration;
         }
       },
     }),
@@ -162,6 +186,22 @@ export function createApplyTiming(now: () => Date) {
           timing.auxiliaryModelMs +
           active
             .filter((call) => !call.loop)
+            .reduce(
+              (sum, call) => sum + Math.max(0, current - call.startedAt),
+              0,
+            ),
+        questionReadingMs:
+          timing.questionReadingMs! +
+          active
+            .filter((call) => call.kind === "question")
+            .reduce(
+              (sum, call) => sum + Math.max(0, current - call.startedAt),
+              0,
+            ),
+        answerCheckMs:
+          timing.answerCheckMs! +
+          active
+            .filter((call) => call.kind === "answer")
             .reduce(
               (sum, call) => sum + Math.max(0, current - call.startedAt),
               0,

@@ -43,7 +43,10 @@ import {
   coverLetterPolicyAllows,
   isCoverLetterControl,
 } from "./cover-letter";
-import { createQuestionClassifier } from "./question-classification";
+import {
+  createQuestionClassifier,
+  questionClassificationKey,
+} from "./question-classification";
 import {
   applicationFacts,
   savedAnswerForQuestion,
@@ -762,7 +765,13 @@ async function runMeasuredApplyAgent(
           // Cache the native question set before adding the model's required marker.
           syncObservation(observation);
           for (const control of observation.controls) {
-            if (classifications?.get(questionPrompt(control))?.required)
+            if (
+              (
+                classifications?.get(
+                  questionClassificationKey(control, observation.controls),
+                ) ?? classifications?.get(questionPrompt(control))
+              )?.required
+            )
               control.required = true;
           }
           for (const control of unresolvedRequiredControls(observation)) {
@@ -823,7 +832,10 @@ async function runMeasuredApplyAgent(
         // Inferred required markers are results, not changed native questions.
         syncObservation(observation);
         for (const control of observation.controls) {
-          const classification = classifications?.get(questionPrompt(control));
+          const classification =
+            classifications?.get(
+              questionClassificationKey(control, observation.controls),
+            ) ?? classifications?.get(questionPrompt(control));
           if (classification?.required) control.required = true;
         }
         const finishWithQuestions = (): AgentLoopToolOutcome => {
@@ -1925,8 +1937,8 @@ async function runMeasuredApplyAgent(
         : defaultOutcomeFor(config);
     reason =
       outcome === "ready_to_send"
-        ? `${loop.finish?.reason ?? loop.reason} Job Finder filled this application in on ${config.siteLabel} and it is ready to send.`
-        : `${loop.finish?.reason ?? loop.reason} ${describePrepared(config, filled.length, attachments.length)}`;
+        ? `Job Finder filled this application in on ${config.siteLabel} and it is ready to send.`
+        : describePrepared(config, filled.length, attachments.length);
   } else if (loop.ending === "stalled") {
     outcome = "stuck";
     reason = `Job Finder stopped on ${config.siteLabel} because the form stopped responding: nothing new happened after several tries, even after changing approach.`;

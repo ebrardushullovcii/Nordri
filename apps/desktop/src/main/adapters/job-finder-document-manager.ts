@@ -5,6 +5,7 @@ import path from "node:path";
 import { BrowserWindow } from "electron";
 import type { JobFinderDocumentManager } from "@nordri/job-finder";
 import JSZip from "jszip";
+import { getApplicationDocumentLibrary } from "../services/job-finder/application-document-library-instance";
 
 import { getPdfPageCount } from "./resume-document";
 import {
@@ -325,6 +326,11 @@ export function createLocalJobFinderDocumentManager(
      * PDF uses the same print path as resume export. DOCX is a real Office
      * Open XML package, not renamed PDF bytes.
      */
+    getApprovedApplicationLetter: (jobId, applicationRecordId) =>
+      getApplicationDocumentLibrary().getLatestApprovedCoverLetter(
+        jobId,
+        applicationRecordId,
+      ),
     async renderLetterArtifact(input) {
       // Each document gets its own folder so the file itself can carry the
       // name an employer sees ("jane-doe-cover-letter.pdf") with no storage

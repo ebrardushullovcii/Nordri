@@ -30,6 +30,18 @@ async function transferApplicationPage(input: {
   const results = await input.repository.listApplyJobResults({
     applicationRecordId: input.applicationRecordId,
   });
+  const latest = [...results]
+    .filter((result) => result.id !== input.resultId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  if (latest?.reviewCard?.letter?.needsRefresh) {
+    // The letter may be on an earlier wizard step. A fresh form must receive
+    // the approved revision instead of inheriting that stale attachment.
+    await input.browserRuntime.releaseApplicationPageBinding?.(
+      input.source,
+      latest.id,
+    );
+    return;
+  }
   for (const result of [...results].sort((a, b) =>
     b.updatedAt.localeCompare(a.updatedAt),
   )) {

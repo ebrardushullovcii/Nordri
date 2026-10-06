@@ -941,8 +941,15 @@ export const ApplicationReviewCardSchema = z
     attachments: z.array(ApplicationReviewAttachmentSchema).max(20).default([]),
     letter: z
       .object({
-        text: NonEmptyStringSchema.max(12_000),
+        text: z
+          .string()
+          .min(1)
+          .max(12_000)
+          .refine((text) => text.trim().length > 0),
         reviewReason: NonEmptyStringSchema.max(2_000).optional(),
+        /** The form still holds the previous letter; prepare again before sending. */
+        needsRefresh: z.boolean().optional(),
+        fields: z.array(NonEmptyStringSchema.max(2_000)).max(20).optional(),
         groundedIn: z.array(NonEmptyStringSchema.max(240)).max(8).default([]),
       })
       .strict()

@@ -60,7 +60,11 @@ describe("SettingsPerformanceEvidence", () => {
             modelMs: 3000,
             modelTurns: 3,
             auxiliaryModelMs: 400,
-            auxiliaryModelCalls: 2,
+            auxiliaryModelCalls: 6,
+            questionReadingCalls: 5,
+            questionReadingMs: 350,
+            answerCheckCalls: 1,
+            answerCheckMs: 50,
             toolMs: 1000,
             pageReadMs: 300,
             pageReads: 12,
@@ -73,6 +77,8 @@ describe("SettingsPerformanceEvidence", () => {
                 historyChars: 15000,
                 observationChars: 2000,
                 fieldsFilled: 4,
+                storedFactFills: 3,
+                answersWaited: 1,
                 stepsAdvanced: 1,
                 uploadsAttached: 1,
               },
@@ -81,6 +87,8 @@ describe("SettingsPerformanceEvidence", () => {
                 historyChars: 15000,
                 observationChars: 2000,
                 fieldsFilled: 0,
+                storedFactFills: 0,
+                answersWaited: 0,
                 stepsAdvanced: 0,
                 uploadsAttached: 0,
               },
@@ -135,6 +143,10 @@ describe("SettingsPerformanceEvidence", () => {
     expect(getAllByText("0 ms").length).toBeGreaterThanOrEqual(1);
     expect(getByText("Application preparation")).toBeTruthy();
     expect(getByText("Form preparation details")).toBeTruthy();
+    expect(getByText("Question reading")).toBeTruthy();
+    expect(getByText("5 calls · 350 ms")).toBeTruthy();
+    expect(getByText("Answer checks")).toBeTruthy();
+    expect(getByText("1 call · 50 ms")).toBeTruthy();
     expect(getByText("Slowest steps")).toBeTruthy();
     expect(getByText("3 turns · 3.0 s")).toBeTruthy();
     expect(getByText("12 reads · 300 ms")).toBeTruthy();
@@ -143,14 +155,18 @@ describe("SettingsPerformanceEvidence", () => {
     ).toBeTruthy();
     expect(getByText(/15000 \(page update 2000\)/u)).toBeTruthy();
     expect(
-      getByText(/Turn 1: 4 fields filled; 1 step advanced; 1 file attached/u),
-    ).toBeTruthy();
-    expect(
-      getByText(/Turn 2: 0 fields filled; 0 steps advanced; 0 files attached/u),
+      getByText(
+        /Turn 1: 4 fields filled; 3 from stored facts; 1 waited for a check; 1 step advanced; 1 file attached/u,
+      ),
     ).toBeTruthy();
     expect(
       getByText(
-        /Turn 3: fields filled not recorded; steps advanced not recorded; uploads not recorded/u,
+        /Turn 2: 0 fields filled; 0 from stored facts; 0 waited for a check; 0 steps advanced; 0 files attached/u,
+      ),
+    ).toBeTruthy();
+    expect(
+      getByText(
+        /Turn 3: fields filled not recorded; stored facts not recorded; answer checks not recorded; steps advanced not recorded; uploads not recorded/u,
       ),
     ).toBeTruthy();
     expect(getByText("Total not recorded")).toBeTruthy();

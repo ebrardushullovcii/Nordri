@@ -52,6 +52,10 @@ export interface ApplicationLetterDependencies {
   renderLetter?: (
     input: ApplicationLetterRenderRequest,
   ) => Promise<ApplicationLetterRenderResult>;
+  getApprovedText?: (
+    jobId: string,
+    applicationRecordId?: string,
+  ) => Promise<string | null>;
   preference: CoverLetterPreference;
   application: { jobId: string; applicationId: string };
   signal?: AbortSignal;

@@ -547,3 +547,36 @@ test("skipping a waiting job preserves its filling sibling and the sibling can f
     skippedJobs: 1,
   });
 });
+
+test("Prepare again opens a fresh form when the earlier page cannot accept the approved letter", async () => {
+  const seed = seedPages();
+  seed.applyJobResults![0] = ApplyJobResultSchema.parse({
+    ...seed.applyJobResults![0],
+    reviewCard: {
+      siteLabel: "Synthetic careers",
+      preparedAt: now,
+      letter: { text: "Earlier letter", needsRefresh: true },
+    },
+  });
+  const transferApplicationPageBinding = vi.fn(async () => true);
+  const releaseApplicationPageBinding = vi.fn(async () => true);
+  const harness = createWorkspaceServiceHarness({
+    seed,
+    browserRuntime: {
+      ...createBrowserRuntime(),
+      transferApplicationPageBinding,
+      releaseApplicationPageBinding,
+    },
+  });
+  await reuseApplicationPage({
+    ...harness,
+    source: "target_site",
+    applicationRecordId: "application_a",
+    resultId: "new_result",
+  });
+  expect(releaseApplicationPageBinding).toHaveBeenCalledWith(
+    "target_site",
+    "result_0",
+  );
+  expect(transferApplicationPageBinding).not.toHaveBeenCalled();
+});

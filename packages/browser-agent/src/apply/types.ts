@@ -284,6 +284,8 @@ export interface ApplyAnswerSources {
     location: string;
     description: string;
   };
+  /** Latest letter approved in this application's document library. */
+  approvedLetterText?: string;
   reusableAnswers: readonly CandidateReusableAnswer[];
   documents: readonly ApplyDocument[];
 }

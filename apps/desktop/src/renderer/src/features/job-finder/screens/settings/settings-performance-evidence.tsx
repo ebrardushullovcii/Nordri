@@ -231,10 +231,19 @@ export function SettingsPerformanceEvidence() {
                       </dd>
                     </div>
                     <div>
-                      <dt>Answer and permission checks</dt>
+                      <dt>Question reading</dt>
                       <dd>
-                        {entry.agentTiming.auxiliaryModelCalls} calls ·{" "}
-                        {formatDuration(entry.agentTiming.auxiliaryModelMs)}
+                        {entry.agentTiming.questionReadingCalls === undefined
+                          ? "Not recorded separately"
+                          : `${entry.agentTiming.questionReadingCalls} ${entry.agentTiming.questionReadingCalls === 1 ? "call" : "calls"} · ${formatDuration(entry.agentTiming.questionReadingMs ?? 0)}`}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Answer checks</dt>
+                      <dd>
+                        {entry.agentTiming.answerCheckCalls === undefined
+                          ? "Not recorded separately"
+                          : `${entry.agentTiming.answerCheckCalls} ${entry.agentTiming.answerCheckCalls === 1 ? "call" : "calls"} · ${formatDuration(entry.agentTiming.answerCheckMs ?? 0)}`}
                       </dd>
                     </div>
                     <div>
@@ -277,7 +286,7 @@ export function SettingsPerformanceEvidence() {
                     {entry.agentTiming.requests
                       .map(
                         (request) =>
-                          `Turn ${request.turn}: ${request.fieldsFilled === undefined ? "fields filled not recorded" : `${request.fieldsFilled} ${request.fieldsFilled === 1 ? "field" : "fields"} filled`}; ${request.stepsAdvanced === undefined ? "steps advanced not recorded" : `${request.stepsAdvanced} ${request.stepsAdvanced === 1 ? "step" : "steps"} advanced`}; ${request.uploadsAttached === undefined ? "uploads not recorded" : `${request.uploadsAttached} ${request.uploadsAttached === 1 ? "file" : "files"} attached`}`,
+                          `Turn ${request.turn}: ${request.fieldsFilled === undefined ? "fields filled not recorded" : `${request.fieldsFilled} ${request.fieldsFilled === 1 ? "field" : "fields"} filled`}; ${request.storedFactFills === undefined ? "stored facts not recorded" : `${request.storedFactFills} from stored facts`}; ${request.answersWaited === undefined ? "answer checks not recorded" : `${request.answersWaited} waited for a check`}; ${request.stepsAdvanced === undefined ? "steps advanced not recorded" : `${request.stepsAdvanced} ${request.stepsAdvanced === 1 ? "step" : "steps"} advanced`}; ${request.uploadsAttached === undefined ? "uploads not recorded" : `${request.uploadsAttached} ${request.uploadsAttached === 1 ? "file" : "files"} attached`}`,
                       )
                       .join(" · ") || "No assistant turns"}
                   </p>

@@ -107,15 +107,18 @@ export function ApplicationsDetailPanelActivitySections(props: {
     <>
       {(visibleApplyResult?.automaticSendPending !== true ||
         visibleApplyResult?.privacyReceipt?.submissionOutcome != null) &&
-      awaitsYourReview &&
+      (awaitsYourReview || visibleApplyResult?.state === "awaiting_review") &&
       reviewCard &&
       reviewCardMatchesVisibleResult &&
-      onSubmitPreparedApplication &&
       visibleApplyResult ? (
         <ApplicationsReviewCard
           card={reviewCard}
           onOpenPage={props.onOpenApplicationPage}
-          onSubmit={() => onSubmitPreparedApplication(visibleApplyResult.jobId)}
+          onSubmit={
+            awaitsYourReview && onSubmitPreparedApplication
+              ? () => onSubmitPreparedApplication(visibleApplyResult.jobId)
+              : undefined
+          }
           {...(onPrepareApplicationAgain
             ? {
                 onPrepareAgain: () =>
